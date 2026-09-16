@@ -6,9 +6,13 @@ export const GITHUB_REPO_URL = "https://github.com/weftlabs/founder-directory";
 export function SiteHeader({
   directoryCurrent = false,
   aboutCurrent = false,
+  mapCurrent = false,
+  leaderboardCurrent = false,
 }: {
   directoryCurrent?: boolean;
   aboutCurrent?: boolean;
+  mapCurrent?: boolean;
+  leaderboardCurrent?: boolean;
 }) {
   return (
     <header className="top">
@@ -22,6 +26,15 @@ export function SiteHeader({
           aria-current={directoryCurrent ? "page" : undefined}
         >
           Directory
+        </Link>
+        <Link href="/map" aria-current={mapCurrent ? "page" : undefined}>
+          Map
+        </Link>
+        <Link
+          href="/leaderboard"
+          aria-current={leaderboardCurrent ? "page" : undefined}
+        >
+          Leaderboard
         </Link>
         <Link href="/about" aria-current={aboutCurrent ? "page" : undefined}>
           About

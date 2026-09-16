@@ -7,6 +7,12 @@ export const dynamic = "force-dynamic";
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const now = new Date();
   const staticRoutes: MetadataRoute.Sitemap = [
+    ...["/map", "/leaderboard"].map((path) => ({
+      url: `${SITE_URL}${path}`,
+      lastModified: now,
+      changeFrequency: "daily" as const,
+      priority: 0.8,
+    })),
     {
       url: SITE_URL,
       lastModified: now,

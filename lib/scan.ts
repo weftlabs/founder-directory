@@ -1,5 +1,6 @@
 import {
   existingHandles,
+  saveIntroMetrics,
   insertFounderIfAbsent,
   loadScanProgress,
   saveScanProgress,
@@ -21,6 +22,7 @@ export function founderFromIntro(hit: TrendHit): Founder {
     throw new TypeError("A public source tweet is required");
   }
   return {
+    ...(hit.introMetrics ? { introMetrics: hit.introMetrics } : {}),
     handle: hit.handle,
     name: hit.name,
     bio: null,
@@ -60,6 +62,7 @@ export function unknownHits(hits: TrendHit[], known: Set<string>): TrendHit[] {
 export type ScanCursorMap = Record<string, string | null>;
 
 export type PendingIntro = {
+  introMetrics?: TrendHit["introMetrics"];
   handle: string;
   name: string;
   text: string;
@@ -101,13 +104,30 @@ export function parsePendingIntros(value: unknown): TrendHit[] {
         ? row.tweetId
         : null;
     if (tweetId && !/^[0-9]{1,25}$/.test(tweetId)) continue;
-    out.push({ handle, name, text, tweetId });
+    const m = row.introMetrics as TrendHit["introMetrics"];
+    const validMetrics =
+      m &&
+      typeof m.observedAt === "string" &&
+      Number.isFinite(Date.parse(m.observedAt)) &&
+      [m.likes, m.views].every(
+        (v) =>
+          v === null ||
+          (typeof v === "number" && Number.isSafeInteger(v) && v >= 0),
+      );
+    out.push({
+      handle,
+      name,
+      text,
+      tweetId,
+      ...(validMetrics ? { introMetrics: m } : {}),
+    });
   }
   return out;
 }
 
 export function serializePendingIntros(hits: TrendHit[]): PendingIntro[] {
   return hits.map((hit) => ({
+    ...(hit.introMetrics ? { introMetrics: hit.introMetrics } : {}),
     handle: hit.handle,
     name: hit.name,
     text: hit.text,
@@ -170,6 +190,7 @@ export function scanDeadlineMs(kind: ScanKind = "scheduled"): number {
 }
 
 export type ScanStore = {
+  saveIntroMetrics?(hits: TrendHit[]): Promise<void>;
   existingHandles(): Promise<Set<string>>;
   insertFounderIfAbsent(founder: Founder): Promise<boolean>;
   upsertFounder(founder: Founder): Promise<void>;
@@ -198,6 +219,7 @@ export type ScanDependencies = {
 };
 
 const defaultStore: ScanStore = {
+  saveIntroMetrics,
   existingHandles,
   insertFounderIfAbsent,
   upsertFounder,
@@ -233,6 +255,7 @@ export async function materializePendingIntros(
     known.add(hit.handle.toLowerCase());
     if (inserted) added += 1;
   }
+  await store.saveIntroMetrics?.(progress.pending);
   await store.touchScan();
   return { added, skipped };
 }
@@ -399,6 +422,7 @@ export async function runScan(
     added += 1;
   }
 
+  await store.saveIntroMetrics?.([...queued, ...discovered]);
   await store.saveProgress({ cursors, pending: leftover });
   await store.touchScan();
 

@@ -1,0 +1,105 @@
+import { expect, test } from "@playwright/test";
+
+test("map search, selection, category and country filters agree", async ({
+  page,
+}) => {
+  await page.goto("/discovery-preview");
+  await expect(
+    page.getByRole("heading", { name: "Big ideas. Everywhere." }),
+  ).toBeVisible();
+  await expect(page.locator(".maplibregl-canvas")).toBeVisible();
+  expect(
+    (await page.locator(".maplibregl-canvas").boundingBox())!.height,
+  ).toBeGreaterThan(300);
+  await expect(page.locator(".coverage-note")).toContainText(
+    "8 mapped · 2 without",
+  );
+  await page.getByRole("button", { name: "Show Alex Example on map" }).click();
+  await expect(page.locator(".map-profile")).toContainText("Alex Example");
+  await expect(page.locator(".map-profile a")).toHaveAttribute(
+    "href",
+    "/u/example_0",
+  );
+  await page
+    .getByRole("combobox", { name: "Country", exact: true })
+    .selectOption("Germany");
+  await expect(page.locator(".discovery-rows li")).toHaveCount(1);
+  await expect(page.locator(".coverage-note")).toContainText(
+    "1 mapped · 0 without",
+  );
+  await page.getByRole("button", { name: "Tools", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "No founders match these filters." }),
+  ).toBeVisible();
+  await expect(page.locator(".map-profile")).toHaveCount(0);
+  await page.getByRole("button", { name: "Clear filters" }).first().click();
+  await page.getByRole("searchbox").fill("Mars");
+  await expect(page.locator(".coverage-note")).toContainText(
+    "0 mapped · 1 without",
+  );
+  await expect(page.locator(".discovery-rows li")).toHaveCount(1);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+});
+
+test("leaderboard changes order with metric and excludes unmeasured founders", async ({
+  page,
+}) => {
+  await page.goto("/discovery-preview?mode=leaderboard");
+  await expect(page.locator(".discovery-rows li")).toHaveCount(9);
+  await expect(page.locator(".discovery-rows li").first()).toContainText(
+    "Alex Example",
+  );
+  await page.getByRole("button", { name: "Most viewed" }).click();
+  await expect(page.locator(".discovery-rows li").first()).toContainText(
+    "Drew Example",
+  );
+  await expect(page.locator(".podium-card").first()).toContainText(
+    "Drew Example",
+  );
+  await expect(page.locator(".ranking-explanation")).toContainText(
+    "1 founders have no recorded views",
+  );
+  await page.getByRole("searchbox").fill("no such person");
+  await expect(page.locator(".podium-card")).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "No founders match these filters." }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+});
+
+test("public pages are reachable and never invent rankings", async ({
+  page,
+}) => {
+  await page.goto("/map");
+  await expect(page.locator("header a[href='/map']")).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  await page.locator("header a[href='/leaderboard']").click();
+  await expect(
+    page.getByRole("heading", { name: "The spotlight is waiting." }),
+  ).toBeVisible();
+  await expect(page.locator(".podium-card")).toHaveCount(0);
+  await expect(page.locator("header a[href='/leaderboard']")).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+});
+
+test("map network failure keeps the founder list usable", async ({ page }) => {
+  await page.route("https://tiles.openfreemap.org/**", (route) =>
+    route.abort(),
+  );
+  await page.goto("/discovery-preview");
+  await expect(page.locator(".map-failure")).toBeVisible({ timeout: 20000 });
+  await page.getByRole("searchbox").fill("Berlin");
+  await expect(page.locator(".discovery-rows li")).toHaveCount(1);
+});

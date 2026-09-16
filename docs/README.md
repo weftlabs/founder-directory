@@ -18,3 +18,5 @@ a second, conflicting specification.
 
 `pnpm check:repo` validates local Markdown file links and selected repository
 boundaries. It does not verify remote links or replace human documentation review.
+
+- [Map and leaderboard](discovery.md): locations, source counts and local previews.
