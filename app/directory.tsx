@@ -80,7 +80,7 @@ export function Directory({
       <h1 className="hero">Find the people building.</h1>
       <p className="lede">
         Each founder has a public profile page. Search by name, city, or
-        country, then open a card.
+        country, then open a card. Updated <b>{scanned}</b>.
       </p>
       <div className="search">
         <input
@@ -225,9 +225,6 @@ export function Directory({
           ))}
         </div>
       )}
-      <p className="fresh" style={{ marginTop: 24 }}>
-        Directory · updated <b>{scanned}</b>
-      </p>
     </main>
   );
 }

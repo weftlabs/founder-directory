@@ -14,6 +14,8 @@ test("directory works without credentials on desktop and mobile", async ({
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
     "Find the people building.",
   );
+  await expect(page.locator("header")).not.toContainText("updated");
+  await expect(page.locator("p.lede")).toContainText("Updated");
   const search = page.getByRole("searchbox", { name: "Search founders" });
   await search.fill("synthetic no-match query");
   await expect(page.getByText("No one matches that filter.")).toBeVisible();

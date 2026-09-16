@@ -109,6 +109,10 @@ h1.hero {
   margin: 14px 0 28px;
   max-width: 46rem;
 }
+.lede b {
+  color: #d8ff3e;
+  font-weight: 600;
+}
 .search {
   display: flex;
   gap: 10px;
