@@ -5,6 +5,9 @@ import {
   BULK_MAX_HYDRATIONS,
   BULK_MAX_SEARCHES,
   BULK_SCAN_PAGES,
+  DISCOVER_DEADLINE_MS,
+  HYDRATE_DEADLINE_MS,
+  HYDRATE_MAX_HYDRATIONS,
   parseCursors,
   parsePendingIntros,
   materializePendingIntros,
@@ -13,6 +16,7 @@ import {
   SCHEDULED_MAX_HYDRATIONS,
   SCHEDULED_MAX_SEARCHES,
   SCHEDULED_SCAN_PAGES,
+  scanDeadlineMs,
   scanLimits,
   unknownHits,
   type ScanStore,
@@ -132,6 +136,23 @@ test("scheduled ticks cap Weft work below one phrase times five pages", () => {
   assert.equal(BULK_MAX_SEARCHES, 16);
   assert.equal(BULK_MAX_HYDRATIONS, 30);
   assert.ok(BULK_MAX_SEARCHES < TREND_PHRASES.length * BULK_SCAN_PAGES);
+});
+
+test("discover searches without hydrating; hydrate skips search", () => {
+  assert.deepEqual(scanLimits("discover"), {
+    maxPages: SCHEDULED_SCAN_PAGES,
+    maxSearches: SCHEDULED_MAX_SEARCHES,
+    maxHydrations: 0,
+  });
+  assert.deepEqual(scanLimits("hydrate"), {
+    maxPages: SCHEDULED_SCAN_PAGES,
+    maxSearches: 0,
+    maxHydrations: HYDRATE_MAX_HYDRATIONS,
+  });
+  assert.equal(scanDeadlineMs("discover"), DISCOVER_DEADLINE_MS);
+  assert.equal(scanDeadlineMs("hydrate"), HYDRATE_DEADLINE_MS);
+  assert.ok(HYDRATE_DEADLINE_MS < 800_000);
+  assert.ok(HYDRATE_MAX_HYDRATIONS > SCHEDULED_MAX_HYDRATIONS);
 });
 
 test("malformed persisted scan progress fails closed", () => {
@@ -396,6 +417,56 @@ test("a stored basic record prevents paid replay after later work fails", async 
     },
   });
   assert.equal(hydrateCalls, 1);
+});
+
+test("discover does not call fetchProfile; hydrate does not search", async () => {
+  const { record, store } = memoryStore();
+  const discovered = await runScan({
+    store,
+    ...scanLimits("discover"),
+    now: () => 0,
+    deadlineMs: scanDeadlineMs("discover"),
+    async searchIntroPage() {
+      return { hits: [hit("alice"), hit("bob")], cursor: "p2" };
+    },
+    async fetchProfile() {
+      assert.fail("discover must not hydrate");
+    },
+    async normalizePlaces() {
+      return new Map();
+    },
+  });
+  assert.equal(discovered.added, 0);
+  assert.equal(discovered.hydrations, 0);
+  assert.equal(discovered.searches, SCHEDULED_MAX_SEARCHES);
+  assert.deepEqual(
+    record.pending.map((row) => row.handle),
+    ["alice", "bob"],
+  );
+
+  const hydrated: string[] = [];
+  let searched = 0;
+  const second = await runScan({
+    store,
+    ...scanLimits("hydrate"),
+    now: () => 0,
+    deadlineMs: scanDeadlineMs("hydrate"),
+    async searchIntroPage() {
+      searched += 1;
+      return { hits: [hit("should-not-search")], cursor: "nope" };
+    },
+    async fetchProfile(handle) {
+      hydrated.push(handle);
+      return founderFor(handle);
+    },
+    async normalizePlaces() {
+      return new Map();
+    },
+  });
+  assert.equal(searched, 0);
+  assert.deepEqual(hydrated, ["alice", "bob"]);
+  assert.equal(second.added, 2);
+  assert.equal(record.cursors[TREND_PHRASES[0]], "p2");
 });
 
 test("retweet-only pages keep the cursor so history walking continues", async () => {
