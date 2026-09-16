@@ -76,6 +76,16 @@ test("About navigation, attribution, and SEO survive the branding change", async
     .click();
   await expect(page).toHaveTitle("About | Founder Directory");
   await expect(
+    page.locator('link[rel="icon"][type="image/x-icon"]'),
+  ).toHaveAttribute("href", /\/favicon\.ico/);
+  await expect(
+    page.locator('link[rel="icon"][type="image/svg+xml"]'),
+  ).toHaveAttribute("href", /\/icon\.svg/);
+  await expect(page.locator('link[rel="apple-touch-icon"]')).toHaveAttribute(
+    "href",
+    /\/apple-icon\.png/,
+  );
+  await expect(
     page.locator("header").getByRole("link", { name: "About", exact: true }),
   ).toHaveAttribute("aria-current", "page");
   await expect(
@@ -105,6 +115,15 @@ test("About navigation, attribution, and SEO survive the branding change", async
   const image = await request.get("/opengraph-image");
   expect(image.status()).toBe(200);
   expect(image.headers()["content-type"]).toContain("image/png");
+  const favicon = await request.get("/favicon.ico");
+  expect(favicon.status()).toBe(200);
+  expect(favicon.headers()["content-type"]).toContain("image/x-icon");
+  const icon = await request.get("/icon.svg");
+  expect(icon.status()).toBe(200);
+  expect(icon.headers()["content-type"]).toContain("image/svg+xml");
+  const appleIcon = await request.get("/apple-icon.png");
+  expect(appleIcon.status()).toBe(200);
+  expect(appleIcon.headers()["content-type"]).toContain("image/png");
 });
 
 test("unknown profiles return 404 rather than inventing a founder", async ({
