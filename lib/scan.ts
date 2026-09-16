@@ -116,12 +116,15 @@ export function serializePendingIntros(hits: TrendHit[]): PendingIntro[] {
 }
 
 export const SCAN_DEADLINE_MS = 240_000;
+export const DISCOVER_DEADLINE_MS = 90_000;
+export const HYDRATE_DEADLINE_MS = 780_000;
 export const SCHEDULED_SCAN_PAGES = 5;
 export const BULK_SCAN_PAGES = 25;
 export const SCHEDULED_MAX_SEARCHES = 8;
 export const BULK_MAX_SEARCHES = 16;
 export const SCHEDULED_MAX_HYDRATIONS = 15;
 export const BULK_MAX_HYDRATIONS = 30;
+export const HYDRATE_MAX_HYDRATIONS = 50;
 
 export type ScanLimits = {
   maxPages: number;
@@ -129,18 +132,41 @@ export type ScanLimits = {
   maxHydrations: number;
 };
 
-export function scanLimits(bulk = false): ScanLimits {
-  return bulk
-    ? {
-        maxPages: BULK_SCAN_PAGES,
-        maxSearches: BULK_MAX_SEARCHES,
-        maxHydrations: BULK_MAX_HYDRATIONS,
-      }
-    : {
-        maxPages: SCHEDULED_SCAN_PAGES,
-        maxSearches: SCHEDULED_MAX_SEARCHES,
-        maxHydrations: SCHEDULED_MAX_HYDRATIONS,
-      };
+export type ScanKind = "scheduled" | "bulk" | "discover" | "hydrate";
+
+export function scanLimits(kind: ScanKind | boolean = "scheduled"): ScanLimits {
+  if (kind === true || kind === "bulk") {
+    return {
+      maxPages: BULK_SCAN_PAGES,
+      maxSearches: BULK_MAX_SEARCHES,
+      maxHydrations: BULK_MAX_HYDRATIONS,
+    };
+  }
+  if (kind === "discover") {
+    return {
+      maxPages: SCHEDULED_SCAN_PAGES,
+      maxSearches: SCHEDULED_MAX_SEARCHES,
+      maxHydrations: 0,
+    };
+  }
+  if (kind === "hydrate") {
+    return {
+      maxPages: SCHEDULED_SCAN_PAGES,
+      maxSearches: 0,
+      maxHydrations: HYDRATE_MAX_HYDRATIONS,
+    };
+  }
+  return {
+    maxPages: SCHEDULED_SCAN_PAGES,
+    maxSearches: SCHEDULED_MAX_SEARCHES,
+    maxHydrations: SCHEDULED_MAX_HYDRATIONS,
+  };
+}
+
+export function scanDeadlineMs(kind: ScanKind = "scheduled"): number {
+  if (kind === "hydrate") return HYDRATE_DEADLINE_MS;
+  if (kind === "discover") return DISCOVER_DEADLINE_MS;
+  return SCAN_DEADLINE_MS;
 }
 
 export type ScanStore = {

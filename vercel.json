@@ -6,8 +6,12 @@
   },
   "crons": [
     {
-      "path": "/api/cron/scan",
+      "path": "/api/cron/discover",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/hydrate",
+      "schedule": "7-59/15 * * * *"
     }
   ]
 }

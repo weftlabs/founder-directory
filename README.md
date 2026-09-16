@@ -31,7 +31,8 @@ your own Neon `DATABASE_URL`, get a server-only `WEFT_API_KEY` from the
 
 **Deploy safely:** non-`main` branches get Vercel Git previews, merges to `main`
 deploy a separate Vercel preview through CD, and a `vX.Y.Z` tag deploys
-production. The included cron schedule is every five minutes. Configure wallet
+production. Collection is two production crons: discover every five minutes,
+hydrate four times an hour. Configure wallet
 limits and isolate preview credentials before enabling it. A Vercel clone does
 not come with a database, funded wallet, or free provider calls. Read the
 [deployment guide](docs/deployment.md) first.
