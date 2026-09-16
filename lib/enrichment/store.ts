@@ -1,4 +1,5 @@
 // Layer: persistence. Owns durable evidence, accounting, and guarded publication.
+import "../assert-server";
 import { createHash, randomUUID } from "node:crypto";
 import type { Database, Sql } from "./db";
 
@@ -173,7 +174,7 @@ export class EnrichmentStore {
     await this.db.transaction(async (tx) => {
       const attempt = await one<{ budget_id: string; cap_micros: string }>(
         tx,
-        "UPDATE enrichment_collection_attempts SET dispatch_state='not_charged',payment_state='not_charged',resolution=$2 WHERE id=$1 AND dispatch_state IN ('reserved','dispatching','uncertain') RETURNING budget_id,cap_micros",
+        "UPDATE enrichment_collection_attempts SET dispatch_state='not_charged',payment_state='not_charged',resolution=$2 WHERE id=$1 AND dispatch_state IN ('reserved','dispatching','uncertain') RETURNING budget_id,cap_micros::text",
         [attemptId, json(resolution)],
       );
       await tx.query(
@@ -309,16 +310,9 @@ export class EnrichmentStore {
     payload: unknown;
     excerpt: string;
   }): Promise<string> {
-    const existing = (
-      await this.db.query<{ id: string }>(
-        "SELECT id FROM enrichment_evidence WHERE artifact_id=$1 AND extractor_version=$2 AND locator=$3",
-        [input.artifactId, input.extractorVersion, input.locator],
-      )
-    ).rows[0];
-    if (existing) return existing.id;
     const id = randomUUID();
     await this.db.query(
-      "INSERT INTO enrichment_evidence(id,artifact_id,extractor_version,locator,source_id,source_url,author_id,published_at,payload,excerpt) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+      "INSERT INTO enrichment_evidence(id,artifact_id,extractor_version,locator,source_id,source_url,author_id,published_at,payload,excerpt) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(artifact_id,extractor_version,locator) DO NOTHING",
       [
         id,
         input.artifactId,
@@ -332,7 +326,23 @@ export class EnrichmentStore {
         input.excerpt,
       ],
     );
-    return id;
+    return (
+      await one<{ id: string }>(
+        this.db,
+        "SELECT id FROM enrichment_evidence WHERE artifact_id=$1 AND extractor_version=$2 AND locator=$3 AND payload=$4::jsonb AND excerpt=$5 AND source_id IS NOT DISTINCT FROM $6 AND source_url IS NOT DISTINCT FROM $7 AND author_id IS NOT DISTINCT FROM $8 AND published_at IS NOT DISTINCT FROM $9::timestamptz",
+        [
+          input.artifactId,
+          input.extractorVersion,
+          input.locator,
+          json(input.payload),
+          input.excerpt,
+          input.sourceId ?? null,
+          input.sourceUrl ?? null,
+          input.authorId ?? null,
+          input.publishedAt ?? null,
+        ],
+      )
+    ).id;
   }
   async linkEvidence(entityId: string, evidenceId: string, relation: string) {
     await this.db.query(
@@ -351,11 +361,17 @@ export class EnrichmentStore {
     );
   }
   async linkProduct(founderId: string, productId: string, evidenceId: string) {
-    await one(
-      this.db,
-      "INSERT INTO enrichment_founder_products SELECT f.id,p.id,$3 FROM enrichment_entities f,enrichment_entities p WHERE f.id=$1 AND f.kind='founder' AND p.id=$2 AND p.kind='product' ON CONFLICT DO NOTHING RETURNING founder_id",
-      [founderId, productId, evidenceId],
-    );
+    await this.db.transaction(async (tx) => {
+      await one(
+        tx,
+        "SELECT f.id FROM enrichment_entities f,enrichment_entities p WHERE f.id=$1 AND f.kind='founder' AND p.id=$2 AND p.kind='product'",
+        [founderId, productId],
+      );
+      await tx.query(
+        "INSERT INTO enrichment_founder_products VALUES($1,$2,$3) ON CONFLICT DO NOTHING",
+        [founderId, productId, evidenceId],
+      );
+    });
   }
   async createRelease(manifest: {
     stages: string[];

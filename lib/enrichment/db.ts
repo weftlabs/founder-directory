@@ -1,4 +1,5 @@
 // Layer: persistence. Owns explicit connections and transaction boundaries.
+import "../assert-server";
 import { Pool } from "pg";
 import { readFile } from "node:fs/promises";
 

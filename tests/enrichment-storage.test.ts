@@ -371,6 +371,25 @@ test("required stages stay ordered; expired work blocks and withdrawal prevents 
       payload: { text: "synthetic source" },
       excerpt: "synthetic source",
     });
+    assert.equal(
+      await store.addEvidence({
+        artifactId: raw.id,
+        extractorVersion: "v1",
+        locator: "$",
+        payload: { text: "synthetic source" },
+        excerpt: "synthetic source",
+      }),
+      evidence,
+    );
+    await assert.rejects(() =>
+      store.addEvidence({
+        artifactId: raw.id,
+        extractorVersion: "v1",
+        locator: "$",
+        payload: { text: "changed" },
+        excerpt: "changed",
+      }),
+    );
     const release = await store.createRelease({
       stages: ["collect", "extract", "dna"],
     });
@@ -381,6 +400,9 @@ test("required stages stay ordered; expired work blocks and withdrawal prevents 
     await store.promoteRelease("test", release, "initial");
     const entityId = await store.createEntity("founder", "ordered");
     await store.linkEvidence(entityId, evidence, "source");
+    const product = await store.createEntity("product", "synthetic-product");
+    await store.linkProduct(entityId, product, evidence);
+    await store.linkProduct(entityId, product, evidence);
     await store.intake("test", entityId);
     await store.intake("test", entityId);
     const trusted = {
