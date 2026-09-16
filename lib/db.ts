@@ -1,6 +1,7 @@
 import "./assert-server";
 import { neon } from "@neondatabase/serverless";
 import type { Founder, VibeCheck } from "./model";
+import { isPresenceSessionId } from "./presence";
 
 function sql() {
   const url = process.env.DATABASE_URL;
@@ -36,6 +37,10 @@ export async function ensureSchema() {
     last_scan_at TIMESTAMPTZ
   )`;
   await db`INSERT INTO scan_meta (id) VALUES (1) ON CONFLICT (id) DO NOTHING`;
+  await db`CREATE TABLE IF NOT EXISTS presence (
+    session_id TEXT PRIMARY KEY,
+    seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`;
 }
 
 type Row = {
@@ -164,6 +169,26 @@ export async function updateFounderPlace(
 export async function touchScan() {
   await ensureSchema();
   await sql()`UPDATE scan_meta SET last_scan_at = now() WHERE id = 1`;
+}
+
+export async function touchPresence(sessionId: string) {
+  if (!isPresenceSessionId(sessionId)) return;
+  await ensureSchema();
+  const db = sql();
+  await db`INSERT INTO presence (session_id, seen_at)
+    VALUES (${sessionId}, now())
+    ON CONFLICT (session_id) DO UPDATE SET seen_at = now()`;
+  await db`DELETE FROM presence WHERE seen_at < now() - interval '10 minutes'`;
+}
+
+export async function onlineCount() {
+  await ensureSchema();
+  const rows = (await sql()`
+    SELECT COUNT(*)::int AS n
+    FROM presence
+    WHERE seen_at > now() - interval '45 seconds'
+  `) as { n: number }[];
+  return rows[0]?.n ?? 0;
 }
 
 export async function lastScanAt(): Promise<string | null> {

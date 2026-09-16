@@ -31,6 +31,23 @@ test("directory works without credentials on desktop and mobile", async ({
   expect(errors).toEqual([]);
 });
 
+test("presence is public and the header shows an online count without a database", async ({
+  page,
+  request,
+}) => {
+  const get = await request.get("/api/presence");
+  expect(get.status()).toBe(200);
+  expect(await get.json()).toEqual({ online: 0 });
+  const post = await request.post("/api/presence", {
+    data: { sessionId: "not-a-uuid" },
+  });
+  expect(post.status()).toBe(200);
+  expect(await post.json()).toEqual({ online: 0 });
+  await page.goto("/");
+  await expect(page.locator("p.online")).toBeVisible();
+  await expect(page.locator("p.online b")).toHaveText("0");
+});
+
 test("cron rejects unauthenticated requests, including bulk", async ({
   request,
 }) => {

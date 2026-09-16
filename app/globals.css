@@ -62,6 +62,32 @@ header.top {
   color: #d8ff3e;
   font-weight: 600;
 }
+.online {
+  color: #9a978c;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: right;
+}
+.online b {
+  color: #d8ff3e;
+  font-weight: 600;
+}
+.online .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #d8ff3e;
+  box-shadow: 0 0 0 4px #d8ff3e22;
+  flex: none;
+}
+@media (max-width: 720px) {
+  .online {
+    font-size: 12px;
+    max-width: 58%;
+  }
+}
 main.dir {
   max-width: 1120px;
   margin: 0 auto;

@@ -10,7 +10,11 @@
 4. Provision your own Neon database. Use a different database/branch for previews.
 5. Add `DATABASE_URL`, `WEFT_API_KEY`, and a strong `CRON_SECRET` to the intended
    server environment only. Get a Weft key from the buyer dashboard linked in
-   the README. Set wallet limits before enabling collection.
+   the README. Set wallet limits before enabling collection. Optional product
+   analytics: a public PostHog project token as `NEXT_PUBLIC_POSTHOG_KEY` (must
+   start with `phc_`) and `NEXT_PUBLIC_POSTHOG_HOST=https://eu.i.posthog.com`.
+   Create a dedicated Founders Directory project. Do not reuse another app's
+   token. The online-now chip counts Neon heartbeats, not PostHog.
 6. Review [vercel.json](../vercel.json): it schedules a scan every five minutes.
    Remove/disable the schedule in your fork until you explicitly want paid
    collection. Check your Vercel plan's cron limits; this frequency is not a
