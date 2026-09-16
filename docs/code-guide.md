@@ -7,9 +7,13 @@ platform architecture specification.
 app/                  Next.js routes and presentation
   directory.tsx       browser-side search and filter state
   site-header.tsx     shared product navigation
+  analytics.tsx       optional PostHog pageviews (no-op without a project token)
+  online-now.tsx      Neon heartbeat for the online chip (~20s ping, 45s window)
   api/cron/scan/      authenticated collection entry point
+  api/presence/       anonymous session heartbeat; no Weft
 lib/
   model.ts            pure founder types and heuristics
+  presence.ts         anonymous session-id shape for the online chip
   scan.ts             collection workflow
   db.ts               Neon persistence
   x.ts                X search/profile adapter through Weft

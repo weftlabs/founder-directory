@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import "@fontsource/ibm-plex-sans/latin-400.css";
 import "@fontsource/ibm-plex-sans/latin-600.css";
 import "@fontsource/ibm-plex-sans/latin-700.css";
+import { Analytics } from "./analytics";
 import { SiteFooter } from "./site-footer";
 import {
   NITTARAB_X,
@@ -94,6 +95,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
         />
+        <Analytics />
         {children}
         <SiteFooter />
       </body>

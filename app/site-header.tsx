@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { OnlineNow } from "./online-now";
 
 export function SiteHeader({
   aside,
@@ -18,6 +19,7 @@ export function SiteHeader({
           About
         </Link>
         {aside}
+        <OnlineNow />
       </div>
     </header>
   );
