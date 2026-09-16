@@ -163,6 +163,10 @@ main.dir {
   outline: 2px solid #d8ff3e;
   outline-offset: 4px;
 }
+.search input:focus,
+.search input:focus-visible {
+  outline: none;
+}
 .sr-only {
   position: absolute;
   width: 1px;
