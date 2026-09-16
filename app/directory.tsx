@@ -90,7 +90,12 @@ export function Directory({
           onChange={(e) => update({ q: e.target.value }, true)}
           placeholder="Search name, handle, city, or country"
         />
-        <span className="count">{rows.length} founders</span>
+        <span className="count">
+          {rows.length} founders
+          <span className="updated">
+            Updated <b>{scanned}</b>
+          </span>
+        </span>
       </div>
       <div className="desktop-filters">
         <FilterControls {...controls} />
@@ -225,9 +230,6 @@ export function Directory({
           ))}
         </div>
       )}
-      <p className="fresh" style={{ marginTop: 24 }}>
-        Directory · updated <b>{scanned}</b>
-      </p>
     </main>
   );
 }

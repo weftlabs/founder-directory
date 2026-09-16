@@ -100,7 +100,7 @@ export default function FilterPreview() {
         Local filter preview · fictional sample profiles · no live data or paid
         calls
       </p>
-      <Directory founders={founders} scanned="demo" />
+      <Directory founders={founders} scanned="just now" />
     </>
   );
 }

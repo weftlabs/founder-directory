@@ -21,13 +21,7 @@ export default async function Home() {
   }
   return (
     <>
-      <SiteHeader
-        aside={
-          <div className="fresh">
-            Directory · updated <b>{scanned}</b>
-          </div>
-        }
-      />
+      <SiteHeader />
       <Directory founders={founders} scanned={scanned} />
     </>
   );
