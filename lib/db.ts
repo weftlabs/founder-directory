@@ -25,9 +25,11 @@ export async function ensureSchema() {
     vibe_score INTEGER NOT NULL,
     vibe_signals JSONB NOT NULL DEFAULT '[]'::jsonb,
     intro_text TEXT,
+    intro_url TEXT,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`;
+  await db`ALTER TABLE founders ADD COLUMN IF NOT EXISTS intro_url TEXT`;
   await db`CREATE TABLE IF NOT EXISTS scan_meta (
     id INTEGER PRIMARY KEY DEFAULT 1,
     last_scan_at TIMESTAMPTZ
@@ -51,6 +53,7 @@ type Row = {
   vibe_score: number;
   vibe_signals: VibeCheck["signals"] | string;
   intro_text: string | null;
+  intro_url: string | null;
   updated_at: string | Date | null;
 };
 
@@ -72,6 +75,7 @@ function toFounder(row: Row): Founder {
     avatarUrl: row.avatar_url,
     category: row.category,
     introText: row.intro_text,
+    introUrl: row.intro_url,
     updatedAt:
       row.updated_at instanceof Date
         ? row.updated_at.toISOString()
@@ -114,14 +118,14 @@ export async function upsertFounder(founder: Founder) {
     INSERT INTO founders (
       handle, name, bio, website, github, linkedin, city, country, location,
       avatar_url, category, vibe_label, vibe_score, vibe_signals, intro_text,
-      updated_at
+      intro_url, updated_at
     ) VALUES (
       ${founder.handle}, ${founder.name}, ${founder.bio}, ${founder.website},
       ${founder.github}, ${founder.linkedin}, ${founder.city}, ${founder.country},
       ${founder.location}, ${founder.avatarUrl}, ${founder.category},
       ${founder.vibe.label}, ${founder.vibe.score},
       ${JSON.stringify(founder.vibe.signals)}::jsonb, ${founder.introText},
-      now()
+      ${founder.introUrl}, now()
     )
     ON CONFLICT (handle) DO UPDATE SET
       name = excluded.name,
@@ -137,8 +141,22 @@ export async function upsertFounder(founder: Founder) {
       vibe_label = excluded.vibe_label,
       vibe_score = excluded.vibe_score,
       vibe_signals = excluded.vibe_signals,
-      intro_text = excluded.intro_text,
+      intro_text = COALESCE(excluded.intro_text, founders.intro_text),
+      intro_url = COALESCE(excluded.intro_url, founders.intro_url),
       updated_at = now()
+  `;
+}
+
+export async function updateFounderPlace(
+  handle: string,
+  city: string | null,
+  country: string | null,
+) {
+  await ensureSchema();
+  await sql()`
+    UPDATE founders
+    SET city = ${city}, country = ${country}
+    WHERE lower(handle) = ${handle.toLowerCase()}
   `;
 }
 

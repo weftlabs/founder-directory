@@ -133,7 +133,19 @@ h1.hero {
   line-height: 1.1;
   margin: 6px 0 4px;
 }
-.bio { margin: 22px 0; font-size: 1.15rem; color: #c8c4b8; }
+.tweet {
+  margin: 8px 0 22px;
+  padding: 16px 18px;
+  border-left: 3px solid #d8ff3e;
+  background: #161714;
+  border-radius: 0 12px 12px 0;
+  color: #f4f1e8;
+  font-size: 1.05rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+.tweet a { color: #d8ff3e; font-size: 13px; }
+.bio { margin: 22px 0 12px; font-size: 1.15rem; color: #c8c4b8; }
 .panel {
   background: #161714;
   border: 1px solid #2c2e28;

@@ -61,6 +61,17 @@ export default async function ProfilePage({
           </div>
         </div>
         {founder.bio ? <p className="bio">{founder.bio}</p> : null}
+        {founder.introText ? (
+          <blockquote className="tweet">
+            {founder.introText}
+            {founder.introUrl ? (
+              <>
+                {"\n"}
+                <a href={founder.introUrl}>View on X</a>
+              </>
+            ) : null}
+          </blockquote>
+        ) : null}
         <section className="panel">
           <h2>Vibe check</h2>
           <div className="score">

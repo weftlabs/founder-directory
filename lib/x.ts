@@ -53,14 +53,23 @@ function asNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-export type TrendHit = { handle: string; name: string; text: string };
+export type TrendHit = {
+  handle: string;
+  name: string;
+  text: string;
+  tweetId: string | null;
+};
 
-export async function searchIntro(): Promise<TrendHit[]> {
+export async function searchIntroPage(cursor?: string): Promise<{
+  hits: TrendHit[];
+  cursor: string | null;
+}> {
   const client = weft();
   const params = new URLSearchParams({
     phrase: TREND_PHRASE,
     type: "latest",
   });
+  if (cursor) params.set("cursor", cursor);
   const response = await client.fetch(
     {
       url: `${X_SEARCH_URL}?${params.toString()}`,
@@ -75,12 +84,51 @@ export async function searchIntro(): Promise<TrendHit[]> {
     throw new Error(`Search HTTP ${response.status}`);
   }
   const payload = decodeBody(response);
+  const next =
+    asString(payload.cursor) ??
+    asString(asRecord(payload.data)?.cursor) ??
+    null;
+  return { hits: parseHits(payload), cursor: next };
+}
+
+export async function searchIntroPages(maxPages: number): Promise<TrendHit[]> {
+  const seen = new Set<string>();
+  const out: TrendHit[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < maxPages; page += 1) {
+    const result = await searchIntroPage(cursor);
+    for (const hit of result.hits) {
+      const key = hit.handle.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(hit);
+    }
+    if (!result.cursor || result.hits.length === 0) break;
+    if (result.cursor === cursor) break;
+    cursor = result.cursor;
+  }
+  return out;
+}
+
+export async function searchIntro(): Promise<TrendHit[]> {
+  const { hits } = await searchIntroPage();
+  const seen = new Set<string>();
+  const out: TrendHit[] = [];
+  for (const hit of hits) {
+    const key = hit.handle.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(hit);
+  }
+  return out;
+}
+
+function parseHits(payload: Record<string, unknown>): TrendHit[] {
   const tweets = Array.isArray(payload.tweets)
     ? payload.tweets
     : Array.isArray(payload.data)
       ? payload.data
       : [];
-  const seen = new Set<string>();
   const out: TrendHit[] = [];
   for (const item of tweets) {
     const row = asRecord(item);
@@ -90,11 +138,12 @@ export async function searchIntro(): Promise<TrendHit[]> {
       asString(author?.screen_name) ?? asString(author?.username);
     const name = asString(author?.name) ?? handle;
     const text = asString(row.text) ?? asString(row.full_text);
+    const tweetId =
+      asString(row.id_str) ??
+      asString(row.id) ??
+      (typeof row.id === "number" ? String(row.id) : null);
     if (!handle || !name || !text) continue;
-    const key = handle.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push({ handle, name, text });
+    out.push({ handle, name, text, tweetId });
   }
   return out;
 }
@@ -102,6 +151,7 @@ export async function searchIntro(): Promise<TrendHit[]> {
 export async function fetchProfile(
   handle: string,
   introText: string | null,
+  tweetId: string | null = null,
 ): Promise<Founder | null> {
   const client = weft();
   const response = await client.fetch(
@@ -157,6 +207,9 @@ export async function fetchProfile(
     category: categorize({ bio, website, github, professional }),
     vibe,
     introText,
+    introUrl: tweetId
+      ? `https://x.com/${screen}/status/${tweetId}`
+      : null,
     updatedAt: new Date().toISOString(),
   };
 }

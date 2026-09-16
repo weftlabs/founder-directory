@@ -15,6 +15,7 @@ export type Founder = {
   category: string;
   vibe: VibeCheck;
   introText: string | null;
+  introUrl: string | null;
   updatedAt: string | null;
 };
 
