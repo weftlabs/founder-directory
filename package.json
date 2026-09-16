@@ -12,8 +12,11 @@
     "format:check": "prettier --check .",
     "test": "tsx --import ./tests/no-network.mjs --test tests/*.test.ts",
     "test:e2e": "playwright test",
+    "test:e2e:builder-dna": "playwright test --config playwright.builder-dna.config.ts",
+    "check:build-traces": "node scripts/check-build-traces.mjs",
     "check:repo": "node scripts/check-repo.mjs",
-    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm check:repo"
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm check:repo",
+    "verify": "pnpm check && pnpm build && pnpm check:build-traces && pnpm test:e2e && pnpm test:e2e:builder-dna"
   },
   "dependencies": {
     "@fontsource/ibm-plex-sans": "^5.3.0",

@@ -1,0 +1,46 @@
+[
+  {
+    "handle": "example_ops",
+    "name": "Example Operator",
+    "initials": "EO",
+    "location": "Example City",
+    "product": "Example Logistics",
+    "website": "https://example.com/logistics",
+    "oldCategory": "Infra",
+    "summary": "A synthetic logistics example used only in automated tests.",
+    "unknowns": ["Adoption is unknown"],
+    "evidence": [
+      {
+        "id": "ops",
+        "title": "Synthetic logistics source",
+        "excerpt": "Digital workforce for logistics. AI workers for shippers, carriers and 3PLs.",
+        "url": "https://example.com/logistics",
+        "sourceLabel": "Synthetic product page",
+        "kind": "product-site",
+        "observedAt": "2026-09-16T16:09:47Z"
+      }
+    ]
+  },
+  {
+    "handle": "example_dev",
+    "name": "Example Developer",
+    "initials": "ED",
+    "location": "Example Country",
+    "product": "Example Health",
+    "website": "https://example.com/health",
+    "oldCategory": "Consumer",
+    "summary": "A synthetic healthcare example used only in automated tests.",
+    "unknowns": ["Clinical effectiveness has not been assessed"],
+    "evidence": [
+      {
+        "id": "dev",
+        "title": "Synthetic developer source",
+        "excerpt": "ER nurse and full-stack dev building a medication app for nurses and midwives. Documenting the journey in public.",
+        "url": "https://example.com/health",
+        "sourceLabel": "Synthetic bio",
+        "kind": "self-reported",
+        "observedAt": "2026-09-16T16:09:47Z"
+      }
+    ]
+  }
+]
