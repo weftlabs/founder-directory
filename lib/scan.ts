@@ -1,18 +1,49 @@
 import {
   existingHandles,
+  insertFounderIfAbsent,
   loadScanProgress,
   saveScanProgress,
   touchScan,
   upsertFounder,
 } from "./db";
-import type { Founder } from "./model";
+import { parseHandle, type Founder } from "./model";
 import { emptyPlace, normalizePlaces } from "./place";
 import {
   fetchProfile,
+  ProfileUnavailableError,
   searchIntroPage,
   TREND_PHRASES,
   type TrendHit,
 } from "./x";
+
+export function founderFromIntro(hit: TrendHit): Founder {
+  if (!hit.tweetId || !/^[0-9]{1,25}$/.test(hit.tweetId)) {
+    throw new TypeError("A public source tweet is required");
+  }
+  return {
+    handle: hit.handle,
+    name: hit.name,
+    bio: null,
+    website: null,
+    github: null,
+    linkedin: null,
+    city: null,
+    country: null,
+    location: null,
+    avatarUrl: null,
+    category: "Unclear",
+    vibe: {
+      score: 40,
+      label: "Builder",
+      signals: [
+        { id: "language", hit: true, text: "Intro talks like a founder" },
+      ],
+    },
+    introText: hit.text,
+    introUrl: `https://x.com/${hit.handle}/status/${hit.tweetId}`,
+    updatedAt: new Date().toISOString(),
+  };
+}
 
 export function unknownHits(hits: TrendHit[], known: Set<string>): TrendHit[] {
   const seen = new Set<string>();
@@ -30,6 +61,7 @@ export type ScanCursorMap = Record<string, string | null>;
 
 export type PendingIntro = {
   handle: string;
+  name: string;
   text: string;
   tweetId: string | null;
 };
@@ -51,9 +83,16 @@ export function parsePendingIntros(value: unknown): TrendHit[] {
   for (const item of value) {
     if (!item || typeof item !== "object" || Array.isArray(item)) continue;
     const row = item as Record<string, unknown>;
-    const handle = typeof row.handle === "string" ? row.handle.trim() : "";
+    const rawHandle = typeof row.handle === "string" ? row.handle : "";
+    let handle: string;
+    try {
+      handle = parseHandle(rawHandle);
+    } catch {
+      continue;
+    }
+    const name = typeof row.name === "string" ? row.name.trim() : handle;
     const text = typeof row.text === "string" ? row.text : "";
-    if (!handle || !text) continue;
+    if (!handle || !name || !text) continue;
     const key = handle.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
@@ -61,7 +100,8 @@ export function parsePendingIntros(value: unknown): TrendHit[] {
       typeof row.tweetId === "string" && row.tweetId.length > 0
         ? row.tweetId
         : null;
-    out.push({ handle, name: handle, text, tweetId });
+    if (tweetId && !/^[0-9]{1,25}$/.test(tweetId)) continue;
+    out.push({ handle, name, text, tweetId });
   }
   return out;
 }
@@ -69,6 +109,7 @@ export function parsePendingIntros(value: unknown): TrendHit[] {
 export function serializePendingIntros(hits: TrendHit[]): PendingIntro[] {
   return hits.map((hit) => ({
     handle: hit.handle,
+    name: hit.name,
     text: hit.text,
     tweetId: hit.tweetId,
   }));
@@ -104,6 +145,7 @@ export function scanLimits(bulk = false): ScanLimits {
 
 export type ScanStore = {
   existingHandles(): Promise<Set<string>>;
+  insertFounderIfAbsent(founder: Founder): Promise<boolean>;
   upsertFounder(founder: Founder): Promise<void>;
   touchScan(): Promise<void>;
   loadProgress(): Promise<{ cursors: ScanCursorMap; pending: TrendHit[] }>;
@@ -131,6 +173,7 @@ export type ScanDependencies = {
 
 const defaultStore: ScanStore = {
   existingHandles,
+  insertFounderIfAbsent,
   upsertFounder,
   touchScan,
   async loadProgress() {
@@ -147,6 +190,26 @@ const defaultStore: ScanStore = {
     });
   },
 };
+
+export async function materializePendingIntros(
+  store: ScanStore = defaultStore,
+): Promise<{ added: number; skipped: number }> {
+  const progress = await store.loadProgress();
+  const known = await store.existingHandles();
+  let added = 0;
+  let skipped = 0;
+  for (const hit of unknownHits(progress.pending, known)) {
+    if (!hit.tweetId || !/^[0-9]{1,25}$/.test(hit.tweetId)) {
+      skipped += 1;
+      continue;
+    }
+    const inserted = await store.insertFounderIfAbsent(founderFromIntro(hit));
+    known.add(hit.handle.toLowerCase());
+    if (inserted) added += 1;
+  }
+  await store.touchScan();
+  return { added, skipped };
+}
 
 export type ScanResult = {
   scanned: number;
@@ -190,11 +253,26 @@ export async function runScan(
   const hydratedFounders: Founder[] = [];
   let hydrations = 0;
   let failed = 0;
+  let added = 0;
   let queueIndex = 0;
 
   async function hydrateNext(hit: TrendHit) {
     hydrations += 1;
-    const founder = await hydrate(hit.handle, hit.text, hit.tweetId);
+    let founder: Founder | null;
+    try {
+      founder = await hydrate(hit.handle, hit.text, hit.tweetId);
+    } catch (error) {
+      if (!(error instanceof ProfileUnavailableError)) throw error;
+      failed += 1;
+      if (!hit.tweetId || !/^[0-9]{1,25}$/.test(hit.tweetId)) return;
+      // The search result is the public source of truth for this basic row.
+      // Persist it before any later fallible work so this paid lookup is never replayed.
+      founder = founderFromIntro(hit);
+      const inserted = await store.insertFounderIfAbsent(founder);
+      known.add(hit.handle.toLowerCase());
+      if (inserted) added += 1;
+      return;
+    }
     if (!founder) {
       failed += 1;
       return;
@@ -285,7 +363,6 @@ export async function runScan(
     stopped = "deadline";
   }
 
-  let added = 0;
   for (const founder of hydratedFounders) {
     const place = founder.location
       ? (places.get(founder.location) ?? emptyPlace())

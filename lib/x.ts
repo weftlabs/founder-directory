@@ -1,4 +1,4 @@
-import { type FetchResponse } from "@weft-labs/sdk";
+import { WeftError, type FetchResponse } from "@weft-labs/sdk";
 import { defaultWeftDependencies, type WeftDependencies } from "./weft";
 import { emptyPlace } from "./place";
 import { fetchWithRetry } from "./weft-retry";
@@ -6,6 +6,7 @@ import {
   categorize,
   extractGithub,
   extractLinkedin,
+  parseHandle,
   scoreVibe,
   type Founder,
 } from "./model";
@@ -70,6 +71,13 @@ export type TrendHit = {
   text: string;
   tweetId: string | null;
 };
+
+export class ProfileUnavailableError extends Error {
+  constructor(readonly status: number) {
+    super(`Profile provider unavailable (${status})`);
+    this.name = "ProfileUnavailableError";
+  }
+}
 
 const FIRST_PERSON = /\bI(?:['’`]?m| am)\b/i;
 const ROLE =
@@ -187,16 +195,24 @@ function parseHits(payload: Record<string, unknown>): TrendHit[] {
     const row = asRecord(item);
     if (!row) continue;
     const author = asRecord(row.author) ?? asRecord(row.user);
-    const handle = asString(author?.screen_name) ?? asString(author?.username);
-    const name = asString(author?.name) ?? handle;
+    const rawHandle =
+      asString(author?.screen_name) ?? asString(author?.username);
+    const name = asString(author?.name) ?? rawHandle;
     const text = asString(row.text) ?? asString(row.full_text);
-    const tweetId =
+    const rawTweetId =
       asString(row.id_str) ??
       asString(row.id) ??
       (typeof row.id === "number" ? String(row.id) : null);
-    if (!handle || !name || !text) continue;
+    if (!rawHandle || !name || !text || !rawTweetId) continue;
+    let handle: string;
+    try {
+      handle = parseHandle(rawHandle);
+    } catch {
+      continue;
+    }
+    if (!/^[0-9]{1,25}$/.test(rawTweetId)) continue;
     if (!isIntro(text)) continue;
-    out.push({ handle, name, text, tweetId });
+    out.push({ handle, name, text, tweetId: rawTweetId });
   }
   return out;
 }
@@ -209,17 +225,33 @@ export async function fetchProfile(
 ): Promise<Founder | null> {
   if (!dependencies.apiKey()) return null;
   const client = weft(dependencies);
-  const response = await fetchWithRetry(
-    client,
-    {
-      url: `${X_USER_DETAILS_URL}?username=${encodeURIComponent(handle)}`,
-      method: "GET",
-      headers: {},
-      maxCostUsd: MAX_COST_USD,
-      ...X_PROFILE,
-    },
-    dependencies.sleep,
-  );
+  let response: FetchResponse | null;
+  try {
+    response = await fetchWithRetry(
+      client,
+      {
+        url: `${X_USER_DETAILS_URL}?username=${encodeURIComponent(handle)}`,
+        method: "GET",
+        headers: {},
+        maxCostUsd: MAX_COST_USD,
+        ...X_PROFILE,
+      },
+      dependencies.sleep,
+      {
+        attempts: 1,
+        returnLastResponse: true,
+        throwLastTransientError: true,
+      },
+    );
+  } catch (error) {
+    if (error instanceof WeftError && [502, 504].includes(error.status)) {
+      throw new ProfileUnavailableError(error.status);
+    }
+    return null;
+  }
+  if (response && [502, 504].includes(response.status)) {
+    throw new ProfileUnavailableError(response.status);
+  }
   if (!response || response.status < 200 || response.status >= 300) return null;
   let payload: Record<string, unknown>;
   try {

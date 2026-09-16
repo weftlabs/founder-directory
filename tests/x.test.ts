@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { fetchProfile, searchIntroPage, searchIntroPages } from "../lib/x";
+import {
+  fetchProfile,
+  ProfileUnavailableError,
+  searchIntroPage,
+  searchIntroPages,
+} from "../lib/x";
 import { noKey, offline, response } from "./fixtures";
 
 test("profile and search with no key do not construct a client", async () => {
@@ -54,6 +59,40 @@ test("protected profiles are not collected", async () => {
   );
 });
 
+test("paid upstream profile failures are exposed for intro-only fallback", async () => {
+  await assert.rejects(
+    fetchProfile(
+      "alice",
+      "I'm a solo founder",
+      "123",
+      offline(async () => ({
+        ...response(502),
+        heldUsd: "0.005",
+        paymentStatus: "pending",
+      })),
+    ),
+    (error: unknown) =>
+      error instanceof ProfileUnavailableError && error.status === 502,
+  );
+});
+
+test("profile hydration does not retry a transient paid response", async () => {
+  let calls = 0;
+  await assert.rejects(
+    fetchProfile(
+      "alice",
+      "I'm a solo founder",
+      "123",
+      offline(async () => {
+        calls += 1;
+        return response(504);
+      }),
+    ),
+    ProfileUnavailableError,
+  );
+  assert.equal(calls, 1);
+});
+
 test("profile recovery extracts model fields without inventing geography", async () => {
   let calls = 0;
   const profile = await fetchProfile(
@@ -66,7 +105,6 @@ test("profile recovery extracts model fields without inventing geography", async
       assert.equal(request.operationId, "bazaar-x402-atlas-183");
       assert.equal(request.accessMethodId, "bazaar-x402-atlas-183-x402");
       assert.equal(new URL(request.url).searchParams.get("username"), "alice");
-      if (calls === 1) return response(504);
       return response(200, {
         data: {
           core: { name: "Alice", screen_name: "Alice" },
@@ -85,7 +123,7 @@ test("profile recovery extracts model fields without inventing geography", async
       });
     }),
   );
-  assert.equal(calls, 2);
+  assert.equal(calls, 1);
   assert.ok(profile);
   assert.equal(profile.name, "Alice");
   assert.equal(profile.handle, "Alice");
@@ -123,6 +161,16 @@ test("search uses historical sourcing phrase, encodes cursors, and filters malfo
             author: { screen_name: "bob", name: "Bob" },
             text: "intro",
             id_str: "456",
+          },
+          {
+            author: { screen_name: "not/a/handle", name: "Bad" },
+            text: "I'm a solo founder building X",
+            id_str: "789",
+          },
+          {
+            author: { screen_name: "carol", name: "Carol" },
+            text: "I'm a solo founder building X",
+            id_str: "not-an-id",
           },
         ],
       });

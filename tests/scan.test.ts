@@ -7,6 +7,7 @@ import {
   BULK_SCAN_PAGES,
   parseCursors,
   parsePendingIntros,
+  materializePendingIntros,
   runScan,
   SCAN_DEADLINE_MS,
   SCHEDULED_MAX_HYDRATIONS,
@@ -16,14 +17,18 @@ import {
   unknownHits,
   type ScanStore,
 } from "../lib/scan";
-import { TREND_PHRASES, type TrendHit } from "../lib/x";
+import {
+  ProfileUnavailableError,
+  TREND_PHRASES,
+  type TrendHit,
+} from "../lib/x";
 
 function hit(handle: string): TrendHit {
   return {
     handle,
     name: handle,
     text: `I'm a solo founder ${handle}`,
-    tweetId: handle,
+    tweetId: "123",
   };
 }
 
@@ -68,6 +73,13 @@ function memoryStore(init?: {
     async upsertFounder(founder) {
       founders.add(founder.handle.toLowerCase());
       record.added.push(founder.handle);
+    },
+    async insertFounderIfAbsent(founder) {
+      const key = founder.handle.toLowerCase();
+      if (founders.has(key)) return false;
+      founders.add(key);
+      record.added.push(founder.handle);
+      return true;
     },
     async touchScan() {
       record.touches += 1;
@@ -132,8 +144,10 @@ test("malformed persisted scan progress fails closed", () => {
   assert.deepEqual(parsePendingIntros(null), []);
   assert.deepEqual(parsePendingIntros([{ handle: "alice" }]), []);
   assert.deepEqual(
-    parsePendingIntros([{ handle: " alice ", text: "hi", tweetId: "1" }]),
-    [{ handle: "alice", name: "alice", text: "hi", tweetId: "1" }],
+    parsePendingIntros([
+      { handle: " alice ", name: " Alice Smith ", text: "hi", tweetId: "1" },
+    ]),
+    [{ handle: "alice", name: "Alice Smith", text: "hi", tweetId: "1" }],
   );
 });
 
@@ -294,6 +308,94 @@ test("unhydrated intros survive to the next runScan and are hydrated first", asy
   assert.equal(second.added, 2);
   assert.deepEqual(record.pending, []);
   assert.equal(record.touches, 2);
+});
+
+test("valid intros are stored as basic records when profile hydration is unavailable", async () => {
+  const intro = { ...hit("alice"), name: "Alice Smith" };
+  const { record, store } = memoryStore({ pending: [intro] });
+  const result = await runScan({
+    store,
+    maxSearches: 0,
+    maxHydrations: 1,
+    maxPages: 5,
+    now: () => 0,
+    async searchIntroPage() {
+      return { hits: [], cursor: null };
+    },
+    async fetchProfile() {
+      throw new ProfileUnavailableError(502);
+    },
+    async normalizePlaces() {
+      return new Map();
+    },
+  });
+
+  assert.equal(result.added, 1);
+  assert.equal(result.failed, 1);
+  assert.deepEqual(record.pending, []);
+  assert.deepEqual(record.added, ["alice"]);
+});
+
+test("an operator materializes only sourced queued intros without a paid call", async () => {
+  const { record, store } = memoryStore({
+    pending: [hit("alice"), hit("bob"), { ...hit("carol"), tweetId: null }],
+  });
+
+  const result = await materializePendingIntros(store);
+
+  assert.deepEqual(result, { added: 2, skipped: 1 });
+  assert.deepEqual(record.added, ["alice", "bob"]);
+  assert.deepEqual(record.pending, [
+    hit("alice"),
+    hit("bob"),
+    { ...hit("carol"), tweetId: null },
+  ]);
+  assert.equal(record.touches, 1);
+});
+
+test("a stored basic record prevents paid replay after later work fails", async () => {
+  const { record, store } = memoryStore({ pending: [hit("alice")] });
+  let hydrateCalls = 0;
+  await assert.rejects(
+    runScan({
+      store,
+      maxSearches: 0,
+      maxHydrations: 1,
+      maxPages: 5,
+      now: () => 0,
+      async searchIntroPage() {
+        return { hits: [], cursor: null };
+      },
+      async fetchProfile() {
+        hydrateCalls += 1;
+        throw new ProfileUnavailableError(502);
+      },
+      async normalizePlaces() {
+        throw new Error("database maintenance unavailable");
+      },
+    }),
+    /database maintenance unavailable/,
+  );
+  assert.deepEqual(record.added, ["alice"]);
+
+  await runScan({
+    store,
+    maxSearches: 0,
+    maxHydrations: 1,
+    maxPages: 5,
+    now: () => 0,
+    async searchIntroPage() {
+      return { hits: [], cursor: null };
+    },
+    async fetchProfile() {
+      hydrateCalls += 1;
+      throw new ProfileUnavailableError(502);
+    },
+    async normalizePlaces() {
+      return new Map();
+    },
+  });
+  assert.equal(hydrateCalls, 1);
 });
 
 test("retweet-only pages keep the cursor so history walking continues", async () => {
