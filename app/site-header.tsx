@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { ReactNode } from "react";
 
 export function SiteHeader({
@@ -9,13 +10,13 @@ export function SiteHeader({
 }) {
   return (
     <header className="top">
-      <a className="brand" href="/">
-        Solo <em>Founders</em>
-      </a>
+      <Link className="brand" href="/">
+        Founder <em>Directory</em>
+      </Link>
       <div className="top-nav">
-        <a href="/about" aria-current={aboutCurrent ? "page" : undefined}>
+        <Link href="/about" aria-current={aboutCurrent ? "page" : undefined}>
           About
-        </a>
+        </Link>
         {aside}
       </div>
     </header>

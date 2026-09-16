@@ -1,18 +1,14 @@
 import type { Metadata } from "next";
 import { SiteHeader } from "../site-header";
-import {
-  NITTARAB_X,
-  SITE_URL,
-  WEFTLABS_URL,
-} from "@/lib/site";
+import { NITTARAB_X, SITE_URL, WEFTLABS_URL } from "@/lib/site";
 
 export const metadata: Metadata = {
   title: "About",
   description:
-    "How an X intro trend became Founders Directory, and how Weft lets you compose X, LinkedIn, and other APIs into one site.",
+    "How an X intro trend became Founder Directory, with server-side Weft calls powering profile discovery and location normalization.",
   alternates: { canonical: "/about" },
   openGraph: {
-    title: "About Founders Directory",
+    title: "About Founder Directory",
     description:
       "The I'm a solo founder wave on X, kept as a searchable index, built with Weft.",
     url: "/about",
@@ -23,9 +19,9 @@ export const metadata: Metadata = {
 const jsonLd = {
   "@context": "https://schema.org",
   "@type": "AboutPage",
-  name: "About Founders Directory",
+  name: "About Founder Directory",
   url: `${SITE_URL}/about`,
-  isPartOf: { "@type": "WebSite", name: "Founders Directory", url: SITE_URL },
+  isPartOf: { "@type": "WebSite", name: "Founder Directory", url: SITE_URL },
 };
 
 export default function AboutPage() {
@@ -40,7 +36,7 @@ export default function AboutPage() {
         <p className="cat">About</p>
         <h1>The feed moved on. The people did not.</h1>
         <p className="lede">
-          Founders Directory is a public index of people who posted I&apos;m a
+          Founder Directory is a public index of people who posted I&apos;m a
           solo founder on X. It exists because a trend is a terrible database.
         </p>
 
@@ -64,15 +60,15 @@ export default function AboutPage() {
 
         <h2>Why Weft</h2>
         <p>
-          We built this to show what Weft is for. Not a protocol demo. A
-          service people can use.
+          We built this to show what Weft is for. Not a protocol demo. A service
+          people can use.
         </p>
         <p>
           A directory like this is several jobs glued together. Find the intro
-          posts. Hydrate an X profile. Turn messy location strings into city
-          and country. Tomorrow it might also pull a LinkedIn URL, a GitHub
-          repo, or another social graph. The usual path is a new vendor
-          integration for each of those.
+          posts. Hydrate an X profile. Turn messy location strings into city and
+          country. Tomorrow it might also pull a LinkedIn URL, a GitHub repo, or
+          another social graph. The usual path is a new vendor integration for
+          each of those.
         </p>
         <p>
           Weft is one controlled way for an app to discover, choose, pay for,
@@ -82,10 +78,10 @@ export default function AboutPage() {
           other APIs instead of becoming an X-API company.
         </p>
         <p>
-          That is the point we wanted people to see. You can ship a real
-          project website (a directory, an index, a small tool) by combining
-          social surfaces and paid APIs without wiring each provider by hand.
-          X today. LinkedIn or GitHub when the job needs them. Same pattern.
+          That is the point we wanted people to see. You can ship a real project
+          website (a directory, an index, a small tool) by combining social
+          surfaces and paid APIs without wiring each provider by hand. X today.
+          LinkedIn or GitHub when the job needs them. Same pattern.
         </p>
 
         <h2>Who built it</h2>

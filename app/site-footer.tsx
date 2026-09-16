@@ -1,9 +1,10 @@
+import Link from "next/link";
 import { NITTARAB_X, WEFTLABS_URL } from "@/lib/site";
 
 export function SiteFooter() {
   return (
     <footer className="site">
-      <a href="/about">About</a>
+      <Link href="/about">About</Link>
       <p>
         Built by{" "}
         <a href={NITTARAB_X} rel="noopener noreferrer me">

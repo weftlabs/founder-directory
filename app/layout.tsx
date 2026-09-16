@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import { IBM_Plex_Sans } from "next/font/google";
+import "@fontsource/ibm-plex-sans/latin-400.css";
+import "@fontsource/ibm-plex-sans/latin-600.css";
+import "@fontsource/ibm-plex-sans/latin-700.css";
 import { SiteFooter } from "./site-footer";
 import {
   NITTARAB_X,
@@ -12,11 +14,6 @@ import {
 } from "@/lib/site";
 import "./globals.css";
 
-const plex = IBM_Plex_Sans({
-  subsets: ["latin"],
-  weight: ["400", "600", "700"],
-});
-
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: {
@@ -25,7 +22,10 @@ export const metadata: Metadata = {
   },
   description: SITE_DESCRIPTION,
   applicationName: SITE_NAME,
-  authors: [{ name: "Nittarab", url: NITTARAB_X }, { name: "Weft Labs", url: WEFTLABS_URL }],
+  authors: [
+    { name: "Nittarab", url: NITTARAB_X },
+    { name: "Weft Labs", url: WEFTLABS_URL },
+  ],
   creator: "Nittarab",
   publisher: "Weft Labs",
   keywords: [
@@ -89,7 +89,7 @@ const jsonLd = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body className={plex.className}>
+      <body>
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}

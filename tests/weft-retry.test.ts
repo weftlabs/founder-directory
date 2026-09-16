@@ -1,86 +1,200 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
-import { WeftClient, WeftError, type FetchResponse } from "@weft-labs/sdk";
+import { test, mock } from "node:test";
+import { WeftError } from "@weft-labs/sdk";
 import { fetchWithRetry } from "../lib/weft-retry";
-import { cleanPlace, normalizePlaces } from "../lib/place";
-import { fetchProfile } from "../lib/x";
+import { response } from "./fixtures";
 
-const request = { url: "https://example.com", maxCostUsd: "0.002" };
-const response = (status: number, body: unknown = {}): FetchResponse => ({
-  status, merchant: "test", headers: {}, bodyBase64: Buffer.from(JSON.stringify(body)).toString("base64"),
-  paidUsd: "0", heldUsd: "0", paymentStatus: "settled", txHash: "", artifactId: 1,
-} as unknown as FetchResponse);
-const error = (status: number, retryable = false, code = "upstream_error") =>
-  new WeftError({ status, retryable, code, message: "test" });
+const request = { url: "https://example.invalid", maxCostUsd: "0.002" };
+const error = (
+  status: number,
+  retryable = false,
+  code = "upstream_error",
+  details?: Record<string, unknown>,
+) => new WeftError({ status, retryable, code, details, message: "test" });
 
-test("observed geography mistakes are rejected or canonicalized", () => {
-  assert.deepEqual(cleanPlace({ city: null, country: "Europe" }), { city: null, country: null });
-  assert.deepEqual(cleanPlace({ city: "New Jersey", country: "United States of America" }), { city: null, country: "United States" });
-});
-
-test("502/504 recover with bounded backoff, unchanged cap and key", async () => {
-  const calls: unknown[] = [], delays: number[] = [];
+test("502/504 recover with bounded backoff and unchanged request/cap/key", async () => {
+  const calls: unknown[] = [],
+    delays: number[] = [],
+    keys: (string | undefined)[] = [];
   let i = 0;
-  const got = await fetchWithRetry({ fetch: async (r, o) => {
-    calls.push({ r, o }); return response([502, 504, 200][i++]);
-  } }, request, async ms => { delays.push(ms); });
-  assert.equal(got?.status, 200);
+  const client = {
+    fetch: async (r: typeof request, o?: { idempotencyKey?: string }) => {
+      calls.push({ r, o });
+      keys.push(o?.idempotencyKey);
+      return response([502, 504, 200][i++] ?? 200);
+    },
+  };
+  assert.equal(
+    (
+      await fetchWithRetry(client, request, async (ms) => {
+        delays.push(ms);
+      })
+    )?.status,
+    200,
+  );
   assert.deepEqual(delays, [500, 1000]);
-  assert.deepEqual(calls[0], calls[1]); assert.deepEqual(calls[1], calls[2]);
+  assert.deepEqual(calls[0], calls[1]);
+  assert.deepEqual(calls[1], calls[2]);
+  assert.match(keys[0]!, /^[0-9a-f-]{36}$/);
+  await fetchWithRetry(client, request);
+  assert.notEqual(keys[0], keys[3], "separate requests need separate keys");
 });
 
-test("WeftErrors retry only eligible errors and stop at three", async () => {
-  for (const [err, count] of [[error(502), 3], [error(504), 3], [error(503, true), 3],
-    [error(400), 1], [error(403, true), 1], [error(502, true, "price_cap_exceeded"), 1],
-    [new WeftError({ status: 504, code: "upstream_error", retryable: true, message: "test", details: { paid_usd: "0.001" } }), 1],
-    [new Error("ambiguous timeout"), 1]] as const) {
-    let calls = 0;
-    assert.equal(await fetchWithRetry({ fetch: async () => { calls++; throw err; } }, request, async () => {}), null);
+test("exhausted status retries make exactly three calls and two sleeps", async () => {
+  let calls = 0;
+  const delays: number[] = [];
+  const result = await fetchWithRetry(
+    {
+      fetch: async () => {
+        calls++;
+        return response(502);
+      },
+    },
+    request,
+    async (ms) => {
+      delays.push(ms);
+    },
+  );
+  assert.equal(result, null);
+  assert.equal(calls, 3);
+  assert.deepEqual(delays, [500, 1000]);
+});
+
+test("WeftErrors retry only eligible failures; hard stops override retryable", async () => {
+  const cases: [unknown, number][] = [
+    [error(502), 3],
+    [error(504), 3],
+    [error(503, true), 3],
+    [error(400), 1],
+    [error(503), 1],
+    [new Error("ambiguous timeout"), 1],
+    ...[401, 402, 403].map(
+      (status) => [error(status, true), 1] as [unknown, number],
+    ),
+    ...[
+      "balance_low",
+      "budget_exceeded",
+      "policy_denied",
+      "denylist",
+      "price_cap_exceeded",
+      "cost_limit",
+      "scope_missing",
+      "auth_failed",
+      "payment_pending",
+    ].map((code) => [error(502, true, code), 1] as [unknown, number]),
+  ];
+  for (const [err, count] of cases) {
+    let calls = 0,
+      sleeps = 0;
+    assert.equal(
+      await fetchWithRetry(
+        {
+          fetch: async () => {
+            calls++;
+            throw err;
+          },
+        },
+        request,
+        async () => {
+          sleeps++;
+        },
+      ),
+      null,
+    );
     assert.equal(calls, count);
+    assert.equal(sleeps, count - 1);
   }
 });
 
-test("pending, held and paid receipts are never replayed", async () => {
-  for (const extra of [{ paymentStatus: "pending" as const }, { heldUsd: "0.001" }, { paidUsd: "0.001" }]) {
+test("non-transient HTTP statuses are returned without retry", async () => {
+  for (const status of [200, 400, 401, 402, 403, 429, 500, 503]) {
     let calls = 0;
-    await fetchWithRetry({ fetch: async () => { calls++; return { ...response(502), ...extra }; } }, request, async () => {});
+    assert.equal(
+      (
+        await fetchWithRetry(
+          {
+            fetch: async () => {
+              calls++;
+              return response(status);
+            },
+          },
+          request,
+          async () => assert.fail("unexpected sleep"),
+        )
+      )?.status,
+      status,
+    );
     assert.equal(calls, 1);
   }
 });
 
-test("app functions fail closed and recover without real paid calls", async () => {
-  const original = WeftClient.prototype.fetch;
-  const key = process.env.WEFT_API_KEY;
-  process.env.WEFT_API_KEY = "test-only";
-  try {
-    WeftClient.prototype.fetch = async () => { throw error(403); };
-    assert.deepEqual((await normalizePlaces(["building cool stuff"])).get("building cool stuff"), {city:null,country:null});
-    assert.equal(await fetchProfile("someone", null), null);
-    await assert.rejects(normalizePlaces(["Paris"], { strict: true }), /unavailable/);
-    WeftClient.prototype.fetch = async () => response(200, {choices:[{message:{content:"[]"}}]});
-    await assert.rejects(normalizePlaces(["Paris"], { strict: true }), /incomplete/);
-    WeftClient.prototype.fetch = async () => ({ ...response(200), bodyBase64: Buffer.from("not json").toString("base64") });
-    assert.deepEqual((await normalizePlaces(["Paris"])).get("Paris"), {city:null,country:null});
-    assert.equal(await fetchProfile("someone", null), null);
-    let calls = 0;
-    WeftClient.prototype.fetch = async () => {
-      if (++calls === 1) throw error(504);
-      return response(200, {choices:[{message:{content:JSON.stringify([{raw:"Paris",city:"Paris",country:"France"}])}}]});
-    };
-    assert.deepEqual((await normalizePlaces(["Paris"])).get("Paris"), {city:"Paris",country:"France"});
-    assert.equal(calls, 2);
-    assert.deepEqual((await normalizePlaces([" Paris "])).get(" Paris "), {city:"Paris",country:"France"});
-    calls = 0;
-    WeftClient.prototype.fetch = async () => {
-      if (++calls === 1) return response(502);
-      return response(200, {data:{core:{name:"Someone",screen_name:"someone"},location:{location:"building, cool stuff"}}});
-    };
-    const profile = await fetchProfile("someone", null);
-    assert.equal(profile?.name, "Someone");
-    assert.equal(profile?.city, null); assert.equal(profile?.country, null);
-    assert.equal(calls, 2);
-  } finally {
-    WeftClient.prototype.fetch = original;
-    if (key === undefined) delete process.env.WEFT_API_KEY; else process.env.WEFT_API_KEY = key;
+test("held/paid/pending or ambiguous receipts are not replayed, including nested aliases", async () => {
+  const details = [
+    { paymentStatus: "pending" },
+    { payment_status: "paid" },
+    { paymentStatus: "held" },
+    { heldUsd: "0.001" },
+    { paid_usd: "0.001" },
+    { paidUsd: "0", paid_usd: "1" },
+    { heldUsd: "0", held_usd: "1" },
+    { receipt: { paidUsd: "1" } },
+    { receipts: [{ held_usd: "0.01" }] },
+    { paidUsd: "unknown" },
+    { heldUsd: null },
+  ];
+  for (const detail of details) {
+    for (const throwing of [false, true]) {
+      let calls = 0;
+      await fetchWithRetry(
+        {
+          fetch: async () => {
+            calls++;
+            if (throwing) throw error(504, true, "upstream_error", detail);
+            return { ...response(502), ...detail } as ReturnType<
+              typeof response
+            >;
+          },
+        },
+        request,
+        async () => assert.fail("committed receipt must never sleep"),
+      );
+      assert.equal(calls, 1, JSON.stringify(detail));
+    }
   }
+});
+
+test("failure diagnostics never log keys, response bodies, error messages or details", async () => {
+  const secret = "fixture-secret-do-not-log";
+  const logs: unknown[][] = [];
+  mock.method(console, "warn", (...args: unknown[]) => {
+    logs.push(args);
+  });
+  await fetchWithRetry(
+    {
+      fetch: async () => {
+        throw new WeftError({
+          status: 403,
+          retryable: true,
+          code: secret,
+          message: secret,
+          requestId: secret,
+          details: { secret },
+        });
+      },
+    },
+    { ...request, headers: { authorization: secret } },
+  );
+  await fetchWithRetry(
+    { fetch: async () => ({ ...response(502, { secret }), heldUsd: "1" }) },
+    request,
+  );
+  assert.equal(logs.length, 2);
+  assert.equal(JSON.stringify(logs).includes(secret), false);
+  assert.deepEqual(
+    logs.map((row) => row[1]),
+    [
+      { status: 403, attempt: 1 },
+      { status: 502, attempt: 1 },
+    ],
+  );
 });

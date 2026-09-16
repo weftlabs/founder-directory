@@ -22,7 +22,7 @@ export type Founder = {
 export function extractGithub(text: string | null): string | null {
   if (!text) return null;
   const match = text.match(
-    /(?:https?:\/\/)?(?:www\.)?github\.com\/([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)/i,
+    /(?<![A-Za-z0-9_.@/-])(?:https?:\/\/)?(?:www\.)?github\.com\/([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)(?![A-Za-z0-9_-])/i,
   );
   return match?.[1] ? `https://github.com/${match[1]}` : null;
 }
@@ -30,24 +30,9 @@ export function extractGithub(text: string | null): string | null {
 export function extractLinkedin(text: string | null): string | null {
   if (!text) return null;
   const match = text.match(
-    /(?:https?:\/\/)?(?:www\.)?linkedin\.com\/in\/([A-Za-z0-9_-]+)/i,
+    /(?<![A-Za-z0-9_.@/-])(?:https?:\/\/)?(?:www\.)?linkedin\.com\/in\/([A-Za-z0-9_-]+)/i,
   );
   return match ? `https://www.linkedin.com/in/${match[1]}` : null;
-}
-
-export function splitLocation(raw: string | null): {
-  city: string | null;
-  country: string | null;
-} {
-  if (!raw) return { city: null, country: null };
-  const parts = raw
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
-  if (parts.length >= 2) {
-    return { city: parts[0], country: parts.slice(1).join(", ") };
-  }
-  return { city: parts[0] ?? null, country: null };
 }
 
 export function categorize(input: {
@@ -59,7 +44,10 @@ export function categorize(input: {
   const text = `${input.bio ?? ""} ${input.professional ?? ""}`.toLowerCase();
   if (/\bstealth\b/.test(text) && !input.website) return "Stealth";
   if (/\b(infra|agent|protocol|api|x402)\b/.test(text)) return "Infra";
-  if (input.github || /\b(open.?source|oss|devtools|eval|local-first)\b/.test(text)) {
+  if (
+    input.github ||
+    /\b(open.?source|oss|devtools|eval|local-first)\b/.test(text)
+  ) {
     return "Tools";
   }
   if (/\b(app|consumer|community|club|design)\b/.test(text)) return "Consumer";
@@ -91,7 +79,9 @@ export function scoreVibe(input: {
     {
       id: "website",
       hit: Boolean(input.website),
-      text: input.website ? "Has a public website" : "No website on the profile",
+      text: input.website
+        ? "Has a public website"
+        : "No website on the profile",
     },
     {
       id: "github",
@@ -124,13 +114,14 @@ export function scoreVibe(input: {
     signals.reduce((sum, signal) => {
       if (!signal.hit) return sum;
       if (signal.id === "language") return sum + 40;
-      if (signal.id === "website" || signal.id === "professional") return sum + 15;
+      if (signal.id === "website" || signal.id === "professional")
+        return sum + 15;
       return sum + 10;
     }, 0),
   );
   const label =
     score >= 70
-      ? "Solo founder energy"
+      ? "Strong founder signal"
       : score >= 40
         ? "Builder"
         : "Weak founder signal";
@@ -155,6 +146,22 @@ export function relativeTime(iso: string | null): string {
   const hr = Math.round(min / 60);
   if (hr === 1) return "1 hour ago";
   return `${hr} hours ago`;
+}
+
+export function safeHttpUrl(value: string | null): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (
+      !["http:", "https:"].includes(url.protocol) ||
+      url.username ||
+      url.password
+    )
+      return null;
+    return value;
+  } catch {
+    return null;
+  }
 }
 
 export function displayLink(url: string): string {
