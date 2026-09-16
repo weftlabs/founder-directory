@@ -6,7 +6,7 @@ import {
   type JsonValue,
 } from "./contracts";
 import { runAnalysis, type ExecuteGeneration } from "./analysis";
-import { buildAnalysisInput } from "./recipes";
+import { buildAnalysisInput, DEFAULT_STAGES } from "./recipes";
 import {
   STAGES,
   type ClaimedStage,
@@ -74,7 +74,10 @@ export function buildWorkerManifest(configuration: WorkerConfiguration) {
       ],
     ),
   );
-  return { stages: [...STAGES], worker, recipes };
+  const dependencies = Object.fromEntries(
+    DEFAULT_STAGES.map((stage) => [stage.id, [...stage.dependencies]]),
+  );
+  return { stages: [...STAGES], dependencies, worker, recipes };
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -160,7 +163,10 @@ export function createStageHandlers(
       codeDigest: dependencies.codeDigest,
       ...(subjectName ? { subjectName } : {}),
     });
-    return runAnalysis(store, input, dependencies.executeGeneration);
+    return runAnalysis(store, input, async (request) => {
+      await store.assertStageLease(work.id, work.leaseToken);
+      return dependencies.executeGeneration(request);
+    });
   }
   async function discoveredProducts(
     work: ClaimedStage,
@@ -203,6 +209,7 @@ export function createStageHandlers(
         if (!dependencies.collectProfile)
           return { status: "blocked", reason: "collection_not_configured" };
         const entity = await workerStore.entity(work.entityId);
+        await store.assertStageLease(work.id, work.leaseToken);
         const result = await dependencies.collectProfile({
           entityId: work.entityId,
           legacyKey: entity.legacyKey,
@@ -397,6 +404,7 @@ export function createStageHandlers(
             templateVersion,
           );
           if (!embeddingId) {
+            await store.assertStageLease(work.id, work.leaseToken);
             const generated = await dependencies.embed({
               entityId: subject.id,
               analysisId: analysis.id,

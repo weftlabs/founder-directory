@@ -255,6 +255,8 @@ export interface AnalysisStore {
       artifactId: string;
       contentHash: string;
       text: string;
+      sourceUrl: string | null;
+      extractorVersion: string;
     }[];
   }): Promise<void>;
   findAnalysis(id: string): Promise<{
@@ -364,11 +366,13 @@ export async function runAnalysis(
     releaseId: prepared.releaseId,
     generation: prepared.generation,
     evidence: prepared.evidence.map(
-      ({ id, artifactId, contentHash, text }) => ({
+      ({ id, artifactId, contentHash, text, sourceUrl, extractorVersion }) => ({
         id,
         artifactId,
         contentHash,
         text,
+        sourceUrl,
+        extractorVersion,
       }),
     ),
   });

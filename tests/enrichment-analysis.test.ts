@@ -169,6 +169,8 @@ test("the runner saves exact input before dispatch, preserves failed response an
           artifactId: evidence.artifactId,
           contentHash: evidence.contentHash,
           text: evidence.text,
+          sourceUrl: evidence.sourceUrl,
+          extractorVersion: evidence.extractorVersion,
         },
       ]);
     },

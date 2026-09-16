@@ -28,6 +28,120 @@ async function fixture() {
   await migrateEnrichment(db);
   return { pg, db, store: new EnrichmentStore(db) };
 }
+test("scoped stage claims never consume another scope's work", async () => {
+  const { pg, db, store } = await fixture();
+  try {
+    const evaluation = await store.putArtifact({
+      kind: "legacy_import",
+      body: Buffer.from("synthetic evaluation"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      importBatch: "test",
+    });
+    const release = await store.createRelease({ stages: ["collect"] });
+    await store.approveRelease(release, evaluation.id, {
+      actor: "test",
+      reason: "approved",
+    });
+    const founders: Record<string, string> = {};
+    for (const scope of ["first", "second"]) {
+      await store.promoteRelease(scope, release, "initial");
+      founders[scope] = await store.createEntity("founder", scope);
+      await store.intake(scope, founders[scope]);
+      await store.reconcileTargets(scope);
+    }
+    assert.equal(await store.claimStage(60, "missing"), null);
+    const second = await store.claimStage(60, "second");
+    assert.equal(second?.entityId, founders.second);
+    assert.equal(await store.claimStage(60, "second"), null);
+    assert.equal(
+      (
+        await db.query<{ status: string }>(
+          "SELECT status FROM enrichment_stage_work WHERE entity_id=$1",
+          [founders.first],
+        )
+      ).rows[0].status,
+      "pending",
+    );
+    const first = await store.claimStage(60, "first");
+    assert.equal(first?.entityId, founders.first);
+  } finally {
+    await pg.close();
+  }
+});
+test("unknown products do not block founder DNA and dispatch needs a current sufficient lease", async () => {
+  const { pg, db, store } = await fixture();
+  try {
+    const evaluation = await store.putArtifact({
+      kind: "legacy_import",
+      body: Buffer.from("synthetic evaluation"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      importBatch: "test",
+    });
+    const stages = [
+      "collection",
+      "extraction",
+      "product_discovery",
+      "product_descriptions",
+      "founder_dna",
+      "embeddings",
+    ];
+    const release = await store.createRelease({ stages });
+    await store.approveRelease(release, evaluation.id, {
+      actor: "test",
+      reason: "approved",
+    });
+    await assert.rejects(() =>
+      store.createRelease({
+        stages: ["one", "two"],
+        dependencies: { one: ["two"], two: ["one"] },
+      }),
+    );
+    await store.promoteRelease("test", release, "initial");
+    const entityId = await store.createEntity("founder", "independent-dna");
+    await store.intake("test", entityId);
+    await store.reconcileTargets("test");
+    const collection = await store.claimStage(900, "test");
+    assert.equal(collection?.stage, "collection");
+    await store.assertStageLease(collection!.id, collection!.leaseToken);
+    await assert.rejects(() =>
+      store.assertStageLease(collection!.id, randomUUID()),
+    );
+    await db.query(
+      "UPDATE enrichment_stage_work SET lease_until=now()+interval '20 seconds' WHERE id=$1",
+      [collection!.id],
+    );
+    await assert.rejects(() =>
+      store.assertStageLease(collection!.id, collection!.leaseToken),
+    );
+    await db.query(
+      "UPDATE enrichment_stage_work SET lease_until=now()+interval '900 seconds' WHERE id=$1",
+      [collection!.id],
+    );
+    await store.finishStage({ ...collection!, status: "succeeded" });
+    const extraction = await store.claimStage(900, "test");
+    assert.equal(extraction?.stage, "extraction");
+    await store.finishStage({ ...extraction!, status: "succeeded" });
+    await db.query(
+      "UPDATE enrichment_stage_work SET status='unavailable',reason='unknown product evidence' WHERE entity_id=$1 AND stage='product_discovery'",
+      [entityId],
+    );
+    const dna = await store.claimStage(900, "test");
+    assert.equal(dna?.stage, "founder_dna");
+    await store.assertStageLease(dna!.id, dna!.leaseToken);
+    assert.equal(await store.claimStage(900, "test"), null);
+    await db.query(
+      "UPDATE enrichment_targets SET generation=generation+1 WHERE entity_id=$1",
+      [entityId],
+    );
+    await assert.rejects(() =>
+      store.assertStageLease(dna!.id, dna!.leaseToken),
+    );
+  } finally {
+    await pg.close();
+  }
+});
 test("database export restores exact source bytes and lineage in a fresh engine", async () => {
   const { pg, store } = await fixture();
   const body = Buffer.from(Array.from({ length: 65536 }, (_, i) => i % 256));
@@ -497,10 +611,26 @@ test("required stages stay ordered; expired work blocks and withdrawal prevents 
             .update(JSON.stringify("synthetic source"))
             .digest("hex"),
           text: "synthetic source",
+          sourceUrl: null,
+          extractorVersion: "v1",
         },
       ],
     };
     await store.assertAnalysisInputs(trusted);
+    await assert.rejects(() =>
+      store.assertAnalysisInputs({
+        ...trusted,
+        evidence: [
+          { ...trusted.evidence[0], sourceUrl: "https://example.com/invented" },
+        ],
+      }),
+    );
+    await assert.rejects(() =>
+      store.assertAnalysisInputs({
+        ...trusted,
+        evidence: [{ ...trusted.evidence[0], extractorVersion: "invented-v2" }],
+      }),
+    );
     await assert.rejects(() =>
       store.assertAnalysisInputs({
         ...trusted,

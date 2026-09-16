@@ -138,13 +138,15 @@ export async function searchIntroPage(
     ...X_SEARCH,
   });
   if (!response || response.status < 200 || response.status >= 300) {
-    return { hits: [], cursor: null };
+    throw new Error("Search provider unavailable; cursor must be retained");
   }
   let payload: Record<string, unknown>;
   try {
     payload = decodeBody(response);
   } catch {
-    return { hits: [], cursor: null };
+    throw new Error(
+      "Search provider returned invalid JSON; cursor must be retained",
+    );
   }
   const next =
     asString(payload.cursor) ??

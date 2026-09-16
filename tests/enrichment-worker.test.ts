@@ -322,7 +322,7 @@ test("explicit no-product evidence completes with N/A; unknown and protected pro
         );
         assert.equal(
           states.find((row) => row.stage === "founder_dna")?.status,
-          "pending",
+          options.protected ? "pending" : "succeeded",
         );
       }
       assert.equal(
@@ -350,6 +350,34 @@ test("unapproved worker configuration cannot collect or generate", async () => {
       }),
       { limit: 10, leaseSeconds: 60 },
     );
+    assert.deepEqual(f.counters(), {
+      collections: 0,
+      generations: 0,
+      embeddings: 0,
+    });
+  } finally {
+    await f.pg.close();
+  }
+});
+
+test("expired stage lease cannot start a paid source call", async () => {
+  const f = await fixture();
+  try {
+    const founder = await f.store.createEntity("founder", "synthetic_expiry");
+    await f.store.intake("test", founder);
+    await f.store.reconcileTargets("test");
+    const work = await f.store.claimStage(60, "test");
+    assert.ok(work);
+    await f.db.query(
+      "UPDATE enrichment_stage_work SET lease_until=now()-interval '1 second' WHERE id=$1",
+      [work.id],
+    );
+    const handlers = createStageHandlers(
+      f.store,
+      new WorkerStore(f.db),
+      f.dependencies,
+    );
+    await assert.rejects(handlers.collection(work));
     assert.deepEqual(f.counters(), {
       collections: 0,
       generations: 0,

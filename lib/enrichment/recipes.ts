@@ -18,7 +18,7 @@ export const DEFAULT_STAGES = [
   },
   {
     id: "founder_dna",
-    dependencies: ["extraction", "product_descriptions"],
+    dependencies: ["extraction"],
     version: "1",
   },
   {

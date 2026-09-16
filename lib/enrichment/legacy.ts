@@ -11,6 +11,11 @@ export async function installLegacyIntake(db: Database) {
   );
   await db.transaction(async (tx) => {
     await tx.query("SELECT pg_advisory_xact_lock(73422001)");
+    const founders = await tx.query<{ present: boolean }>(
+      "SELECT to_regclass('public.founders') IS NOT NULL AS present",
+    );
+    if (!founders.rows[0]?.present)
+      throw new Error("founders_schema_required_before_intake_migration");
     const previous = await tx.query(
       "SELECT version FROM enrichment_migrations WHERE version=2",
     );
@@ -97,5 +102,8 @@ export async function importLegacyIntake(
     if (!processed) break;
     imported++;
   }
+  // A committed target is the durable scheduling intent. This is safe to repeat
+  // after a crash between import and expansion into stage rows.
+  await new EnrichmentStore(db).reconcileTargets(scope);
   return { imported };
 }

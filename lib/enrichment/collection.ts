@@ -111,8 +111,7 @@ function payment(response: ReceivedResponse) {
     ["declined", "expired", "reverted"].includes(
       response.paymentStatus ?? "",
     ) &&
-    settledMicros === "0" &&
-    held === "0"
+    settledMicros === "0"
   )
     return { paymentState: "not_charged" as const, settledMicros };
   return { paymentState: "pending" as const, settledMicros };
@@ -130,12 +129,15 @@ export async function collectResponse(
   } = {},
 ): Promise<CapturedArtifact> {
   const { policy } = input;
+  if (!["acquire", "replay"].includes(input.mode))
+    throw new Error("invalid_collection_mode");
   if (!Number.isSafeInteger(input.generation) || input.generation < 0)
     throw new Error("invalid_collection_generation");
   if (
+    typeof policy.id !== "string" ||
     !policy.id ||
-    !policy.retentionApproved ||
-    !policy.storageVerified ||
+    policy.retentionApproved !== true ||
+    policy.storageVerified !== true ||
     policy.scope !== input.scope ||
     policy.operation !== input.operation
   )

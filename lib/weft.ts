@@ -1,5 +1,6 @@
 import "./assert-server";
-import { WeftClient } from "@weft-labs/sdk";
+import type { WeftClient } from "@weft-labs/sdk";
+import { durableWeftClient } from "./enrichment/runtime";
 
 export type WeftTransport = Pick<WeftClient, "fetch">;
 
@@ -12,5 +13,5 @@ export type WeftDependencies = {
 
 export const defaultWeftDependencies: WeftDependencies = {
   apiKey: () => process.env.WEFT_API_KEY,
-  createClient: (apiKey) => new WeftClient({ apiKey }),
+  createClient: durableWeftClient,
 };

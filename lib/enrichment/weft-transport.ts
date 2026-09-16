@@ -11,7 +11,9 @@ import {
 export async function collectWeft(
   store: CollectionStore,
   client: WeftTransport,
-  input: Omit<CollectionInput, "args" | "capMicros">,
+  input: Omit<CollectionInput, "args" | "capMicros"> & {
+    requestIdentity?: string;
+  },
   request: PaidFetchRequest,
   enabled: () => boolean,
 ) {
@@ -29,6 +31,7 @@ export async function collectWeft(
     if (/key|token|secret|auth|signature|credential/i.test(key))
       throw new Error("credential_in_collection_url");
   }
+  url.searchParams.sort();
   if (request.operationId !== input.operation)
     throw new Error("collection_operation_mismatch");
   const headers: Record<string, string> = {};
@@ -44,6 +47,7 @@ export async function collectWeft(
     headers,
     body: request.body ?? null,
     accessMethodId: request.accessMethodId ?? null,
+    requestIdentity: input.requestIdentity ?? null,
   };
   return collectResponse(
     store,

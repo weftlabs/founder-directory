@@ -126,6 +126,19 @@ test("bad payment metadata does not discard the received body", async () => {
   assert.equal(result.metadata.paymentState, "uncertain");
 });
 
+test("terminal failed payment releases reservation despite historical nominal hold", async () => {
+  const { store, input } = fixture();
+  const result = await collectResponse(store, input, async () => ({
+    body: Buffer.from("declined response"),
+    status: 402,
+    contentType: "text/plain",
+    paymentStatus: "expired",
+    paidUsd: "0.00",
+    heldUsd: "0.01",
+  }));
+  assert.equal(result.metadata.paymentState, "not_charged");
+});
+
 test("capture failure stops and leaves an uncertain attempt", async () => {
   const { store, input, events } = fixture();
   store.captureResponse = async () => {

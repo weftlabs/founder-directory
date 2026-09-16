@@ -444,10 +444,60 @@ export class EnrichmentStore {
       new Set(manifest.stages).size !== manifest.stages.length
     )
       throw new Error("unique required stages needed");
+    const standard: Record<string, string[]> = {
+      collection: [],
+      extraction: ["collection"],
+      product_discovery: ["extraction"],
+      product_descriptions: ["product_discovery"],
+      founder_dna: ["extraction"],
+      embeddings: ["founder_dna", "product_descriptions"],
+    };
+    const dependencies =
+      manifest.dependencies ??
+      Object.fromEntries(
+        manifest.stages.map((stage, index) => [
+          stage,
+          (standard[stage] ?? manifest.stages.slice(0, index)).filter(
+            (dependency) => manifest.stages.includes(dependency),
+          ),
+        ]),
+      );
+    if (
+      typeof dependencies !== "object" ||
+      dependencies === null ||
+      Array.isArray(dependencies)
+    )
+      throw new Error("invalid stage dependencies");
+    const dependencyMap = dependencies as Record<string, unknown>;
+    for (const stage of manifest.stages) {
+      const required = dependencyMap[stage];
+      if (
+        !Array.isArray(required) ||
+        required.some(
+          (dependency) =>
+            typeof dependency !== "string" ||
+            dependency === stage ||
+            !manifest.stages.includes(dependency),
+        )
+      )
+        throw new Error("invalid stage dependencies");
+    }
+    const visited = new Set<string>(),
+      visiting = new Set<string>();
+    const visit = (stage: string) => {
+      if (visiting.has(stage)) throw new Error("cyclic stage dependencies");
+      if (visited.has(stage)) return;
+      visiting.add(stage);
+      for (const dependency of dependencyMap[stage] as string[])
+        visit(dependency);
+      visiting.delete(stage);
+      visited.add(stage);
+    };
+    for (const stage of manifest.stages) visit(stage);
     const id = randomUUID();
     await this.db.query(
       "INSERT INTO enrichment_releases(id,manifest) VALUES($1,$2)",
-      [id, json(manifest)],
+      [id, json({ ...manifest, dependencies })],
     );
     return id;
   }
@@ -557,7 +607,10 @@ export class EnrichmentStore {
     });
     return id;
   }
-  async claimStage(workerLeaseSeconds = 60): Promise<{
+  async claimStage(
+    workerLeaseSeconds = 60,
+    scope?: string,
+  ): Promise<{
     id: string;
     leaseToken: string;
     entityId: string;
@@ -568,7 +621,7 @@ export class EnrichmentStore {
     if (workerLeaseSeconds < 1 || workerLeaseSeconds > 3600)
       throw new Error("invalid lease duration");
     return this.db.transaction(async (tx) => {
-      // Ordered required stages are a conservative dependency chain, not a DAG engine.
+      // Each release owns its dependency graph; older custom releases retain ordered semantics.
       const row = (
         await tx.query<{
           id: string;
@@ -576,18 +629,22 @@ export class EnrichmentStore {
           releaseId: string;
           generation: number;
           stage: string;
-        }>(`SELECT w.id,w.entity_id AS "entityId",w.release_id AS "releaseId",w.generation,w.stage
+        }>(
+          `SELECT w.id,w.entity_id AS "entityId",w.release_id AS "releaseId",w.generation,w.stage
         FROM enrichment_stage_work w JOIN enrichment_entities e ON e.id=w.entity_id
         JOIN enrichment_targets t ON t.entity_id=w.entity_id AND t.release_id=w.release_id AND t.generation=w.generation
         JOIN enrichment_intake i ON i.scope=t.scope AND i.revision=t.revision
         JOIN enrichment_releases r ON r.id=w.release_id
         CROSS JOIN LATERAL jsonb_array_elements_text(r.manifest->'stages') WITH ORDINALITY current_stage(stage,position)
-        WHERE w.status='pending' AND e.status='active' AND r.status='approved' AND current_stage.stage=w.stage AND NOT EXISTS (
-          SELECT 1 FROM jsonb_array_elements_text(r.manifest->'stages') WITH ORDINALITY prior(stage,position)
-          WHERE prior.position<current_stage.position AND NOT EXISTS (
+        WHERE ($1::text IS NULL OR t.scope=$1) AND w.status='pending' AND e.status='active' AND r.status='approved' AND current_stage.stage=w.stage AND NOT EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(coalesce(r.manifest->'dependencies'->w.stage,
+            (SELECT coalesce(jsonb_agg(prior.stage),'[]'::jsonb) FROM jsonb_array_elements_text(r.manifest->'stages') WITH ORDINALITY prior(stage,position) WHERE prior.position<current_stage.position))) dependency(stage)
+          WHERE NOT EXISTS (
             SELECT 1 FROM enrichment_stage_work done WHERE done.entity_id=w.entity_id AND done.release_id=w.release_id
-            AND done.generation=w.generation AND done.stage=prior.stage AND done.status IN ('succeeded','not_applicable')))
-        ORDER BY w.id FOR UPDATE OF w SKIP LOCKED LIMIT 1`)
+            AND done.generation=w.generation AND done.stage=dependency.stage AND done.status IN ('succeeded','not_applicable')))
+        ORDER BY w.id FOR UPDATE OF w SKIP LOCKED LIMIT 1`,
+          [scope ?? null],
+        )
       ).rows[0];
       if (!row) return null;
       const leaseToken = randomUUID();
@@ -623,6 +680,28 @@ export class EnrichmentStore {
         input.evidenceId ?? null,
         input.outputId ?? null,
       ],
+    );
+  }
+  async assertStageLease(
+    id: string,
+    leaseToken: string,
+    minimumRemainingSeconds = 30,
+  ): Promise<void> {
+    if (
+      !Number.isFinite(minimumRemainingSeconds) ||
+      minimumRemainingSeconds < 0 ||
+      minimumRemainingSeconds > 3600
+    )
+      throw new Error("invalid minimum lease duration");
+    await one(
+      this.db,
+      `SELECT w.id FROM enrichment_stage_work w
+      JOIN enrichment_targets t ON t.entity_id=w.entity_id AND t.release_id=w.release_id AND t.generation=w.generation
+      JOIN enrichment_entities e ON e.id=w.entity_id AND e.status='active'
+      JOIN enrichment_intake i ON i.scope=t.scope AND i.revision=t.revision AND i.release_id=t.release_id
+      JOIN enrichment_releases r ON r.id=t.release_id AND r.status='approved'
+      WHERE w.id=$1 AND w.lease_token=$2 AND w.status='running' AND w.lease_until>now()+($3*interval '1 second')`,
+      [id, leaseToken, minimumRemainingSeconds],
     );
   }
   async saveAnalysis(input: AnalysisInput): Promise<string> {
@@ -679,6 +758,8 @@ export class EnrichmentStore {
       artifactId: string;
       contentHash: string;
       text: string;
+      sourceUrl: string | null;
+      extractorVersion: string;
     }>;
   }): Promise<void> {
     await this.db.transaction(async (tx) => {
@@ -708,9 +789,16 @@ export class EnrichmentStore {
           `SELECT e.id FROM enrichment_evidence e
           JOIN enrichment_entity_evidence link ON link.evidence_id=e.id AND link.entity_id=$3
           JOIN enrichment_artifacts a ON a.id=e.artifact_id AND a.purged_at IS NULL
-          WHERE e.id=$1 AND e.artifact_id=$2 AND e.excerpt=$4 AND (a.expires_at IS NULL OR a.expires_at>now())
+          WHERE e.id=$1 AND e.artifact_id=$2 AND e.excerpt=$4 AND e.source_url IS NOT DISTINCT FROM $5 AND e.extractor_version=$6 AND (a.expires_at IS NULL OR a.expires_at>now())
           AND NOT EXISTS(SELECT 1 FROM enrichment_artifact_withdrawals x WHERE x.artifact_id=a.id)`,
-          [evidence.id, evidence.artifactId, input.entityId, evidence.text],
+          [
+            evidence.id,
+            evidence.artifactId,
+            input.entityId,
+            evidence.text,
+            evidence.sourceUrl,
+            evidence.extractorVersion,
+          ],
         );
       }
     });
