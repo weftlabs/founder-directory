@@ -32,6 +32,7 @@ export async function ensureSchema() {
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`;
   await db`ALTER TABLE founders ADD COLUMN IF NOT EXISTS intro_url TEXT`;
+  await db`CREATE UNIQUE INDEX IF NOT EXISTS founders_handle_lower_idx ON founders (lower(handle))`;
   await db`CREATE TABLE IF NOT EXISTS scan_meta (
     id INTEGER PRIMARY KEY DEFAULT 1,
     last_scan_at TIMESTAMPTZ
@@ -135,7 +136,7 @@ export async function upsertFounder(founder: Founder) {
       ${JSON.stringify(founder.vibe.signals)}::jsonb, ${founder.introText},
       ${founder.introUrl}, now()
     )
-    ON CONFLICT (handle) DO UPDATE SET
+    ON CONFLICT ((lower(handle))) DO UPDATE SET
       name = excluded.name,
       bio = excluded.bio,
       website = excluded.website,
@@ -153,6 +154,27 @@ export async function upsertFounder(founder: Founder) {
       intro_url = COALESCE(excluded.intro_url, founders.intro_url),
       updated_at = now()
   `;
+}
+
+export async function insertFounderIfAbsent(founder: Founder) {
+  await ensureSchema();
+  const rows = (await sql()`
+    INSERT INTO founders (
+      handle, name, bio, website, github, linkedin, city, country, location,
+      avatar_url, category, vibe_label, vibe_score, vibe_signals, intro_text,
+      intro_url, updated_at
+    ) VALUES (
+      ${founder.handle}, ${founder.name}, ${founder.bio}, ${founder.website},
+      ${founder.github}, ${founder.linkedin}, ${founder.city}, ${founder.country},
+      ${founder.location}, ${founder.avatarUrl}, ${founder.category},
+      ${founder.vibe.label}, ${founder.vibe.score},
+      ${JSON.stringify(founder.vibe.signals)}::jsonb, ${founder.introText},
+      ${founder.introUrl}, now()
+    )
+    ON CONFLICT ((lower(handle))) DO NOTHING
+    RETURNING handle
+  `) as { handle: string }[];
+  return rows.length === 1;
 }
 
 export async function updateFounderPlace(

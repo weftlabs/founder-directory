@@ -33,6 +33,15 @@ Per-request Weft caps are unchanged. Budget for every eligible attempt and
 account for both paid and held funds. Never raise limits automatically after
 a refusal. The Weft account policy is the final wallet-level spending control.
 
+Atlas search results contain public intro posts. If a paid profile request has
+an HTTP 502 or 504 response, store a basic row from that public intro before the
+scan continues. Do not replay that paid request. Other profile failures still
+skip the row, including a successful profile response that identifies a
+protected account. Basic rows require a separate future enrichment operation.
+During a confirmed profile-provider outage, the operator can materialize already
+queued public intros without sending another paid profile request. It skips and
+reports any legacy queue item that has no valid source tweet ID.
+
 Do not surface provider exceptions verbatim in the public app. Store only the
 profile fields needed by the product; do not expose keys, payment headers or raw
 provider dumps. Record sanitized status and receipt identifiers for diagnosis.

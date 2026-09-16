@@ -36,8 +36,14 @@ intros live on `scan_meta` so the next tick resumes history and hydrates
 queued people first. Retweet-only pages do not stop pagination. Page count
 is a per-phrase ceiling within the tick; found intros are not dropped to
 meet the hydration cap — they wait for the next run.
-Profiles whose upstream data is unavailable are skipped. Uncertain places are
-empty, not comma-split guesses. The original intro links back to its source.
+If Atlas profile hydration returns HTTP 502 or 504, the scan stores a basic row
+from the already-public intro result before it does more fallible work. This
+prevents loss and a second paid request. Other profile failures are skipped,
+including protected profiles. Uncertain places are empty, not comma-split
+guesses. The original intro links back to its source.
+The `scripts/materialize-pending.ts` operator command performs the same basic-row
+write for intros that are already queued. It does not call Weft or replace scan
+progress, so a concurrent scan cannot lose new cursors or queued intros.
 
 The current discovery phrase is “I'm a solo founder”. That is one collection
 seed, not the product name or a verified claim about every listed person. Keep

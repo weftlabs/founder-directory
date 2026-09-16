@@ -44,9 +44,15 @@ export async function fetchWithRetry(
   request: PaidFetchRequest,
   sleep: (ms: number) => Promise<void> = (ms) =>
     new Promise((resolve) => setTimeout(resolve, ms)),
+  retryOptions: {
+    attempts?: number;
+    returnLastResponse?: boolean;
+    throwLastTransientError?: boolean;
+  } = {},
 ): Promise<FetchResponse | null> {
+  const attempts = retryOptions.attempts ?? ATTEMPTS;
   const options = { idempotencyKey: crypto.randomUUID() };
-  for (let attempt = 0; attempt < ATTEMPTS; attempt += 1) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       const response = await client.fetch(request, options);
       if (!transient(response.status)) return response;
@@ -55,6 +61,9 @@ export async function fetchWithRetry(
         attempt: attempt + 1,
       });
       if (hasPayment(response)) return response;
+      if (attempt === attempts - 1 && retryOptions.returnLastResponse) {
+        return response;
+      }
     } catch (error) {
       if (error instanceof WeftError)
         console.warn("Weft request failure", {
@@ -70,8 +79,11 @@ export async function fetchWithRetry(
         !(transient(error.status) || error.retryable)
       )
         return null;
+      if (attempt === attempts - 1 && retryOptions.throwLastTransientError) {
+        throw error;
+      }
     }
-    if (attempt < ATTEMPTS - 1) await sleep(500 * 2 ** attempt);
+    if (attempt < attempts - 1) await sleep(500 * 2 ** attempt);
   }
   return null;
 }
