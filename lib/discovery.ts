@@ -130,18 +130,29 @@ export function discoveryPage(
   query: DiscoveryQuery,
   mode: "map" | "leaderboard",
 ) {
-  const filtered = filterDiscovery(
+  const candidates = filterDiscovery(
     founders,
     query.q,
     query.category,
     query.country,
-  ).filter((f) => !query.city || f.city === query.city);
+  );
+  const selectedPlaces = new Set(
+    candidates
+      .filter((f) => f.city === query.city && f.coordinates)
+      .map((f) => JSON.stringify(f.coordinates)),
+  );
+  const filtered = candidates.filter(
+    (f) =>
+      !query.city ||
+      f.city === query.city ||
+      (f.coordinates && selectedPlaces.has(JSON.stringify(f.coordinates))),
+  );
   const ranked = rankFounders(filtered, query.metric);
   const rows = mode === "map" ? filtered : ranked;
   const places = new Map<string, MapPlace>();
   for (const f of filtered) {
     if (!f.coordinates || !f.city || !f.country) continue;
-    const key = JSON.stringify([f.city, f.country]);
+    const key = JSON.stringify(f.coordinates);
     const existing = places.get(key);
     if (existing) existing.count++;
     else

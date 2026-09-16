@@ -157,7 +157,10 @@ export default function FounderMap({
                 : "",
             ),
           );
-          if (locations.size === 1 || map.getZoom() >= 12) {
+          if (
+            locations.size === 1 ||
+            (!selectPlace.current && map.getZoom() >= 12)
+          ) {
             if (leaves[0]?.properties?.handle === "" && selectPlace.current) {
               selectPlace.current(
                 String(leaves[0].properties.city),

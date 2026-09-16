@@ -46,6 +46,36 @@ test("map overview has only anonymous city counts", () => {
     },
   ]);
 });
+test("city aliases share one pin and retain all founders when selected", () => {
+  const aliases = [
+    {
+      ...founders[0],
+      city: "NYC",
+      country: "United States",
+      coordinates: [-74, 40.7] as [number, number],
+    },
+    {
+      ...founders[1],
+      city: "New York",
+      country: "United States",
+      coordinates: [-74, 40.7] as [number, number],
+    },
+    founders[2],
+  ];
+  const overview = discoveryPage(aliases, discoveryQuery({}), "map");
+  assert.equal(overview.serverPage.places.length, 2);
+  assert.equal(overview.serverPage.places[0].count, 2);
+  for (const city of ["NYC", "New York"]) {
+    const selected = discoveryPage(
+      aliases,
+      discoveryQuery({ city, country: "United States" }),
+      "map",
+    );
+    assert.equal(selected.founders.length, 2);
+    assert.equal(selected.serverPage.places.length, 1);
+    assert.equal(selected.serverPage.places[0].count, 2);
+  }
+});
 test("filters and ranking run before pagination with no client-requested size", () => {
   const query = discoveryQuery({
     metric: "views",
