@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { fetchProfile, searchIntroPage } from "../lib/x";
+import { fetchProfile, searchIntroPage, searchIntroPages } from "../lib/x";
 import { noKey, offline, response } from "./fixtures";
 
 test("profile and search with no key do not construct a client", async () => {
@@ -139,4 +139,50 @@ test("search uses historical sourcing phrase, encodes cursors, and filters malfo
       },
     ],
   });
+});
+
+test("pagination keeps walking when a latest page is only retweets", async () => {
+  const pages: Array<string | null> = [];
+  const hits = await searchIntroPages(
+    3,
+    offline(async (request) => {
+      const url = new URL(request.url);
+      const phrase = url.searchParams.get("phrase");
+      const cursor = url.searchParams.get("cursor");
+      if (phrase !== "I'm a solo founder") {
+        return response(200, { tweets: [] });
+      }
+      pages.push(cursor);
+      if (!cursor) {
+        return response(200, {
+          cursor: "p2",
+          tweets: [
+            {
+              author: { screen_name: "spam", name: "Spam" },
+              text: "RT @haukejung: I'm a solo founder",
+              id_str: "1",
+            },
+          ],
+        });
+      }
+      if (cursor === "p2") {
+        return response(200, {
+          cursor: "p3",
+          tweets: [
+            {
+              author: { screen_name: "alice", name: "Alice" },
+              text: "I'm a solo founder building X",
+              id_str: "2",
+            },
+          ],
+        });
+      }
+      return response(200, { tweets: [] });
+    }),
+  );
+  assert.deepEqual(pages, [null, "p2", "p3"]);
+  assert.deepEqual(
+    hits.map((hit) => hit.handle),
+    ["alice"],
+  );
 });

@@ -19,8 +19,11 @@ export function unknownHits(hits: TrendHit[], known: Set<string>): TrendHit[] {
   return out;
 }
 
+export const SCHEDULED_SCAN_PAGES = 5;
+export const BULK_SCAN_PAGES = 25;
+
 export async function runScan(options?: { maxPages?: number }) {
-  const maxPages = options?.maxPages ?? 1;
+  const maxPages = options?.maxPages ?? SCHEDULED_SCAN_PAGES;
   const hits = await searchIntroPages(maxPages);
   const known = await existingHandles();
   const fresh = unknownHits(hits, known);

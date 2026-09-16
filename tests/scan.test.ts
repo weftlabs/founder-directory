@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { unknownHits } from "../lib/scan";
+import {
+  BULK_SCAN_PAGES,
+  SCHEDULED_SCAN_PAGES,
+  unknownHits,
+} from "../lib/scan";
 import type { TrendHit } from "../lib/x";
 
 function hit(handle: string): TrendHit {
@@ -31,4 +35,11 @@ test("imports every unknown intro instead of dropping a quota", () => {
     selected.map((row) => row.handle),
     ["alice", "carol", "dave", "erin", "frank", "gina", "hank", "iris"],
   );
+});
+
+test("scheduled scans look past the first latest page", () => {
+  assert.equal(SCHEDULED_SCAN_PAGES, 5);
+  assert.equal(BULK_SCAN_PAGES, 25);
+  assert.ok(SCHEDULED_SCAN_PAGES > 1);
+  assert.ok(BULK_SCAN_PAGES > SCHEDULED_SCAN_PAGES);
 });
