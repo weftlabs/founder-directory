@@ -116,8 +116,13 @@ test("search uses historical sourcing phrase, encodes cursors, and filters malfo
           {},
           {
             author: { screen_name: "alice", name: "Alice" },
-            text: "intro",
+            text: "I'm a solo founder building X",
             id_str: "123",
+          },
+          {
+            author: { screen_name: "bob", name: "Bob" },
+            text: "intro",
+            id_str: "456",
           },
         ],
       });
@@ -125,6 +130,13 @@ test("search uses historical sourcing phrase, encodes cursors, and filters malfo
   );
   assert.deepEqual(result, {
     cursor: "next",
-    hits: [{ handle: "alice", name: "Alice", text: "intro", tweetId: "123" }],
+    hits: [
+      {
+        handle: "alice",
+        name: "Alice",
+        text: "I'm a solo founder building X",
+        tweetId: "123",
+      },
+    ],
   });
 });

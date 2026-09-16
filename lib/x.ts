@@ -14,6 +14,16 @@ const X_USER_DETAILS_URL = "https://twitter.use.x402atlas.com/user-details";
 const X_SEARCH_URL = "https://twitter.use.x402atlas.com/search";
 const MAX_COST_USD = "0.01";
 const TREND_PHRASE = "I'm a solo founder";
+const TREND_PHRASES = [
+  "I'm a solo founder",
+  "I’m a solo founder",
+  "Solo founder from",
+  "I'm a founder",
+  "I'm founder",
+  "I’m a founder",
+  "indie hacker",
+  "I'm a builder",
+] as const;
 const MAX_NEW_PER_SCAN = 8;
 
 const X_PROFILE = {
@@ -62,70 +72,110 @@ export type TrendHit = {
   tweetId: string | null;
 };
 
+const FIRST_PERSON = /\bI(?:['’`]?m| am)\b/i;
+const ROLE =
+  /\b(?:solo\s+)?founder\b|\bindie hackers?\b|\b(?:indie\s+)?builders?\b/i;
+
+export function isIntro(text: string): boolean {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (!t || /^RT @/i.test(t)) return false;
+  if (/\bI know a\b/i.test(t)) return false;
+  if (
+    /\b(?:another|fellow)\s+(?:solo\s+)?(?:founder|builder|indie hacker)/i.test(
+      t,
+    ) &&
+    !FIRST_PERSON.test(t)
+  ) {
+    return false;
+  }
+  if (!ROLE.test(t)) return false;
+  if (
+    /\bI(?:['’`]?m| am)\s+(?:\d+\.?\s*)?(?:a |an )?(?:solo\s+)?(?:founder|builder|indie hacker)\b/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  if (/\b(?:solo founder|indie hacker) from\b/i.test(t)) return true;
+  if (/\bI(?:['’`]?m| am)\s+\d+/i.test(t) && /\b(?:solo\s+)?founder\b/i.test(t))
+    return true;
+  if (
+    /\bI(?:['’`]?m| am)\s+\d+/i.test(t) &&
+    /\bindie hacker\b/i.test(t) &&
+    !/looking to connect with more/i.test(t)
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export async function searchIntroPage(
   cursor?: string,
   dependencies: WeftDependencies = defaultWeftDependencies,
+  phrase: string = TREND_PHRASE,
 ): Promise<{
   hits: TrendHit[];
   cursor: string | null;
 }> {
   const client = weft(dependencies);
   const params = new URLSearchParams({
-    phrase: TREND_PHRASE,
+    phrase,
     type: "latest",
   });
   if (cursor) params.set("cursor", cursor);
-  const response = await client.fetch(
-    {
-      url: `${X_SEARCH_URL}?${params.toString()}`,
-      method: "GET",
-      headers: {},
-      maxCostUsd: MAX_COST_USD,
-      ...X_SEARCH,
-    },
-    { idempotencyKey: crypto.randomUUID() },
-  );
-  if (response.status < 200 || response.status >= 300) {
-    throw new Error(`Search HTTP ${response.status}`);
+  const response = await fetchWithRetry(client, {
+    url: `${X_SEARCH_URL}?${params.toString()}`,
+    method: "GET",
+    headers: {},
+    maxCostUsd: MAX_COST_USD,
+    ...X_SEARCH,
+  });
+  if (!response || response.status < 200 || response.status >= 300) {
+    return { hits: [], cursor: null };
   }
-  const payload = decodeBody(response);
+  let payload: Record<string, unknown>;
+  try {
+    payload = decodeBody(response);
+  } catch {
+    return { hits: [], cursor: null };
+  }
   const next =
     asString(payload.cursor) ??
     asString(asRecord(payload.data)?.cursor) ??
     null;
-  return { hits: parseHits(payload), cursor: next };
+  return {
+    hits: parseHits(payload).filter((hit) => isIntro(hit.text)),
+    cursor: next,
+  };
 }
 
 export async function searchIntroPages(maxPages: number): Promise<TrendHit[]> {
   const seen = new Set<string>();
   const out: TrendHit[] = [];
-  let cursor: string | undefined;
-  for (let page = 0; page < maxPages; page += 1) {
-    const result = await searchIntroPage(cursor);
-    for (const hit of result.hits) {
-      const key = hit.handle.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(hit);
+  for (const phrase of TREND_PHRASES) {
+    let cursor: string | undefined;
+    for (let page = 0; page < maxPages; page += 1) {
+      const result = await searchIntroPage(
+        cursor,
+        defaultWeftDependencies,
+        phrase,
+      );
+      for (const hit of result.hits) {
+        const key = hit.handle.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(hit);
+      }
+      if (!result.cursor || result.hits.length === 0) break;
+      if (result.cursor === cursor) break;
+      cursor = result.cursor;
     }
-    if (!result.cursor || result.hits.length === 0) break;
-    if (result.cursor === cursor) break;
-    cursor = result.cursor;
   }
   return out;
 }
 
 export async function searchIntro(): Promise<TrendHit[]> {
-  const { hits } = await searchIntroPage();
-  const seen = new Set<string>();
-  const out: TrendHit[] = [];
-  for (const hit of hits) {
-    const key = hit.handle.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(hit);
-  }
-  return out;
+  return searchIntroPages(1);
 }
 
 function parseHits(payload: Record<string, unknown>): TrendHit[] {
@@ -147,6 +197,7 @@ function parseHits(payload: Record<string, unknown>): TrendHit[] {
       asString(row.id) ??
       (typeof row.id === "number" ? String(row.id) : null);
     if (!handle || !name || !text) continue;
+    if (!isIntro(text)) continue;
     out.push({ handle, name, text, tweetId });
   }
   return out;
@@ -257,4 +308,4 @@ function enlargeAvatar(url: string | null): string | null {
   return url.replace(/_normal(\.[a-z0-9]+)$/i, "_400x400$1");
 }
 
-export { MAX_NEW_PER_SCAN, TREND_PHRASE };
+export { MAX_NEW_PER_SCAN, TREND_PHRASE, TREND_PHRASES };
