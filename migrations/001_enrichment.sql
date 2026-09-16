@@ -34,7 +34,8 @@ CREATE FUNCTION enrichment_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BE
 CREATE FUNCTION enrichment_artifact_guard() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
  IF TG_OP='UPDATE' AND OLD.purged_at IS NULL AND NEW.purged_at IS NOT NULL
  AND NEW.body='\x'::bytea AND NEW.byte_length=0
- AND (to_jsonb(NEW)-ARRAY['body','byte_length','purged_at'])=(to_jsonb(OLD)-ARRAY['body','byte_length','purged_at'])
+ AND NEW.metadata='{}'::jsonb
+ AND (to_jsonb(NEW)-ARRAY['body','byte_length','purged_at','metadata'])=(to_jsonb(OLD)-ARRAY['body','byte_length','purged_at','metadata'])
  THEN RETURN NEW; END IF;
  RAISE EXCEPTION 'immutable artifact; only controlled body purge permitted';
 END $$;
@@ -44,9 +45,15 @@ CREATE TABLE enrichment_evidence (
  id uuid PRIMARY KEY, artifact_id uuid NOT NULL REFERENCES enrichment_artifacts,
  extractor_version text NOT NULL, locator text NOT NULL, source_id text, source_url text,
  author_id text, published_at timestamptz, payload jsonb NOT NULL, excerpt text NOT NULL,
- observed_at timestamptz NOT NULL DEFAULT now(), UNIQUE(artifact_id,extractor_version,locator)
+ observed_at timestamptz NOT NULL DEFAULT now(), purged_at timestamptz, UNIQUE(artifact_id,extractor_version,locator)
 );
-CREATE TRIGGER enrichment_evidence_immutable BEFORE UPDATE OR DELETE ON enrichment_evidence FOR EACH ROW EXECUTE FUNCTION enrichment_immutable();
+CREATE FUNCTION enrichment_evidence_guard() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+ IF TG_OP='UPDATE' AND OLD.purged_at IS NULL AND NEW.purged_at IS NOT NULL
+ AND NEW.payload='{}'::jsonb AND NEW.excerpt='' AND NEW.source_id IS NULL AND NEW.source_url IS NULL AND NEW.author_id IS NULL AND NEW.published_at IS NULL
+ AND (to_jsonb(NEW)-ARRAY['payload','excerpt','source_id','source_url','author_id','published_at','purged_at'])=(to_jsonb(OLD)-ARRAY['payload','excerpt','source_id','source_url','author_id','published_at','purged_at'])
+ THEN RETURN NEW; END IF; RAISE EXCEPTION 'immutable evidence; only controlled purge permitted';
+END $$;
+CREATE TRIGGER enrichment_evidence_immutable BEFORE UPDATE OR DELETE ON enrichment_evidence FOR EACH ROW EXECUTE FUNCTION enrichment_evidence_guard();
 CREATE TABLE enrichment_entity_evidence (
  entity_id uuid NOT NULL REFERENCES enrichment_entities, evidence_id uuid NOT NULL REFERENCES enrichment_evidence,
  relation text NOT NULL, PRIMARY KEY(entity_id,evidence_id,relation)
@@ -102,14 +109,20 @@ CREATE TABLE enrichment_analysis_runs (
  generation integer NOT NULL, purpose text NOT NULL, input_artifact_id uuid NOT NULL REFERENCES enrichment_artifacts,
  input_digest text NOT NULL, recipe_digest text NOT NULL, evidence_ids jsonb NOT NULL, output jsonb,
  validation_report jsonb NOT NULL, status text NOT NULL CHECK(status IN ('succeeded','failed','missing_input')),
- created_at timestamptz NOT NULL DEFAULT now()
+ created_at timestamptz NOT NULL DEFAULT now(), purged_at timestamptz
 );
-CREATE TRIGGER enrichment_analyses_immutable BEFORE UPDATE OR DELETE ON enrichment_analysis_runs FOR EACH ROW EXECUTE FUNCTION enrichment_immutable();
+CREATE FUNCTION enrichment_analysis_guard() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+ IF TG_OP='UPDATE' AND OLD.purged_at IS NULL AND NEW.purged_at IS NOT NULL
+ AND NEW.output IS NULL AND NEW.validation_report='{}'::jsonb
+ AND (to_jsonb(NEW)-ARRAY['output','validation_report','purged_at'])=(to_jsonb(OLD)-ARRAY['output','validation_report','purged_at'])
+ THEN RETURN NEW; END IF; RAISE EXCEPTION 'immutable analysis; only controlled purge permitted';
+END $$;
+CREATE TRIGGER enrichment_analyses_immutable BEFORE UPDATE OR DELETE ON enrichment_analysis_runs FOR EACH ROW EXECUTE FUNCTION enrichment_analysis_guard();
 CREATE INDEX enrichment_analysis_reuse ON enrichment_analysis_runs(entity_id,purpose,input_digest,recipe_digest) WHERE status='succeeded';
 CREATE VIEW enrichment_eligible_analyses AS SELECT a.* FROM enrichment_analysis_runs a
  JOIN enrichment_entities owner ON owner.id=a.entity_id AND owner.status='active'
  JOIN enrichment_artifacts manifest ON manifest.id=a.input_artifact_id AND manifest.purged_at IS NULL
- WHERE (manifest.expires_at IS NULL OR manifest.expires_at>now())
+ WHERE a.purged_at IS NULL AND (manifest.expires_at IS NULL OR manifest.expires_at>now())
  AND NOT EXISTS(SELECT 1 FROM enrichment_artifact_withdrawals x WHERE x.artifact_id=manifest.id)
  AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements_text(a.evidence_ids) claim(id) WHERE NOT EXISTS(
    SELECT 1 FROM enrichment_evidence e JOIN enrichment_artifacts raw ON raw.id=e.artifact_id
@@ -130,7 +143,7 @@ CREATE TABLE enrichment_promotion_events (
 );
 CREATE TABLE enrichment_embeddings (
  id uuid PRIMARY KEY, scope text NOT NULL, input_text text NOT NULL, input_hash text NOT NULL,
- template_version text NOT NULL, model text NOT NULL, model_version text NOT NULL DEFAULT 'unresolved', distance text NOT NULL DEFAULT 'cosine' CHECK(distance IN ('cosine','euclidean','dot')), dimensions integer NOT NULL CHECK(dimensions > 0),
+ template_version text NOT NULL, model text NOT NULL, model_version text NOT NULL, distance text NOT NULL CHECK(distance IN ('cosine','euclidean','dot')), dimensions integer NOT NULL CHECK(dimensions > 0),
  vector double precision[] NOT NULL, attempt_id uuid REFERENCES enrichment_collection_attempts,
  CHECK(array_length(vector,1)=dimensions), UNIQUE(scope,input_hash,template_version,model,model_version,distance,dimensions)
 );

@@ -310,39 +310,47 @@ export class EnrichmentStore {
     payload: unknown;
     excerpt: string;
   }): Promise<string> {
-    const id = randomUUID();
-    await this.db.query(
-      "INSERT INTO enrichment_evidence(id,artifact_id,extractor_version,locator,source_id,source_url,author_id,published_at,payload,excerpt) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(artifact_id,extractor_version,locator) DO NOTHING",
-      [
-        id,
-        input.artifactId,
-        input.extractorVersion,
-        input.locator,
-        input.sourceId ?? null,
-        input.sourceUrl ?? null,
-        input.authorId ?? null,
-        input.publishedAt ?? null,
-        json(input.payload),
-        input.excerpt,
-      ],
-    );
-    return (
-      await one<{ id: string }>(
-        this.db,
-        "SELECT id FROM enrichment_evidence WHERE artifact_id=$1 AND extractor_version=$2 AND locator=$3 AND payload=$4::jsonb AND excerpt=$5 AND source_id IS NOT DISTINCT FROM $6 AND source_url IS NOT DISTINCT FROM $7 AND author_id IS NOT DISTINCT FROM $8 AND published_at IS NOT DISTINCT FROM $9::timestamptz",
+    return this.db.transaction(async (tx) => {
+      await tx.query("SELECT pg_advisory_xact_lock(73422002)");
+      await one(
+        tx,
+        "SELECT id FROM enrichment_artifacts WHERE id=$1 AND purged_at IS NULL AND (expires_at IS NULL OR expires_at>now()) AND NOT EXISTS(SELECT 1 FROM enrichment_artifact_withdrawals WHERE artifact_id=$1)",
+        [input.artifactId],
+      );
+      const id = randomUUID();
+      await tx.query(
+        "INSERT INTO enrichment_evidence(id,artifact_id,extractor_version,locator,source_id,source_url,author_id,published_at,payload,excerpt) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(artifact_id,extractor_version,locator) DO NOTHING",
         [
+          id,
           input.artifactId,
           input.extractorVersion,
           input.locator,
-          json(input.payload),
-          input.excerpt,
           input.sourceId ?? null,
           input.sourceUrl ?? null,
           input.authorId ?? null,
           input.publishedAt ?? null,
+          json(input.payload),
+          input.excerpt,
         ],
-      )
-    ).id;
+      );
+      return (
+        await one<{ id: string }>(
+          tx,
+          "SELECT id FROM enrichment_evidence WHERE artifact_id=$1 AND extractor_version=$2 AND locator=$3 AND payload=$4::jsonb AND excerpt=$5 AND source_id IS NOT DISTINCT FROM $6 AND source_url IS NOT DISTINCT FROM $7 AND author_id IS NOT DISTINCT FROM $8 AND published_at IS NOT DISTINCT FROM $9::timestamptz",
+          [
+            input.artifactId,
+            input.extractorVersion,
+            input.locator,
+            json(input.payload),
+            input.excerpt,
+            input.sourceId ?? null,
+            input.sourceUrl ?? null,
+            input.authorId ?? null,
+            input.publishedAt ?? null,
+          ],
+        )
+      ).id;
+    });
   }
   async linkEvidence(entityId: string, evidenceId: string, relation: string) {
     await this.db.query(
@@ -451,7 +459,7 @@ export class EnrichmentStore {
         [scope, state.release_id, state.revision],
       );
       await tx.query(
-        "INSERT INTO enrichment_stage_work(id,entity_id,release_id,generation,stage) SELECT gen_random_uuid(),t.entity_id,t.release_id,t.generation,s.stage FROM enrichment_targets t JOIN enrichment_entities e ON e.id=t.entity_id JOIN enrichment_releases r ON r.id=t.release_id CROSS JOIN LATERAL jsonb_array_elements_text(r.manifest->'stages') s(stage) WHERE t.scope=$1 AND e.status='active' ON CONFLICT DO NOTHING",
+        "INSERT INTO enrichment_stage_work(id,entity_id,release_id,generation,stage) SELECT gen_random_uuid(),t.entity_id,t.release_id,t.generation,s.stage FROM enrichment_targets t JOIN enrichment_entities e ON e.id=t.entity_id JOIN enrichment_releases r ON r.id=t.release_id CROSS JOIN LATERAL jsonb_array_elements_text(r.manifest->'stages') s(stage) WHERE t.scope=$1 AND e.status='active' AND e.kind='founder' ON CONFLICT DO NOTHING",
         [scope],
       );
       await tx.query(
@@ -575,21 +583,38 @@ export class EnrichmentStore {
         json(input.validationReport),
         input.status,
       ];
-    await this.db.query(
-      "INSERT INTO enrichment_analysis_runs(id,entity_id,release_id,generation,purpose,input_artifact_id,input_digest,recipe_digest,evidence_ids,output,validation_report,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(id) DO NOTHING",
-      values,
-    );
-    await one(
-      this.db,
-      "SELECT id FROM enrichment_analysis_runs WHERE id=$1 AND entity_id=$2 AND release_id=$3 AND generation=$4 AND purpose=$5 AND input_artifact_id=$6 AND input_digest=$7 AND recipe_digest=$8 AND evidence_ids=$9::jsonb AND output IS NOT DISTINCT FROM $10::jsonb AND validation_report=$11::jsonb AND status=$12",
-      values,
-    );
+    await this.db.transaction(async (tx) => {
+      await tx.query("SELECT pg_advisory_xact_lock(73422002)");
+      await tx.query(
+        "INSERT INTO enrichment_analysis_runs(id,entity_id,release_id,generation,purpose,input_artifact_id,input_digest,recipe_digest,evidence_ids,output,validation_report,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(id) DO NOTHING",
+        values,
+      );
+      await one(
+        tx,
+        "SELECT id FROM enrichment_analysis_runs WHERE id=$1 AND entity_id=$2 AND release_id=$3 AND generation=$4 AND purpose=$5 AND input_artifact_id=$6 AND input_digest=$7 AND recipe_digest=$8 AND evidence_ids=$9::jsonb AND output IS NOT DISTINCT FROM $10::jsonb AND validation_report=$11::jsonb AND status=$12",
+        values,
+      );
+      const retained = await tx.query(
+        "SELECT id FROM enrichment_eligible_analyses WHERE id=$1",
+        [id],
+      );
+      // A response can arrive after evidence withdrawal. Keep no late derived payload.
+      if (!retained.rows.length)
+        await this.purgeWithin(
+          tx,
+          input.inputArtifactId,
+          "system",
+          "input withdrawn before analysis completion",
+        );
+    });
     return id;
   }
   async assertAnalysisInputs(input: {
     entityId: string;
     releaseId: string;
     generation: number;
+    purpose: string;
+    recipeDigest: string;
     evidence: Array<{
       id: string;
       artifactId: string;
@@ -605,8 +630,14 @@ export class EnrichmentStore {
         JOIN enrichment_entities e ON e.id=t.entity_id AND e.status='active'
         JOIN enrichment_intake i ON i.scope=t.scope AND i.revision=t.revision AND i.release_id=t.release_id
         JOIN enrichment_releases r ON r.id=t.release_id AND r.status='approved'
-        WHERE t.entity_id=$1 AND t.release_id=$2 AND t.generation=$3`,
-        [input.entityId, input.releaseId, input.generation],
+        WHERE t.entity_id=$1 AND t.release_id=$2 AND t.generation=$3 AND r.manifest->'recipes'->>$4=$5`,
+        [
+          input.entityId,
+          input.releaseId,
+          input.generation,
+          input.purpose,
+          input.recipeDigest,
+        ],
       );
       for (const evidence of input.evidence) {
         if (hash(json(evidence.text)) !== evidence.contentHash)
@@ -675,7 +706,7 @@ export class EnrichmentStore {
           status: AnalysisInput["status"];
           validationReport: unknown;
         }>(
-          `SELECT id,output,input_artifact_id AS "inputArtifactId",release_id AS "releaseId",generation,status,validation_report AS "validationReport" FROM enrichment_analysis_runs WHERE id=$1`,
+          `SELECT id,output,input_artifact_id AS "inputArtifactId",release_id AS "releaseId",generation,status,validation_report AS "validationReport" FROM enrichment_analysis_runs WHERE id=$1 AND purged_at IS NULL`,
           [id],
         )
       ).rows[0] ?? null
@@ -695,24 +726,98 @@ export class EnrichmentStore {
       throw new Error("withdrawal actor and reason required");
     await this.db.transaction(async (tx) => {
       await tx.query("SELECT pg_advisory_xact_lock(73422002)");
-      await tx.query(
-        "INSERT INTO enrichment_artifact_withdrawals(artifact_id,actor,reason) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",
-        [artifactId, actor, reason],
-      );
-      const affected = `SELECT a.id FROM enrichment_analysis_runs a WHERE a.input_artifact_id=$1 OR EXISTS(SELECT 1 FROM enrichment_evidence e WHERE e.artifact_id=$1 AND a.evidence_ids ? e.id::text)`;
-      await tx.query(
-        `DELETE FROM enrichment_profiles WHERE analysis_id IN (${affected})`,
-        [artifactId],
-      );
-      await tx.query(
-        `DELETE FROM enrichment_analysis_embeddings WHERE analysis_id IN (${affected})`,
-        [artifactId],
-      );
-      await tx.query(
-        "UPDATE enrichment_artifacts SET body='\\x'::bytea,byte_length=0,purged_at=now() WHERE id=$1 AND purged_at IS NULL",
-        [artifactId],
-      );
+      await this.purgeWithin(tx, artifactId, actor, reason);
     });
+  }
+  private async purgeWithin(
+    tx: Sql,
+    artifactId: string,
+    actor: string,
+    reason: string,
+  ): Promise<void> {
+    const runs = (
+      await tx.query<{
+        id: string;
+        input_artifact_id: string;
+        validation_report: Record<string, unknown>;
+      }>(
+        `WITH RECURSIVE affected AS (
+      SELECT a.id FROM enrichment_analysis_runs a WHERE a.input_artifact_id=$1 OR EXISTS(
+        SELECT 1 FROM enrichment_evidence e WHERE e.artifact_id=$1 AND a.evidence_ids ? e.id::text)
+      UNION SELECT child.id FROM enrichment_analysis_runs child JOIN affected parent ON child.validation_report->>'reusedFromRunId'=parent.id::text)
+      SELECT a.id,a.input_artifact_id,a.validation_report FROM enrichment_analysis_runs a JOIN affected USING(id)`,
+        [artifactId],
+      )
+    ).rows;
+    const runIds = runs.map((r) => r.id),
+      inputIds = runs.map((r) => r.input_artifact_id);
+    const attempts = runs.flatMap((r) =>
+      typeof r.validation_report.attemptId === "string"
+        ? [r.validation_report.attemptId]
+        : [],
+    );
+    const vectors = (
+      await tx.query<{ embedding_id: string }>(
+        "SELECT DISTINCT embedding_id FROM enrichment_analysis_embeddings WHERE analysis_id=ANY($1::uuid[])",
+        [runIds],
+      )
+    ).rows.map((r) => r.embedding_id);
+    await tx.query(
+      "DELETE FROM enrichment_profiles WHERE analysis_id=ANY($1::uuid[])",
+      [runIds],
+    );
+    await tx.query(
+      "DELETE FROM enrichment_analysis_embeddings WHERE analysis_id=ANY($1::uuid[])",
+      [runIds],
+    );
+    const vectorAttempts = (
+      await tx.query<{ attempt_id: string | null }>(
+        "DELETE FROM enrichment_embeddings v WHERE id=ANY($1::uuid[]) AND NOT EXISTS(SELECT 1 FROM enrichment_analysis_embeddings link WHERE link.embedding_id=v.id) RETURNING attempt_id",
+        [vectors],
+      )
+    ).rows.flatMap((r) => (r.attempt_id ? [r.attempt_id] : []));
+    const artifacts = (
+      await tx.query<{ id: string; attempt_id: string | null }>(
+        "SELECT id,attempt_id FROM enrichment_artifacts WHERE id=$1 OR id=ANY($2::uuid[]) OR run_id=ANY($3::uuid[]) OR attempt_id::text=ANY($4::text[]) OR attempt_id=(SELECT attempt_id FROM enrichment_artifacts WHERE id=$1)",
+        [artifactId, inputIds, runIds, [...attempts, ...vectorAttempts]],
+      )
+    ).rows;
+    const artifactIds = artifacts.map((a) => a.id),
+      requestAttempts = artifacts.flatMap((a) =>
+        a.attempt_id ? [a.attempt_id] : [],
+      );
+    await tx.query(
+      "INSERT INTO enrichment_artifact_withdrawals(artifact_id,actor,reason) SELECT unnest($1::uuid[]),$2,$3 ON CONFLICT DO NOTHING",
+      [artifactIds, actor, reason],
+    );
+    await tx.query(
+      "UPDATE enrichment_artifacts SET body='\\x'::bytea,byte_length=0,metadata='{}'::jsonb,purged_at=now() WHERE id=ANY($1::uuid[]) AND purged_at IS NULL",
+      [artifactIds],
+    );
+    await tx.query(
+      "UPDATE enrichment_evidence SET payload='{}'::jsonb,excerpt='',source_id=NULL,source_url=NULL,author_id=NULL,published_at=NULL,purged_at=now() WHERE artifact_id=ANY($1::uuid[]) AND purged_at IS NULL",
+      [artifactIds],
+    );
+    await tx.query(
+      "UPDATE enrichment_analysis_runs SET output=NULL,validation_report='{}'::jsonb,purged_at=now() WHERE id=ANY($1::uuid[]) AND purged_at IS NULL",
+      [runIds],
+    );
+    await tx.query(
+      "UPDATE enrichment_collection_requests SET args='{}'::jsonb WHERE id IN (SELECT request_id FROM enrichment_collection_attempts WHERE id=ANY($1::uuid[]))",
+      [requestAttempts],
+    );
+    await tx.query(
+      "UPDATE enrichment_collection_attempts SET resolution=NULL,reason='source data withdrawn' WHERE id=ANY($1::uuid[])",
+      [requestAttempts],
+    );
+    const queue = await tx.query<{ exists: boolean }>(
+      "SELECT to_regclass('enrichment_founder_intake') IS NOT NULL AS exists",
+    );
+    if (queue.rows[0].exists)
+      await tx.query(
+        "UPDATE enrichment_founder_intake SET snapshot='{}'::jsonb WHERE founder_key IN (SELECT owner.legacy_key FROM enrichment_entities owner JOIN enrichment_entity_evidence link ON link.entity_id=owner.id JOIN enrichment_evidence e ON e.id=link.evidence_id WHERE e.artifact_id=ANY($1::uuid[]))",
+        [artifactIds],
+      );
   }
   async publishAnalysis(
     analysisId: string,
@@ -731,6 +836,11 @@ export class EnrichmentStore {
         )
       ).rows[0];
       if (!run) return false;
+      // Match reconciliation's intake-before-target lock order.
+      await tx.query(
+        "SELECT i.scope FROM enrichment_intake i JOIN enrichment_targets t ON t.scope=i.scope WHERE t.entity_id=$1 FOR SHARE OF i",
+        [run.entity_id],
+      );
       const target = (
         await tx.query(
           "SELECT t.entity_id FROM enrichment_targets t JOIN enrichment_entities e ON e.id=t.entity_id JOIN enrichment_releases r ON r.id=t.release_id JOIN enrichment_intake i ON i.scope=t.scope AND i.release_id=t.release_id AND i.revision=t.revision WHERE t.entity_id=$1 AND t.release_id=$2 AND t.generation=$3 AND e.status='active' AND r.status='approved' FOR UPDATE OF t,e FOR SHARE OF i,r",
@@ -799,8 +909,8 @@ export class EnrichmentStore {
     text: string;
     templateVersion: string;
     model: string;
-    modelVersion?: string;
-    distance?: "cosine" | "euclidean" | "dot";
+    modelVersion: string;
+    distance: "cosine" | "euclidean" | "dot";
     vector: number[];
     attemptId?: string;
   }): Promise<string> {
@@ -820,8 +930,8 @@ export class EnrichmentStore {
           input.vector.length,
           input.vector,
           input.attemptId ?? null,
-          input.modelVersion ?? "unresolved",
-          input.distance ?? "cosine",
+          input.modelVersion,
+          input.distance,
         ],
       )
     ).id;

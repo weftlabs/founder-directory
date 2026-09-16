@@ -320,6 +320,8 @@ test("publication rejects stale release and suppression removes shared-vector as
       text: "same",
       templateVersion: "v1",
       model: "synthetic",
+      modelVersion: "v1",
+      distance: "cosine",
       vector: [1, 0],
     });
     assert.equal(
@@ -328,6 +330,8 @@ test("publication rejects stale release and suppression removes shared-vector as
         text: "same",
         templateVersion: "v1",
         model: "synthetic",
+        modelVersion: "v1",
+        distance: "cosine",
         vector: [1, 0],
       }),
       vector,
@@ -392,6 +396,7 @@ test("required stages stay ordered; expired work blocks and withdrawal prevents 
     );
     const release = await store.createRelease({
       stages: ["collect", "extract", "dna"],
+      recipes: { dna: "recipe" },
     });
     await store.approveRelease(release, raw.id, {
       actor: "test",
@@ -409,6 +414,8 @@ test("required stages stay ordered; expired work blocks and withdrawal prevents 
       entityId,
       releaseId: release,
       generation: 0,
+      purpose: "dna",
+      recipeDigest: "recipe",
       evidence: [
         {
           id: evidence,
@@ -490,6 +497,165 @@ test("required stages stay ordered; expired work blocks and withdrawal prevents 
       (await db.query("SELECT * FROM enrichment_profiles")).rows.length,
       0,
     );
+  } finally {
+    await pg.close();
+  }
+});
+
+test("withdrawal physically clears derived payloads and late completions without losing accounting", async () => {
+  const { pg, db, store } = await fixture();
+  try {
+    const entityId = await store.createEntity("founder", "purge-test");
+    const source = await store.putArtifact({
+      kind: "legacy_import",
+      body: Buffer.from("private source"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      importBatch: "test",
+    });
+    const evidence = await store.addEvidence({
+      artifactId: source.id,
+      extractorVersion: "v1",
+      locator: "$",
+      payload: { text: "private source" },
+      excerpt: "private source",
+      sourceUrl: "https://example.com/source",
+    });
+    await store.linkEvidence(entityId, evidence, "source");
+    const release = await store.createRelease({ stages: ["dna"] });
+    await store.approveRelease(release, source.id, {
+      actor: "test",
+      reason: "synthetic",
+    });
+    await store.promoteRelease("test", release, "start");
+    await store.intake("test", entityId);
+    const budgetId = randomUUID();
+    await store.createBudget({
+      id: budgetId,
+      scope: "test",
+      currency: "USD",
+      capMicros: "100",
+    });
+    const request = await store.planCollection({
+      scope: "test",
+      fingerprint: "generation",
+      generation: 0,
+      operation: "generate",
+      args: { prompt: "private source" },
+      policyId: "test-only",
+    });
+    const attempt = await store.reserveAttempt({
+      requestId: request.id,
+      budgetId,
+      capMicros: "100",
+    });
+    const requestArtifact = await store.putArtifact({
+      kind: "generation_request",
+      body: Buffer.from("private prompt"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      attemptId: attempt.id,
+    });
+    await store.markDispatched(attempt.id);
+    const response = await store.captureResponse({
+      attemptId: attempt.id,
+      kind: "generation_response",
+      body: Buffer.from("private output"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      paymentState: "settled",
+      settledMicros: "50",
+    });
+    const runId = randomUUID();
+    const manifest = await store.putArtifact({
+      kind: "manifest",
+      body: Buffer.from("private context"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      runId,
+    });
+    const run = {
+      id: runId,
+      entityId,
+      releaseId: release,
+      generation: 0,
+      purpose: "dna",
+      inputArtifactId: manifest.id,
+      inputDigest: "input",
+      recipeDigest: "recipe",
+      evidenceIds: [evidence],
+      output: { description: "private output" },
+      validationReport: {
+        attemptId: attempt.id,
+        responseArtifactId: response.id,
+      },
+      status: "succeeded" as const,
+    };
+    await store.saveAnalysis(run);
+    await store.publishAnalysis(runId);
+    const vector = await store.saveEmbedding({
+      scope: "test",
+      text: "private output",
+      templateVersion: "v1",
+      model: "synthetic",
+      modelVersion: "v1",
+      distance: "cosine",
+      vector: [1, 0],
+    });
+    await store.linkEmbedding(entityId, runId, vector, "dna");
+    await store.withdrawArtifact(
+      source.id,
+      "test",
+      "source permission withdrawn",
+    );
+    for (const id of [source.id, manifest.id, requestArtifact.id, response.id])
+      assert.equal(await store.getArtifact(id), null);
+    assert.deepEqual(
+      (
+        await db.query<{ payload: unknown; excerpt: string }>(
+          "SELECT payload,excerpt FROM enrichment_evidence WHERE id=$1",
+          [evidence],
+        )
+      ).rows[0],
+      { payload: {}, excerpt: "" },
+    );
+    assert.equal(
+      (await db.query("SELECT * FROM enrichment_embeddings")).rows.length,
+      0,
+    );
+    assert.equal(await store.findAnalysis(runId), null);
+    assert.deepEqual(
+      (
+        await db.query<{ args: unknown }>(
+          "SELECT args FROM enrichment_collection_requests WHERE id=$1",
+          [request.id],
+        )
+      ).rows[0].args,
+      {},
+    );
+    assert.equal(
+      (
+        await db.query<{ committed_micros: string }>(
+          "SELECT committed_micros::text FROM enrichment_budgets",
+        )
+      ).rows[0].committed_micros,
+      "50",
+    );
+    const lateId = randomUUID();
+    const lateManifest = await store.putArtifact({
+      kind: "manifest",
+      body: Buffer.from("late private context"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      runId: lateId,
+    });
+    await store.saveAnalysis({
+      ...run,
+      id: lateId,
+      inputArtifactId: lateManifest.id,
+    });
+    assert.equal(await store.getArtifact(lateManifest.id), null);
+    assert.equal(await store.findAnalysis(lateId), null);
   } finally {
     await pg.close();
   }
