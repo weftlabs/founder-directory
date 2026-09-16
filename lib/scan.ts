@@ -1,6 +1,11 @@
 import { existingHandles, touchScan, upsertFounder } from "./db";
 import { emptyPlace, normalizePlaces } from "./place";
-import { fetchProfile, MAX_NEW_PER_SCAN, searchIntroPages, TREND_PHRASES } from "./x";
+import {
+  fetchProfile,
+  MAX_NEW_PER_SCAN,
+  searchIntroPages,
+  TREND_PHRASES,
+} from "./x";
 
 export async function runScan(options?: {
   maxPages?: number;

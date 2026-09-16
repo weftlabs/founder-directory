@@ -81,7 +81,9 @@ export function isIntro(text: string): boolean {
   if (!t || /^RT @/i.test(t)) return false;
   if (/\bI know a\b/i.test(t)) return false;
   if (
-    /\b(?:another|fellow)\s+(?:solo\s+)?(?:founder|builder|indie hacker)/i.test(t) &&
+    /\b(?:another|fellow)\s+(?:solo\s+)?(?:founder|builder|indie hacker)/i.test(
+      t,
+    ) &&
     !FIRST_PERSON.test(t)
   ) {
     return false;
@@ -95,7 +97,8 @@ export function isIntro(text: string): boolean {
     return true;
   }
   if (/\b(?:solo founder|indie hacker) from\b/i.test(t)) return true;
-  if (/\bI(?:['’`]?m| am)\s+\d+/i.test(t) && /\b(?:solo\s+)?founder\b/i.test(t)) return true;
+  if (/\bI(?:['’`]?m| am)\s+\d+/i.test(t) && /\b(?:solo\s+)?founder\b/i.test(t))
+    return true;
   if (
     /\bI(?:['’`]?m| am)\s+\d+/i.test(t) &&
     /\bindie hacker\b/i.test(t) &&
@@ -140,7 +143,10 @@ export async function searchIntroPage(
     asString(payload.cursor) ??
     asString(asRecord(payload.data)?.cursor) ??
     null;
-  return { hits: parseHits(payload).filter((hit) => isIntro(hit.text)), cursor: next };
+  return {
+    hits: parseHits(payload).filter((hit) => isIntro(hit.text)),
+    cursor: next,
+  };
 }
 
 export async function searchIntroPages(maxPages: number): Promise<TrendHit[]> {
@@ -149,7 +155,11 @@ export async function searchIntroPages(maxPages: number): Promise<TrendHit[]> {
   for (const phrase of TREND_PHRASES) {
     let cursor: string | undefined;
     for (let page = 0; page < maxPages; page += 1) {
-      const result = await searchIntroPage(cursor, defaultWeftDependencies, phrase);
+      const result = await searchIntroPage(
+        cursor,
+        defaultWeftDependencies,
+        phrase,
+      );
       for (const hit of result.hits) {
         const key = hit.handle.toLowerCase();
         if (seen.has(key)) continue;
