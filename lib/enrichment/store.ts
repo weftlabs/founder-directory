@@ -619,6 +619,7 @@ export class EnrichmentStore {
     generation: number;
     purpose: string;
     recipeDigest: string;
+    subjectName?: string;
     evidence: Array<{
       id: string;
       artifactId: string;
@@ -634,13 +635,15 @@ export class EnrichmentStore {
         JOIN enrichment_entities e ON e.id=t.entity_id AND e.status='active'
         JOIN enrichment_intake i ON i.scope=t.scope AND i.revision=t.revision AND i.release_id=t.release_id
         JOIN enrichment_releases r ON r.id=t.release_id AND r.status='approved'
-        WHERE t.entity_id=$1 AND t.release_id=$2 AND t.generation=$3 AND r.manifest->'recipes'->>$4=$5`,
+        WHERE t.entity_id=$1 AND t.release_id=$2 AND t.generation=$3 AND r.manifest->'recipes'->>$4=$5
+        AND ($6::text IS NULL OR (e.kind='product' AND e.legacy_key ~ '^product:[0-9a-f-]{36}:' AND substring(e.legacy_key FROM 46)=lower(trim($6))))`,
         [
           input.entityId,
           input.releaseId,
           input.generation,
           input.purpose,
           input.recipeDigest,
+          input.subjectName ?? null,
         ],
       );
       for (const evidence of input.evidence) {
