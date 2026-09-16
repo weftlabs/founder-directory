@@ -3,6 +3,7 @@
 Discover founders, what they are building, and where to find them.
 
 [![CI](https://github.com/weftlabs/founder-directory/actions/workflows/ci.yml/badge.svg)](https://github.com/weftlabs/founder-directory/actions/workflows/ci.yml)
+[![CD](https://github.com/weftlabs/founder-directory/actions/workflows/cd.yml/badge.svg)](https://github.com/weftlabs/founder-directory/actions/workflows/cd.yml)
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fweftlabs%2Ffounder-directory&project-name=founder-directory&repository-name=founder-directory)
 
 A working, public Next.js product and a contributor-friendly example of **app
@@ -28,7 +29,8 @@ your own Neon `DATABASE_URL`, get a server-only `WEFT_API_KEY` from the
 [Weft buyer dashboard](https://weft.network/dashboard/buyer/api_keys), and set
 `CRON_SECRET`. Never prefix these with `NEXT_PUBLIC_`.
 
-**Deploy safely:** the included cron schedule is every five minutes. Configure
+**Deploy safely:** merges to `main` deploy a Vercel preview; a `vX.Y.Z` tag
+deploys production. The included cron schedule is every five minutes. Configure
 wallet limits and isolate preview credentials before enabling it. A Vercel
 clone does not come with a database, funded wallet, or free provider calls.
 Read the [deployment guide](docs/deployment.md) first.

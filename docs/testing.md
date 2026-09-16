@@ -44,6 +44,10 @@ CI on the exact PR head is the merge signal. Branch-protection requirements are
 GitHub settings, not something this YAML enables by itself. Maintainers should
 require the quality check and review before merge.
 
+[CD](../.github/workflows/cd.yml) is separate: a push to `main` deploys a Vercel
+preview; a `vX.Y.Z` tag deploys production. It needs `VERCEL_TOKEN`,
+`VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID`. See [deployment](deployment.md).
+
 ## Separate paid verification
 
 A real Weft probe is an operator action, never a PR gate. Establish a total
