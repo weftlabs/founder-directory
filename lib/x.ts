@@ -17,9 +17,12 @@ const TREND_PHRASE = "I'm a solo founder";
 const TREND_PHRASES = [
   "I'm a solo founder",
   "I’m a solo founder",
-  "Im a solo founder",
-  "I am a solo founder",
   "Solo founder from",
+  "I'm a founder",
+  "I'm founder",
+  "I’m a founder",
+  "indie hacker",
+  "I'm a builder",
 ] as const;
 const MAX_NEW_PER_SCAN = 8;
 
@@ -69,17 +72,37 @@ export type TrendHit = {
   tweetId: string | null;
 };
 
+const FIRST_PERSON = /\bI(?:['’`]?m| am)\b/i;
+const ROLE =
+  /\b(?:solo\s+)?founder\b|\bindie hackers?\b|\b(?:indie\s+)?builders?\b/i;
+
 export function isIntro(text: string): boolean {
   const t = text.replace(/\s+/g, " ").trim();
   if (!t || /^RT @/i.test(t)) return false;
-  if (!/solo founder/i.test(t)) return false;
   if (/\bI know a\b/i.test(t)) return false;
-  if (/\b(?:another|fellow) solo founder\b/i.test(t) && !/\bI(?:['’`]?m| am)\b/i.test(t)) {
+  if (
+    /\b(?:another|fellow)\s+(?:solo\s+)?(?:founder|builder|indie hacker)/i.test(t) &&
+    !FIRST_PERSON.test(t)
+  ) {
     return false;
   }
-  if (/\bI(?:['’`]?m| am)\s+(?:\d+\.?\s*)?(?:a )?solo founder\b/i.test(t)) return true;
-  if (/\bsolo founder from\b/i.test(t)) return true;
-  if (/\bI(?:['’`]?m| am)\s+\d+/i.test(t)) return true;
+  if (!ROLE.test(t)) return false;
+  if (
+    /\bI(?:['’`]?m| am)\s+(?:\d+\.?\s*)?(?:a |an )?(?:solo\s+)?(?:founder|builder|indie hacker)\b/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  if (/\b(?:solo founder|indie hacker) from\b/i.test(t)) return true;
+  if (/\bI(?:['’`]?m| am)\s+\d+/i.test(t) && /\b(?:solo\s+)?founder\b/i.test(t)) return true;
+  if (
+    /\bI(?:['’`]?m| am)\s+\d+/i.test(t) &&
+    /\bindie hacker\b/i.test(t) &&
+    !/looking to connect with more/i.test(t)
+  ) {
+    return true;
+  }
   return false;
 }
 

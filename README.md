@@ -43,9 +43,9 @@ Current per-request ceilings are **$0.01 for X search/profile requests** and
 **$0.002 for place normalization**. These are caps, not quoted prices. Retries
 can add cost; a scan is multiple requests. See [payment and failure semantics](docs/weft.md).
 
-The current collection searches several latest intro phrases (`I'm a solo
-founder`, curly `I’m`, `Im`, `I am`, and `Solo founder from`), then keeps
-first-person intros. The product is not limited to one template. It does
+The current collection searches latest intro phrases for solo founders,
+founders, builders, and indie hackers, then keeps first-person intros.
+The product is not limited to one template. It does
 not verify identities, guarantee location accuracy,
 collect private accounts, message founders or automate outreach. Signal labels
 are explainable heuristics, not reputation scores.
