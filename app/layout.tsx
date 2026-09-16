@@ -6,6 +6,7 @@ import "@fontsource/ibm-plex-sans/latin-700.css";
 import { Analytics } from "./analytics";
 import { SiteFooter } from "./site-footer";
 import {
+  GITHUB_REPO,
   NITTARAB_X,
   SITE_DESCRIPTION,
   SITE_NAME,
@@ -65,6 +66,7 @@ const jsonLd = {
       name: SITE_NAME,
       url: SITE_URL,
       description: SITE_DESCRIPTION,
+      sameAs: [GITHUB_REPO],
       publisher: { "@id": `${SITE_URL}/#org` },
       creator: { "@id": `${SITE_URL}/#person` },
     },

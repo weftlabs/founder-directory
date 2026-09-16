@@ -6,3 +6,4 @@ export const SITE_DESCRIPTION =
 export const NITTARAB_X = "https://x.com/nittarab";
 export const WEFTLABS_URL = "https://weftlabs.com";
 export const WEFTLABS_X = "https://x.com/weftlabs";
+export const GITHUB_REPO = "https://github.com/weftlabs/founder-directory";

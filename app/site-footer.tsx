@@ -1,10 +1,15 @@
 import Link from "next/link";
-import { NITTARAB_X, WEFTLABS_URL } from "@/lib/site";
+import { GITHUB_REPO, NITTARAB_X, WEFTLABS_URL } from "@/lib/site";
 
 export function SiteFooter() {
   return (
     <footer className="site">
-      <Link href="/about">About</Link>
+      <nav aria-label="About and source">
+        <Link href="/about">About</Link>
+        <a href={GITHUB_REPO} rel="noopener noreferrer">
+          GitHub
+        </a>
+      </nav>
       <p>
         Built by{" "}
         <a href={NITTARAB_X} rel="noopener noreferrer me">

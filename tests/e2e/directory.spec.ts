@@ -14,6 +14,9 @@ test("directory works without credentials on desktop and mobile", async ({
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
     "Find the people building.",
   );
+  await expect(
+    page.locator("footer").getByRole("link", { name: "GitHub" }),
+  ).toHaveAttribute("href", "https://github.com/weftlabs/founder-directory");
   await expect(page.locator("header")).not.toContainText("updated");
   await expect(page.locator("p.lede")).not.toContainText("Updated");
   await expect(page.locator(".count .updated")).toContainText("Updated");
@@ -94,6 +97,17 @@ test("About navigation, attribution, and SEO survive the branding change", async
     }),
   ).toBeVisible();
   await expect(
+    page.locator("footer").getByRole("link", { name: "GitHub" }),
+  ).toHaveAttribute("href", "https://github.com/weftlabs/founder-directory");
+  await expect(
+    page.getByRole("heading", { name: "How it's built" }),
+  ).toBeVisible();
+  await expect(
+    page
+      .locator("main.about")
+      .getByRole("link", { name: "weftlabs/founder-directory" }),
+  ).toHaveAttribute("href", "https://github.com/weftlabs/founder-directory");
+  await expect(
     page.locator("footer").getByRole("link", { name: "Weft Labs" }),
   ).toHaveAttribute("href", "https://weftlabs.com");
   await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
@@ -106,6 +120,19 @@ test("About navigation, attribution, and SEO survive the branding change", async
   expect(schema.some((text) => JSON.parse(text)["@type"] === "AboutPage")).toBe(
     true,
   );
+  expect(
+    schema.some((text) => {
+      const data = JSON.parse(text);
+      const nodes = Array.isArray(data["@graph"]) ? data["@graph"] : [data];
+      return nodes.some(
+        (node: { "@type"?: string; sameAs?: string[] }) =>
+          node["@type"] === "WebSite" &&
+          node.sameAs?.includes(
+            "https://github.com/weftlabs/founder-directory",
+          ),
+      );
+    }),
+  ).toBe(true);
   const sitemap = await request.get("/sitemap.xml");
   expect(sitemap.status()).toBe(200);
   expect(await sitemap.text()).toContain("https://foundersdirectory.app/about");
