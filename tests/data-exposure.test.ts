@@ -51,7 +51,7 @@ test("city aliases share one pin and retain all founders when selected", () => {
     {
       ...founders[0],
       city: "NYC",
-      country: "United States",
+      country: "USA",
       coordinates: [-74, 40.7] as [number, number],
     },
     {
@@ -65,10 +65,13 @@ test("city aliases share one pin and retain all founders when selected", () => {
   const overview = discoveryPage(aliases, discoveryQuery({}), "map");
   assert.equal(overview.serverPage.places.length, 2);
   assert.equal(overview.serverPage.places[0].count, 2);
-  for (const city of ["NYC", "New York"]) {
+  for (const [city, country] of [
+    ["NYC", "USA"],
+    ["New York", "United States"],
+  ]) {
     const selected = discoveryPage(
       aliases,
-      discoveryQuery({ city, country: "United States" }),
+      discoveryQuery({ city, country }),
       "map",
     );
     assert.equal(selected.founders.length, 2);

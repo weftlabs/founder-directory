@@ -1,4 +1,5 @@
 import type { Founder } from "./model";
+import { canonicalCountry } from "./place-names";
 
 export type IntroMetrics = {
   likes: number | null;
@@ -73,7 +74,8 @@ export function filterDiscovery(
   return founders.filter(
     (f) =>
       (!category || f.category === category) &&
-      (!country || f.country === country) &&
+      (!country ||
+        canonicalCountry(f.country ?? "") === canonicalCountry(country)) &&
       (!needle ||
         [f.name, f.handle, f.bio, f.city, f.country]
           .join(" ")

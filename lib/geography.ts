@@ -1,21 +1,6 @@
 import "./assert-server";
 import cities from "./data/cities.json";
-
-const normalize = (value: string) =>
-  value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .toLowerCase();
-const aliases: Record<string, string> = {
-  usa: "united states",
-  us: "united states",
-  "united states of america": "united states",
-  uk: "united kingdom",
-  "great britain": "united kingdom",
-  turkiye: "turkey",
-  "south korea": "south korea",
-};
+import { canonicalCountry, normalizePlace as normalize } from "./place-names";
 const cityAliases: Record<string, string> = {
   "new york|united states": "new york city",
   "nyc|united states": "new york city",
@@ -49,8 +34,7 @@ export function locateFounder({
   country: string | null;
 }): [number, number] | null {
   if (!city || !country) return null;
-  const normalizedCountry = normalize(country);
-  const normalized = aliases[normalizedCountry] ?? normalizedCountry;
+  const normalized = canonicalCountry(country);
   const cityKey =
     cityAliases[`${normalize(city)}|${normalized}`] ?? normalize(city);
   return places.get(`${cityKey}|${normalized}`) ?? null;
