@@ -1,0 +1,79 @@
+name: CD
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
+
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: ${{ startsWith(github.ref, 'refs/tags/v') && 'production' || 'preview' }}
+      url: ${{ steps.deploy.outputs.url }}
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - name: Require Vercel secrets
+        run: |
+          missing=
+          [ -n "$VERCEL_TOKEN" ] || missing="$missing VERCEL_TOKEN"
+          [ -n "$VERCEL_ORG_ID" ] || missing="$missing VERCEL_ORG_ID"
+          [ -n "$VERCEL_PROJECT_ID" ] || missing="$missing VERCEL_PROJECT_ID"
+          if [ -n "$missing" ]; then
+            echo "Missing GitHub secrets:$missing"
+            echo "Add repository secrets before this workflow can deploy."
+            exit 1
+          fi
+      - run: pnpm install --frozen-lockfile
+      - name: Install Vercel CLI
+        run: npm install --global vercel@59.19.0
+      - name: Pull Vercel environment
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+          else
+            vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
+          fi
+      - name: Build
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            vercel build --prod --token="$VERCEL_TOKEN"
+          else
+            vercel build --token="$VERCEL_TOKEN"
+          fi
+      - id: deploy
+        name: Deploy
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            url=$(vercel deploy --prebuilt --prod --yes --token="$VERCEL_TOKEN")
+          else
+            url=$(vercel deploy --prebuilt --yes --token="$VERCEL_TOKEN")
+          fi
+          {
+            echo "url<<EOF"
+            echo "$url"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "Deployed $url"
