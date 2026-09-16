@@ -88,6 +88,7 @@ export function DiscoveryBrowser({
     setCategory("");
     setCountry("");
     setSelected(null);
+    setGroup([]);
     setLimit(48);
   }
   return (
@@ -321,7 +322,10 @@ export function DiscoveryBrowser({
                     {mode === "map" && f.coordinates ? (
                       <button
                         aria-pressed={active?.handle === f.handle}
-                        onClick={() => setSelected(f.handle)}
+                        onClick={() => {
+                          setSelected(f.handle);
+                          setGroup([]);
+                        }}
                         aria-label={`Show ${f.name} on map`}
                       >
                         ↗ {f.city}, {f.country}
