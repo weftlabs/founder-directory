@@ -8,4 +8,5 @@ node_modules/
 playwright-report/
 test-results/
 coverage/
+.local/
 scripts/quotes-cache.json

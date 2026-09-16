@@ -25,6 +25,36 @@ const evidence = {
   sourceUrl: "https://example.test/post/1",
   extractorVersion: "1",
 };
+
+test("provider response schemas type every scalar enum and constant explicitly", () => {
+  for (const purpose of [
+    "founder_dna",
+    "product_discovery",
+    "product_descriptions",
+  ] as const) {
+    const schema = buildAnalysisInput({
+      entityId: "f",
+      releaseId: "r",
+      generation: 0,
+      purpose,
+      evidence: [evidence],
+      model: { provider: "fixture", model: "fixture", revision: null },
+      codeDigest: "test",
+    }).recipe.responseSchema;
+    function visit(value: unknown) {
+      if (!value || typeof value !== "object") return;
+      const node = value as Record<string, unknown>;
+      if ("enum" in node || "const" in node)
+        assert.equal(
+          node.type,
+          "string",
+          "scalar enum and const nodes declare string type",
+        );
+      for (const child of Object.values(node)) visit(child);
+    }
+    visit(schema);
+  }
+});
 const recipe = {
   purpose: "founder_dna",
   schemaVersion: "1",

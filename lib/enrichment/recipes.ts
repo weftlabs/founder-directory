@@ -87,7 +87,7 @@ export function buildAnalysisInput(input: {
       additionalProperties: false,
       required: ["schemaVersion", "claims"],
       properties: {
-        schemaVersion: { const: "claims-v1" },
+        schemaVersion: { type: "string", const: "claims-v1" },
         claims: {
           type: "array",
           minItems: fields.length,
@@ -97,7 +97,7 @@ export function buildAnalysisInput(input: {
             additionalProperties: false,
             required: ["field", "value", "kind", "state", "evidenceIds"],
             properties: {
-              field: { enum: [...fields] },
+              field: { type: "string", enum: [...fields] },
               value:
                 input.purpose === "product_discovery"
                   ? {
@@ -125,9 +125,11 @@ export function buildAnalysisInput(input: {
                     }
                   : { type: ["string", "null"] },
               kind: {
+                type: "string",
                 enum: ["self_report", "publisher_statement", "inference"],
               },
               state: {
+                type: "string",
                 enum: ["supported", "unknown", "conflict", "stale", "absent"],
               },
               evidenceIds: { type: "array", items: { type: "string" } },
