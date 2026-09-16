@@ -1,12 +1,13 @@
 # Deploying
 
-This repository deploys through GitHub Actions, not Vercel Git auto-deploy.
-[CD](../.github/workflows/cd.yml) builds once with the Vercel CLI and uploads
-prebuilt output.
+Non-`main` branches use Vercel Git auto-deploy for temporary previews.
+[CD](../.github/workflows/cd.yml) remains the release path: it builds once with
+the Vercel CLI and uploads prebuilt output.
 
 | Event                  | Deployment                       |
 | ---------------------- | -------------------------------- |
-| Merge (push to `main`) | Vercel **preview**               |
+| Non-`main` branch push | Vercel **preview** via Git       |
+| Merge (push to `main`) | Vercel **preview** via CD        |
 | Semver tag (`vX.Y.Z`)  | Vercel **production** (`--prod`) |
 
 CI still gates merge. A green check is not a live release. Production is the
@@ -26,8 +27,9 @@ tagged commit only.
    and `NEXT_PUBLIC_POSTHOG_HOST=https://eu.i.posthog.com`. Create a dedicated
    Founders Directory project. Do not reuse another app's token. The online-now
    chip counts Neon heartbeats, not PostHog.
-4. Leave Git auto-deploy off. `vercel.json` sets `git.deploymentEnabled` to
-   `false` so a merge cannot also promote production.
+4. Keep `main` excluded from Git auto-deploy. `vercel.json` enables automatic
+   previews for other branches but sets `git.deploymentEnabled.main` to
+   `false`, so a merge cannot also promote production.
 
 Release:
 
@@ -63,10 +65,11 @@ snapshot/branch before a maintainer-approved migration.
    `NEXT_PUBLIC_POSTHOG_HOST=https://eu.i.posthog.com`. Create a dedicated
    Founders Directory project. Do not reuse another app's token. The online-now
    chip counts Neon heartbeats, not PostHog.
-6. Review [vercel.json](../vercel.json): it schedules a scan every five minutes
-   and disables Git auto-deploy. Remove/disable the schedule in your fork until
-   you explicitly want paid collection. To use Vercel Git instead of Actions,
-   remove `git.deploymentEnabled` or set it true, and skip the CD secrets.
+6. Review [vercel.json](../vercel.json): it schedules a scan every five minutes,
+   enables branch previews and excludes `main` from Git auto-deploy. Remove or
+   disable the schedule in your fork until you explicitly want paid collection.
+   To use Vercel Git for production too, remove the `main` exclusion and skip
+   the CD secrets.
    Check your Vercel plan's cron limits; this frequency is not a promise of
    free hosting. Do not copy production credentials into preview builds.
 7. Deploy a preview, verify UI/metadata/unauthorized cron, then tag the exact

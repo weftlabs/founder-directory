@@ -44,8 +44,9 @@ CI on the exact PR head is the merge signal. Branch-protection requirements are
 GitHub settings, not something this YAML enables by itself. Maintainers should
 require the quality check and review before merge.
 
-[CD](../.github/workflows/cd.yml) is separate: a push to `main` deploys a Vercel
-preview; a `vX.Y.Z` tag deploys production. It needs `VERCEL_TOKEN`,
+Vercel Git creates a preview for every non-`main` branch push.
+[CD](../.github/workflows/cd.yml) is separate: a push to `main` deploys another
+Vercel preview; a `vX.Y.Z` tag deploys production. CD needs `VERCEL_TOKEN`,
 `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID`. See [deployment](deployment.md).
 
 ## Separate paid verification
