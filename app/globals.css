@@ -50,17 +50,23 @@ header.top {
   font-size: 13px;
   text-decoration: none;
 }
-.top-nav a:hover,
+.top-nav a:hover {
+  color: #d8ff3e;
+}
 .top-nav a[aria-current="page"] {
   color: #d8ff3e;
+  border-bottom: 2px solid #d8ff3e;
+  padding-bottom: 3px;
 }
-.fresh {
-  color: #9a978c;
-  font-size: 13px;
-}
-.fresh b {
+.top-nav a.star-link {
   color: #d8ff3e;
-  font-weight: 600;
+  border: 1px solid #d8ff3e55;
+  border-radius: 999px;
+  padding: 8px 16px;
+  white-space: nowrap;
+}
+.top-nav a.star-link:hover {
+  border-color: #d8ff3e;
 }
 .online {
   color: #9a978c;
@@ -86,6 +92,10 @@ header.top {
   .online {
     font-size: 12px;
     max-width: 58%;
+  }
+  .top-nav .directory-link,
+  .top-nav .online-label {
+    display: none;
   }
 }
 main.dir {
