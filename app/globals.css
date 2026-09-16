@@ -1,0 +1,170 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { min-height: 100%; }
+body {
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  background: #0c0d0b;
+  color: #f4f1e8;
+}
+a { color: inherit; }
+header.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 28px;
+  border-bottom: 1px solid #2c2e28;
+  position: sticky;
+  top: 0;
+  background: #0c0d0bcc;
+  backdrop-filter: blur(12px);
+  z-index: 5;
+}
+.brand { font-weight: 750; letter-spacing: -0.03em; text-decoration: none; }
+.brand em { color: #d8ff3e; font-style: italic; }
+.fresh { color: #9a978c; font-size: 13px; }
+.fresh b { color: #d8ff3e; font-weight: 600; }
+main.dir { max-width: 1120px; margin: 0 auto; padding: 36px 28px 80px; }
+main.profile { max-width: 720px; margin: 0 auto; padding: 40px 28px 96px; }
+h1.hero {
+  font-size: clamp(2.2rem, 5vw, 3.4rem);
+  letter-spacing: -0.04em;
+  line-height: 1.05;
+  max-width: 14ch;
+}
+.lede { color: #9a978c; margin: 14px 0 28px; max-width: 46rem; }
+.search {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  background: #161714;
+  border: 1px solid #2c2e28;
+  border-radius: 14px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+.search input {
+  flex: 1;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  color: #f4f1e8;
+  font: inherit;
+  font-size: 16px;
+}
+.count { color: #9a978c; font-size: 13px; white-space: nowrap; }
+.filters { margin-bottom: 12px; }
+.filters .label {
+  display: block;
+  color: #9a978c;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin: 0 0 8px;
+}
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.chips button {
+  font: inherit;
+  color: #f4f1e8;
+  background: transparent;
+  border: 1px solid #2c2e28;
+  border-radius: 999px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.chips button[aria-pressed="true"] {
+  background: #d8ff3e;
+  color: #14150f;
+  border-color: #d8ff3e;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+.card {
+  text-align: left;
+  background: #161714;
+  border: 1px solid #2c2e28;
+  border-radius: 16px;
+  padding: 18px;
+  text-decoration: none;
+  display: block;
+}
+.card:hover { border-color: #d8ff3e; }
+.card-top {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 12px;
+  align-items: center;
+}
+.card img {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: #2c2e28;
+  display: block;
+}
+.cat {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #d8ff3e;
+}
+.card h2 { font-size: 1.15rem; margin: 4px 0 2px; }
+.handle { color: #9a978c; font-size: 13px; }
+.card p { margin-top: 10px; color: #c8c4b8; font-size: 14px; }
+.empty { color: #9a978c; padding: 40px 0; }
+.hero-row {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 20px;
+  align-items: center;
+}
+.hero-row img {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: #2c2e28;
+}
+.profile h1 {
+  font-size: clamp(1.8rem, 4vw, 2.6rem);
+  letter-spacing: -0.04em;
+  line-height: 1.1;
+  margin: 6px 0 4px;
+}
+.bio { margin: 22px 0; font-size: 1.15rem; color: #c8c4b8; }
+.panel {
+  background: #161714;
+  border: 1px solid #2c2e28;
+  border-radius: 16px;
+  padding: 20px;
+  margin: 16px 0;
+}
+.panel h2 {
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #9a978c;
+  margin-bottom: 12px;
+}
+.score { display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; }
+.score b { font-size: 40px; line-height: 1; }
+.score span { color: #d8ff3e; font-weight: 650; }
+.signals { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; }
+.signals li {
+  padding: 6px 10px;
+  border: 1px solid #2c2e28;
+  border-radius: 999px;
+  font-size: 12px;
+}
+.signals li[data-hit="true"] {
+  background: #d8ff3e;
+  color: #14150f;
+  border-color: #d8ff3e;
+}
+dl { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+dt { color: #9a978c; font-size: 12px; }
+dd a { color: #d8ff3e; }
+.miss { color: #9a978c; }
+.back { display: inline-block; margin-top: 20px; color: #9a978c; }
