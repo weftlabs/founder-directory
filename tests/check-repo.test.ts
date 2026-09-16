@@ -10,7 +10,13 @@ function check(files: Record<string, string>) {
   const dir = mkdtempSync(join(tmpdir(), "founder-repo-test-"));
   try {
     execFileSync("git", ["init", "--quiet", dir]);
-    for (const [file, text] of Object.entries(files)) {
+    const fixture = {
+      "vercel.json": JSON.stringify({
+        git: { deploymentEnabled: { main: false } },
+      }),
+      ...files,
+    };
+    for (const [file, text] of Object.entries(fixture)) {
       mkdirSync(dirname(join(dir, file)), { recursive: true });
       writeFileSync(join(dir, file), text);
     }
@@ -58,4 +64,22 @@ test("repository check rejects committed environment files", () => {
   const result = check({ ".env.production": "EXAMPLE=not-a-secret" });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /environment file must not be committed/);
+});
+
+test("repository check rejects Vercel Git production deploys from main", () => {
+  const result = check({
+    "vercel.json": JSON.stringify({ git: { deploymentEnabled: true } }),
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /rules must be exactly/);
+});
+
+test("repository check rejects an overlapping rule that re-enables main", () => {
+  const result = check({
+    "vercel.json": JSON.stringify({
+      git: { deploymentEnabled: { main: false, "*": true } },
+    }),
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /rules must be exactly/);
 });

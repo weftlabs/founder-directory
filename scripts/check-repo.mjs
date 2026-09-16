@@ -14,6 +14,18 @@ const files = execFileSync(
   .filter((file) => existsSync(file));
 const errors = [];
 const sources = new Map();
+const vercelConfig = JSON.parse(readFileSync("vercel.json", "utf8"));
+const deploymentRules = vercelConfig.git?.deploymentEnabled;
+if (
+  !deploymentRules ||
+  typeof deploymentRules !== "object" ||
+  Array.isArray(deploymentRules) ||
+  Object.keys(deploymentRules).length !== 1 ||
+  deploymentRules.main !== false
+)
+  errors.push(
+    "vercel.json: Git deployment rules must be exactly { main: false }",
+  );
 for (const file of new Set(files)) {
   if (/\.(ts|tsx)$/.test(file) && !file.endsWith(".d.ts")) {
     sources.set(

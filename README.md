@@ -29,11 +29,12 @@ your own Neon `DATABASE_URL`, get a server-only `WEFT_API_KEY` from the
 [Weft buyer dashboard](https://weft.network/dashboard/buyer/api_keys), and set
 `CRON_SECRET`. Never prefix these with `NEXT_PUBLIC_`.
 
-**Deploy safely:** merges to `main` deploy a Vercel preview; a `vX.Y.Z` tag
-deploys production. The included cron schedule is every five minutes. Configure
-wallet limits and isolate preview credentials before enabling it. A Vercel
-clone does not come with a database, funded wallet, or free provider calls.
-Read the [deployment guide](docs/deployment.md) first.
+**Deploy safely:** non-`main` branches get Vercel Git previews, merges to `main`
+deploy a separate Vercel preview through CD, and a `vX.Y.Z` tag deploys
+production. The included cron schedule is every five minutes. Configure wallet
+limits and isolate preview credentials before enabling it. A Vercel clone does
+not come with a database, funded wallet, or free provider calls. Read the
+[deployment guide](docs/deployment.md) first.
 
 ## What Weft does
 
