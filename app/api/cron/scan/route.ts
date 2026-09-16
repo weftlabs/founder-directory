@@ -15,9 +15,7 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const bulk = url.searchParams.get("bulk") === "1";
   try {
-    const result = await runScan(
-      bulk ? { maxPages: 25, maxNew: 120 } : { maxPages: 1, maxNew: 8 },
-    );
+    const result = await runScan(bulk ? { maxPages: 25 } : { maxPages: 1 });
     return Response.json(result);
   } catch {
     // Provider and database errors can contain credentials or personal data.

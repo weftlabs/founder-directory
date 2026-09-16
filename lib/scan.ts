@@ -2,22 +2,28 @@ import { existingHandles, touchScan, upsertFounder } from "./db";
 import { emptyPlace, normalizePlaces } from "./place";
 import {
   fetchProfile,
-  MAX_NEW_PER_SCAN,
   searchIntroPages,
   TREND_PHRASES,
+  type TrendHit,
 } from "./x";
 
-export async function runScan(options?: {
-  maxPages?: number;
-  maxNew?: number;
-}) {
+export function unknownHits(hits: TrendHit[], known: Set<string>): TrendHit[] {
+  const seen = new Set<string>();
+  const out: TrendHit[] = [];
+  for (const hit of hits) {
+    const key = hit.handle.toLowerCase();
+    if (known.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    out.push(hit);
+  }
+  return out;
+}
+
+export async function runScan(options?: { maxPages?: number }) {
   const maxPages = options?.maxPages ?? 1;
-  const maxNew = options?.maxNew ?? MAX_NEW_PER_SCAN;
   const hits = await searchIntroPages(maxPages);
   const known = await existingHandles();
-  const fresh = hits
-    .filter((hit) => !known.has(hit.handle.toLowerCase()))
-    .slice(0, maxNew);
+  const fresh = unknownHits(hits, known);
   let added = 0;
   let failed = 0;
   const pending: import("./model").Founder[] = [];

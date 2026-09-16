@@ -44,7 +44,9 @@ Current per-request ceilings are **$0.01 for X search/profile requests** and
 can add cost; a scan is multiple requests. See [payment and failure semantics](docs/weft.md).
 
 The current collection searches latest intro phrases for solo founders,
-founders, builders, and indie hackers, then keeps first-person intros.
+founders, builders, and indie hackers, then hydrates every first-person
+intro it has not stored yet. Search page count bounds how far a tick looks;
+it does not discard people already found on those pages.
 The product is not limited to one template. It does
 not verify identities, guarantee location accuracy,
 collect private accounts, message founders or automate outreach. Signal labels

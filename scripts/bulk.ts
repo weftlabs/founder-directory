@@ -1,7 +1,7 @@
 import { runScan } from "../lib/scan";
 
 async function main() {
-  const result = await runScan({ maxPages: 20, maxNew: 100 });
+  const result = await runScan({ maxPages: 20 });
   console.log(JSON.stringify(result));
 }
 
