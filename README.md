@@ -1,10 +1,12 @@
 # Solo Founders
 
 Public directory of people posting “I'm a solo founder” on X. Each person
-has an indexable `/u/{handle}` page.
+has an indexable `/u/{handle}` page. Live: https://foundersdirectory.app
 
-Weft runs in the background every five minutes. The site never shows
-receipts or vendor chrome.
+Weft runs in the background every five minutes. The directory does not show
+receipts or prices. `/about` explains the X intro trend and why Weft is the
+plumbing. Footer: built by [Nittarab](https://x.com/nittarab) and
+[Weft Labs](https://weftlabs.com).
 
 ## Local
 
