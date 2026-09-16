@@ -80,7 +80,7 @@ export function Directory({
       <h1 className="hero">Find the people building.</h1>
       <p className="lede">
         Each founder has a public profile page. Search by name, city, or
-        country, then open a card. Updated <b>{scanned}</b>.
+        country, then open a card.
       </p>
       <div className="search">
         <input
@@ -90,7 +90,12 @@ export function Directory({
           onChange={(e) => update({ q: e.target.value }, true)}
           placeholder="Search name, handle, city, or country"
         />
-        <span className="count">{rows.length} founders</span>
+        <span className="count">
+          {rows.length} founders
+          <span className="updated">
+            Updated <b>{scanned}</b>
+          </span>
+        </span>
       </div>
       <div className="desktop-filters">
         <FilterControls {...controls} />
