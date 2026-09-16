@@ -554,6 +554,15 @@ test("required stages stay ordered; expired work blocks and withdrawal prevents 
     );
     assert.equal(await store.publishAnalysis(id), true);
     await store.withdrawArtifact(raw.id, "test", "withdrawn");
+    assert.equal(
+      (
+        await db.query<{ status: string }>(
+          "SELECT status FROM enrichment_stage_work WHERE id=$1",
+          [first!.id],
+        )
+      ).rows[0].status,
+      "blocked",
+    );
     await assert.rejects(() => store.assertAnalysisInputs(trusted));
     assert.equal(await store.getArtifact(raw.id), null);
     assert.equal(await store.publishAnalysis(id), false);

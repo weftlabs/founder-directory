@@ -864,6 +864,13 @@ export class EnrichmentStore {
       [runIds],
     );
     await tx.query(
+      `UPDATE enrichment_stage_work SET status='blocked',reason='supporting source withdrawn',lease_token=NULL,lease_until=NULL
+      WHERE status IN ('succeeded','not_applicable','running') AND entity_id IN (
+        SELECT entity_id FROM enrichment_analysis_runs WHERE id=ANY($1::uuid[])
+        UNION SELECT link.entity_id FROM enrichment_entity_evidence link JOIN enrichment_evidence e ON e.id=link.evidence_id WHERE e.artifact_id=ANY($2::uuid[]))`,
+      [runIds, artifactIds],
+    );
+    await tx.query(
       "UPDATE enrichment_collection_requests SET args='{}'::jsonb WHERE id IN (SELECT request_id FROM enrichment_collection_attempts WHERE id=ANY($1::uuid[]))",
       [requestAttempts],
     );
