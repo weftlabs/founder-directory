@@ -6,6 +6,7 @@ import { postgresDatabase } from "./db";
 import { EnrichmentStore } from "./store";
 import { collectWeft } from "./weft-transport";
 import type { CollectionInput, CollectionStore } from "./collection";
+import { DurableCaptureError } from "../weft-retry";
 
 export type CaptureConfig = {
   scope: string;
@@ -75,33 +76,39 @@ export function capturedTransport(
 export function durableWeftClient(apiKey: string): WeftTransport {
   return {
     async fetch(request, options) {
-      const connection = process.env.ENRICHMENT_DATABASE_URL;
-      const rawConfig = process.env.ENRICHMENT_CAPTURE_CONFIG;
-      if (
-        !connection ||
-        !rawConfig ||
-        process.env.ENRICHMENT_ALLOW_PAID !== "1"
-      )
-        throw new Error("durable_capture_not_configured");
-      const config = JSON.parse(rawConfig) as CaptureConfig;
-      if (
-        !config.scope ||
-        !config.budgetId ||
-        !Number.isSafeInteger(config.generation) ||
-        config.generation < 0 ||
-        !config.policies
-      )
-        throw new Error("invalid_capture_configuration");
-      const db = postgresDatabase(connection);
       try {
-        return await capturedTransport(
-          new EnrichmentStore(db),
-          boundedWeftClient(apiKey),
-          config,
-          () => process.env.ENRICHMENT_ALLOW_PAID === "1",
-        ).fetch(request, options);
-      } finally {
-        await db.close();
+        const connection = process.env.ENRICHMENT_DATABASE_URL;
+        const rawConfig = process.env.ENRICHMENT_CAPTURE_CONFIG;
+        if (
+          !connection ||
+          !rawConfig ||
+          process.env.ENRICHMENT_ALLOW_PAID !== "1"
+        )
+          throw new Error("durable_capture_not_configured");
+        const config = JSON.parse(rawConfig) as CaptureConfig;
+        if (
+          !config.scope ||
+          !config.budgetId ||
+          !Number.isSafeInteger(config.generation) ||
+          config.generation < 0 ||
+          !config.policies
+        )
+          throw new Error("invalid_capture_configuration");
+        const db = postgresDatabase(connection);
+        try {
+          return await capturedTransport(
+            new EnrichmentStore(db),
+            boundedWeftClient(apiKey),
+            config,
+            () => process.env.ENRICHMENT_ALLOW_PAID === "1",
+          ).fetch(request, options);
+        } finally {
+          await db.close();
+        }
+      } catch {
+        // Keep the caller's queue intact for disabled, failed or ambiguous capture.
+        // The durable ledger, not a legacy null/fallback, owns recovery.
+        throw new DurableCaptureError();
       }
     },
   };

@@ -1,7 +1,7 @@
 import { WeftError, type FetchResponse } from "@weft-labs/sdk";
 import { defaultWeftDependencies, type WeftDependencies } from "./weft";
 import { emptyPlace } from "./place";
-import { fetchWithRetry } from "./weft-retry";
+import { DurableCaptureError, fetchWithRetry } from "./weft-retry";
 import {
   categorize,
   extractGithub,
@@ -246,6 +246,7 @@ export async function fetchProfile(
       },
     );
   } catch (error) {
+    if (error instanceof DurableCaptureError) throw error;
     if (error instanceof WeftError && [502, 504].includes(error.status)) {
       throw new ProfileUnavailableError(error.status);
     }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test, mock } from "node:test";
 import { WeftError } from "@weft-labs/sdk";
-import { fetchWithRetry } from "../lib/weft-retry";
+import { DurableCaptureError, fetchWithRetry } from "../lib/weft-retry";
 import { response } from "./fixtures";
 
 const request = { url: "https://example.invalid", maxCostUsd: "0.002" };
@@ -11,6 +11,25 @@ const error = (
   code = "upstream_error",
   details?: Record<string, unknown>,
 ) => new WeftError({ status, retryable, code, details, message: "test" });
+
+test("durable capture failures propagate without retry or delay", async () => {
+  let calls = 0;
+  const failure = new DurableCaptureError();
+  await assert.rejects(
+    fetchWithRetry(
+      {
+        fetch: async () => {
+          calls++;
+          throw failure;
+        },
+      },
+      request,
+      async () => assert.fail("capture failures must never retry"),
+    ),
+    failure,
+  );
+  assert.equal(calls, 1);
+});
 
 test("502/504 recover with bounded backoff and unchanged request/cap/key", async () => {
   const calls: unknown[] = [],
