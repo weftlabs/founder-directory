@@ -46,7 +46,7 @@ export default async function Home({
   ).toString();
   return (
     <>
-      <SiteHeader />
+      <SiteHeader directoryCurrent />
       <Directory
         initialPage={page}
         initialSearch={initialSearch ? `?${initialSearch}` : ""}

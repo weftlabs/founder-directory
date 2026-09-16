@@ -45,7 +45,10 @@ export function OnlineNow() {
   return (
     <p className="online" aria-live="polite">
       <span className="dot" aria-hidden="true" />
-      online now looking for founders: <b>{online === null ? "—" : online}</b>
+      <span className="online-label">
+        online now looking for founders:
+      </span>{" "}
+      <b>{online === null ? "—" : online}</b>
     </p>
   );
 }

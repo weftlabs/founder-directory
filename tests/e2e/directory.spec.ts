@@ -77,6 +77,13 @@ test("presence is public and the header shows an online count without a database
   await page.goto("/");
   await expect(page.locator("p.online")).toBeVisible();
   await expect(page.locator("p.online b")).toHaveText("0");
+  await expect(
+    page.locator("header").getByRole("link", { name: "★ Star" }),
+  ).toHaveAttribute("href", "https://github.com/weftlabs/founder-directory");
+  await expect(page.locator("header a.directory-link")).toHaveAttribute(
+    "href",
+    "/",
+  );
 });
 
 test("cron rejects unauthenticated requests, including bulk", async ({

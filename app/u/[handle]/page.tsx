@@ -49,7 +49,7 @@ export default async function ProfilePage({
 
   return (
     <>
-      <SiteHeader aside={<div className="fresh">Profile · public page</div>} />
+      <SiteHeader />
       <main className="profile">
         <div className="hero-row">
           {founder.avatarUrl ? (

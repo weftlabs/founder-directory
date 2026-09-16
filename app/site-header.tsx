@@ -1,12 +1,13 @@
 import Link from "next/link";
-import type { ReactNode } from "react";
 import { OnlineNow } from "./online-now";
 
+export const GITHUB_REPO_URL = "https://github.com/weftlabs/founder-directory";
+
 export function SiteHeader({
-  aside,
+  directoryCurrent = false,
   aboutCurrent = false,
 }: {
-  aside?: ReactNode;
+  directoryCurrent?: boolean;
   aboutCurrent?: boolean;
 }) {
   return (
@@ -15,11 +16,25 @@ export function SiteHeader({
         Founder <em>Directory</em>
       </Link>
       <div className="top-nav">
+        <Link
+          className="directory-link"
+          href="/"
+          aria-current={directoryCurrent ? "page" : undefined}
+        >
+          Directory
+        </Link>
         <Link href="/about" aria-current={aboutCurrent ? "page" : undefined}>
           About
         </Link>
-        {aside}
         <OnlineNow />
+        <a
+          className="star-link"
+          href={GITHUB_REPO_URL}
+          target="_blank"
+          rel="noreferrer"
+        >
+          ★ Star
+        </a>
       </div>
     </header>
   );
