@@ -2,6 +2,8 @@ import type { Founder } from "./model";
 import type { DirectoryFilters, LocationOption } from "./directory-filters";
 
 export const DIRECTORY_PAGE_SIZE = 48;
+/** Start the next page this far before the sentinel enters the viewport. */
+export const DIRECTORY_PREFETCH_ROOT_MARGIN = "0px 0px 1200px 0px";
 
 export type DirectoryCursor = {
   updatedAt: string;
@@ -25,6 +27,27 @@ export function emptyDirectoryPage(): DirectoryPage {
     categories: [],
     countries: [],
     cities: [],
+  };
+}
+
+export function appendDirectoryPage(
+  current: DirectoryPage,
+  page: DirectoryPage,
+  expectedKey: string,
+  currentKey: string,
+): DirectoryPage {
+  if (currentKey !== expectedKey) return current;
+  const seen = new Set(current.founders.map((founder) => founder.handle));
+  return {
+    ...page,
+    founders: [
+      ...current.founders,
+      ...page.founders.filter((founder) => !seen.has(founder.handle)),
+    ],
+    total: current.total,
+    categories: current.categories,
+    countries: current.countries,
+    cities: current.cities,
   };
 }
 

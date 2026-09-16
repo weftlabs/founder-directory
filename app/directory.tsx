@@ -18,7 +18,12 @@ import {
   writeFilters,
   type DirectoryFilters,
 } from "@/lib/directory-filters";
-import { emptyDirectoryPage, type DirectoryPage } from "@/lib/directory-page";
+import {
+  DIRECTORY_PREFETCH_ROOT_MARGIN,
+  appendDirectoryPage,
+  emptyDirectoryPage,
+  type DirectoryPage,
+} from "@/lib/directory-page";
 import type { Founder } from "@/lib/model";
 
 function subscribe(callback: () => void) {
@@ -61,6 +66,11 @@ export function Directory({
   );
   const [loadingMore, setLoadingMore] = useState(false);
   const loadMoreInFlight = useRef(false);
+  const prefetch = useRef<{
+    key: string;
+    cursor: string;
+    promise: Promise<DirectoryPage | null>;
+  } | null>(null);
   const previewCategories = useMemo(
     () => unique((founders ?? []).map((f) => f.category)),
     [founders],
@@ -110,23 +120,28 @@ export function Directory({
     const key = writeFilters("", filters);
     const cursor = live.nextCursor;
     loadMoreInFlight.current = true;
-    setLoadingMore(true);
+    const pending = prefetch.current;
+    const waiting = !(
+      pending &&
+      pending.key === key &&
+      pending.cursor === cursor
+    );
+    if (waiting) setLoadingMore(true);
     try {
       const query = `${key ? `${key}&` : ""}cursor=${encodeURIComponent(cursor)}`;
-      const response = await fetch(`/api/founders?${query}`);
-      if (!response.ok) return;
-      const page = (await response.json()) as DirectoryPage;
-      setLive((current) => {
-        if (fetchedKey.current !== key) return current;
-        return {
-          ...page,
-          founders: [...current.founders, ...page.founders],
-          total: current.total,
-          categories: current.categories,
-          countries: current.countries,
-          cities: current.cities,
-        };
-      });
+      let page =
+        pending && pending.key === key && pending.cursor === cursor
+          ? await pending.promise
+          : null;
+      if (!page) {
+        const response = await fetch(`/api/founders?${query}`);
+        page = response.ok ? ((await response.json()) as DirectoryPage) : null;
+      }
+      if (!page) return;
+      prefetch.current = null;
+      setLive((current) =>
+        appendDirectoryPage(current, page, key, fetchedKey.current),
+      );
     } catch {
       // Keep the rows already on screen.
     } finally {
@@ -176,11 +191,41 @@ export function Directory({
   }, [filters, preview]);
 
   useEffect(() => {
+    if (preview || !live.nextCursor) {
+      prefetch.current = null;
+      return;
+    }
+    const key = writeFilters("", filters);
+    const cursor = live.nextCursor;
+    if (prefetch.current?.key === key && prefetch.current.cursor === cursor)
+      return;
+    const controller = new AbortController();
+    const query = `${key ? `${key}&` : ""}cursor=${encodeURIComponent(cursor)}`;
+    prefetch.current = {
+      key,
+      cursor,
+      promise: fetch(`/api/founders?${query}`, { signal: controller.signal })
+        .then(async (response) =>
+          response.ok ? ((await response.json()) as DirectoryPage) : null,
+        )
+        .catch(() => null),
+    };
+    return () => {
+      if (loadMoreInFlight.current && prefetch.current?.cursor === cursor)
+        return;
+      controller.abort();
+    };
+  }, [filters, live.nextCursor, preview]);
+
+  useEffect(() => {
     if (preview || !live.nextCursor || !sentinel.current) return;
     const node = sentinel.current;
-    const observer = new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.isIntersecting)) void loadMore();
-    });
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) void loadMore();
+      },
+      { rootMargin: DIRECTORY_PREFETCH_ROOT_MARGIN },
+    );
     observer.observe(node);
     return () => observer.disconnect();
   }, [loadMore, live.nextCursor, preview, rows.length]);

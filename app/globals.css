@@ -529,6 +529,8 @@ main.dir {
   align-items: center;
   gap: 8px;
   margin-top: 24px;
+  min-height: 48px;
+  overflow-anchor: none;
 }
 .load-more button {
   font: inherit;
