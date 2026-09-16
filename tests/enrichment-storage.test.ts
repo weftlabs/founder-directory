@@ -202,6 +202,79 @@ test("paid cap breach preserves body and blocks further budget use", async () =>
     await pg.close();
   }
 });
+
+test("captured pending payment reconciles once without repurchase or loss of bytes", async () => {
+  const { pg, db, store } = await fixture();
+  try {
+    const budgetId = randomUUID();
+    await store.createBudget({
+      id: budgetId,
+      scope: "test",
+      currency: "USD",
+      capMicros: "100",
+    });
+    for (const [index, paymentState] of ["pending", "uncertain"].entries()) {
+      const request = await store.planCollection({
+        scope: "test",
+        fingerprint: `pending-${index}`,
+        generation: 0,
+        operation: "read",
+        args: {},
+        policyId: "test",
+      });
+      const attempt = await store.reserveAttempt({
+        requestId: request.id,
+        budgetId,
+        capMicros: "50",
+      });
+      await store.markDispatched(attempt.id);
+      const artifact = await store.captureResponse({
+        attemptId: attempt.id,
+        body: Buffer.from("captured"),
+        contentType: "text/plain",
+        redactionVersion: "none",
+        paymentState: paymentState as "pending" | "uncertain",
+      });
+      const resolution = {
+        paymentState:
+          index === 0 ? ("settled" as const) : ("not_charged" as const),
+        settledMicros: index === 0 ? "20" : "0",
+        actor: "operator",
+        evidence: "definitive provider lookup",
+      };
+      await store.reconcileCapturedPayment(attempt.id, resolution);
+      await store.reconcileCapturedPayment(attempt.id, resolution);
+      await assert.rejects(() =>
+        store.reconcileCapturedPayment(attempt.id, {
+          ...resolution,
+          paymentState: "settled",
+          settledMicros: "21",
+        }),
+      );
+      await assert.rejects(() =>
+        store.reserveAttempt({
+          requestId: request.id,
+          budgetId,
+          capMicros: "1",
+        }),
+      );
+      assert.deepEqual(
+        Buffer.from((await store.getArtifact(artifact.id))!.body),
+        Buffer.from("captured"),
+      );
+    }
+    assert.equal(
+      (
+        await db.query<{ committed_micros: string }>(
+          "SELECT committed_micros::text FROM enrichment_budgets",
+        )
+      ).rows[0].committed_micros,
+      "20",
+    );
+  } finally {
+    await pg.close();
+  }
+});
 test("1001 campaign members stay frozen while intake and release reconciliation resume", async () => {
   const { pg, db, store } = await fixture();
   try {

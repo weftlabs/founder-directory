@@ -183,6 +183,60 @@ export class EnrichmentStore {
       );
     });
   }
+  async reconcileCapturedPayment(
+    attemptId: string,
+    input: {
+      paymentState: "settled" | "not_charged";
+      settledMicros: string;
+      actor: string;
+      evidence: string;
+    },
+  ): Promise<void> {
+    if (!input.actor || !input.evidence)
+      throw new Error("reconciliation evidence required");
+    const settled = money(input.settledMicros);
+    if (input.paymentState === "not_charged" && settled !== "0")
+      throw new Error("not-charged resolution must have zero settled cost");
+    await this.db.transaction(async (tx) => {
+      const attempt = await one<{
+        budget_id: string;
+        cap_micros: string;
+        settled_micros: string | null;
+        payment_state: PaymentState;
+      }>(
+        tx,
+        "SELECT budget_id,cap_micros::text,settled_micros::text,payment_state FROM enrichment_collection_attempts WHERE id=$1 AND dispatch_state='captured' FOR UPDATE",
+        [attemptId],
+      );
+      if (
+        attempt.payment_state === "settled" ||
+        attempt.payment_state === "not_charged"
+      ) {
+        if (
+          attempt.payment_state !== input.paymentState ||
+          attempt.settled_micros !== settled
+        )
+          throw new Error("conflicting payment resolution");
+        return;
+      }
+      await tx.query(
+        "UPDATE enrichment_budgets SET committed_micros=committed_micros-$2+$3 WHERE id=$1",
+        [attempt.budget_id, attempt.cap_micros, settled],
+      );
+      await tx.query(
+        "UPDATE enrichment_collection_attempts SET payment_state=$2,settled_micros=$3,resolution=$4,reason=$5 WHERE id=$1",
+        [
+          attemptId,
+          input.paymentState,
+          settled,
+          json({ actor: input.actor, evidence: input.evidence }),
+          BigInt(settled) > BigInt(attempt.cap_micros)
+            ? "provider exceeded authorized cap"
+            : null,
+        ],
+      );
+    });
+  }
   private async insertArtifact(
     tx: Sql,
     input: ArtifactInput,
