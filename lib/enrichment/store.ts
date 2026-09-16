@@ -528,7 +528,7 @@ export class EnrichmentStore {
         JOIN enrichment_intake i ON i.scope=t.scope AND i.revision=t.revision
         JOIN enrichment_releases r ON r.id=w.release_id
         CROSS JOIN LATERAL jsonb_array_elements_text(r.manifest->'stages') WITH ORDINALITY current_stage(stage,position)
-        WHERE w.status='pending' AND e.status='active' AND current_stage.stage=w.stage AND NOT EXISTS (
+        WHERE w.status='pending' AND e.status='active' AND r.status='approved' AND current_stage.stage=w.stage AND NOT EXISTS (
           SELECT 1 FROM jsonb_array_elements_text(r.manifest->'stages') WITH ORDINALITY prior(stage,position)
           WHERE prior.position<current_stage.position AND NOT EXISTS (
             SELECT 1 FROM enrichment_stage_work done WHERE done.entity_id=w.entity_id AND done.release_id=w.release_id
@@ -556,7 +556,11 @@ export class EnrichmentStore {
       throw new Error("terminal outcome required");
     await one(
       this.db,
-      "UPDATE enrichment_stage_work SET status=$3,reason=$4,evidence_id=$5,output_id=$6,lease_token=NULL,lease_until=NULL WHERE id=$1 AND lease_token=$2 AND status='running' AND lease_until>now() RETURNING id",
+      `UPDATE enrichment_stage_work w SET status=$3,reason=$4,evidence_id=$5,output_id=$6,lease_token=NULL,lease_until=NULL
+       WHERE w.id=$1 AND lease_token=$2 AND status='running' AND lease_until>now()
+       AND ($3 <> 'not_applicable' OR EXISTS(SELECT 1 FROM enrichment_entity_evidence link JOIN enrichment_evidence e ON e.id=link.evidence_id JOIN enrichment_artifacts a ON a.id=e.artifact_id
+         WHERE link.entity_id=w.entity_id AND e.id=$5 AND a.purged_at IS NULL AND (a.expires_at IS NULL OR a.expires_at>now()) AND NOT EXISTS(SELECT 1 FROM enrichment_artifact_withdrawals x WHERE x.artifact_id=a.id)))
+       RETURNING w.id`,
       [
         input.id,
         input.leaseToken,
