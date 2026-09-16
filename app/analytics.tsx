@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 
 type PostHog = {
   __SV?: number;
   init: (key: string, options: Record<string, unknown>) => void;
-  capture: (event: string) => void;
+  capture: (event: string, properties?: Record<string, string>) => void;
 };
 
 declare global {
@@ -24,33 +25,53 @@ function options() {
     api_host:
       process.env.NEXT_PUBLIC_POSTHOG_HOST || "https://eu.i.posthog.com",
     ui_host: "https://eu.posthog.com",
-    person_profiles: "identified_only",
-    capture_pageview: true,
+    person_profiles: "identified_only" as const,
+    // App Router never does a full reload; the SDK's automatic $pageview
+    // on init is easy to miss. We send it after navigation instead.
+    capture_pageview: false,
     capture_pageleave: true,
     disable_session_recording: true,
   };
 }
 
+let booted = false;
+
 function install() {
   const key = projectKey();
-  if (!key || typeof window === "undefined") return;
+  if (!key || typeof window === "undefined" || booted) return;
   if (!window.posthog?.__SV) {
     const snippet = document.createElement("script");
     snippet.text = `!function(t,e){var o,n,p,r;e.__SV||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.crossOrigin="anonymous",p.async=!0,p.src=s.api_host.replace(".i.posthog.com","-assets.i.posthog.com")+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],u.toString=function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e},u.people.toString=function(){return u.toString(1)+".people (stub)"},o="init capture register register_once identify reset get_distinct_id".split(" "),n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);`;
     document.head.appendChild(snippet);
   }
   window.posthog?.init(key, options());
+  booted = true;
 }
 
-export function Analytics() {
+function PageViews() {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   useEffect(() => {
+    if (!projectKey()) return;
     install();
-  }, []);
+    window.posthog?.capture("$pageview", {
+      $current_url: window.location.href,
+    });
+  }, [pathname, searchParams]);
   return null;
 }
 
-export function capture(event: string) {
+export function Analytics() {
+  if (!projectKey()) return null;
+  return (
+    <Suspense fallback={null}>
+      <PageViews />
+    </Suspense>
+  );
+}
+
+export function capture(event: string, properties?: Record<string, string>) {
   if (!projectKey()) return;
   install();
-  window.posthog?.capture(event);
+  window.posthog?.capture(event, properties);
 }
