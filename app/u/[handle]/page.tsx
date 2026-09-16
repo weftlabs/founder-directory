@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { SiteHeader } from "../../site-header";
 import { getFounder } from "@/lib/db";
 import { displayLink } from "@/lib/model";
 
@@ -20,6 +21,17 @@ export async function generateMetadata({
     title: `${founder.name} (@${founder.handle})`,
     description,
     alternates: { canonical: `/u/${founder.handle}` },
+    openGraph: {
+      title: `${founder.name} (@${founder.handle})`,
+      description,
+      url: `/u/${founder.handle}`,
+      type: "profile",
+    },
+    twitter: {
+      card: "summary",
+      title: `${founder.name} (@${founder.handle})`,
+      description,
+    },
   };
 }
 
@@ -35,12 +47,7 @@ export default async function ProfilePage({
 
   return (
     <>
-      <header className="top">
-        <a className="brand" href="/">
-          Solo <em>Founders</em>
-        </a>
-        <div className="fresh">Profile · public page</div>
-      </header>
+      <SiteHeader aside={<div className="fresh">Profile · public page</div>} />
       <main className="profile">
         <div className="hero-row">
           {founder.avatarUrl ? (

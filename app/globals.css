@@ -4,12 +4,16 @@ body {
   font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
   background: #0c0d0b;
   color: #f4f1e8;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
 }
 a { color: inherit; }
 header.top {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
   padding: 18px 28px;
   border-bottom: 1px solid #2c2e28;
   position: sticky;
@@ -20,6 +24,20 @@ header.top {
 }
 .brand { font-weight: 750; letter-spacing: -0.03em; text-decoration: none; }
 .brand em { color: #d8ff3e; font-style: italic; }
+.top-nav {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.top-nav a {
+  color: #9a978c;
+  font-size: 13px;
+  text-decoration: none;
+}
+.top-nav a:hover,
+.top-nav a[aria-current="page"] {
+  color: #d8ff3e;
+}
 .fresh { color: #9a978c; font-size: 13px; }
 .fresh b { color: #d8ff3e; font-weight: 600; }
 main.dir { max-width: 1120px; margin: 0 auto; padding: 36px 28px 80px; }
@@ -180,3 +198,45 @@ dt { color: #9a978c; font-size: 12px; }
 dd a { color: #d8ff3e; }
 .miss { color: #9a978c; }
 .back { display: inline-block; margin-top: 20px; color: #9a978c; }
+footer.site {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 22px 28px 32px;
+  border-top: 1px solid #2c2e28;
+  color: #9a978c;
+  font-size: 13px;
+}
+footer.site a { color: #d8ff3e; text-decoration: none; }
+footer.site a:hover { text-decoration: underline; }
+main.about { max-width: 720px; margin: 0 auto; padding: 40px 28px 96px; }
+main.about h1 {
+  font-size: clamp(1.8rem, 4vw, 2.6rem);
+  letter-spacing: -0.04em;
+  line-height: 1.1;
+  margin: 6px 0 8px;
+}
+main.about h2 {
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #9a978c;
+  margin: 28px 0 12px;
+}
+main.about p {
+  color: #c8c4b8;
+  font-size: 1.05rem;
+  line-height: 1.55;
+  margin: 0 0 14px;
+}
+main.about a { color: #d8ff3e; }
+main.about code {
+  font-size: 0.92em;
+  background: #161714;
+  border: 1px solid #2c2e28;
+  border-radius: 6px;
+  padding: 0 6px;
+}

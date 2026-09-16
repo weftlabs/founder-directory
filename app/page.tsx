@@ -1,6 +1,12 @@
+import type { Metadata } from "next";
 import { Directory } from "./directory";
+import { SiteHeader } from "./site-header";
 import { lastScanAt, listFounders } from "@/lib/db";
 import { relativeTime } from "@/lib/model";
+
+export const metadata: Metadata = {
+  alternates: { canonical: "/" },
+};
 
 export const dynamic = "force-dynamic";
 
@@ -15,14 +21,13 @@ export default async function Home() {
   }
   return (
     <>
-      <header className="top">
-        <a className="brand" href="/">
-          Solo <em>Founders</em>
-        </a>
-        <div className="fresh">
-          Directory · updated <b>{scanned}</b>
-        </div>
-      </header>
+      <SiteHeader
+        aside={
+          <div className="fresh">
+            Directory · updated <b>{scanned}</b>
+          </div>
+        }
+      />
       <Directory founders={founders} scanned={scanned} />
     </>
   );
