@@ -5,7 +5,7 @@ The current commit's CI output owns which checks passed.
 
 | Area                | Automated evidence                                         | Remaining gap                                                                                                          |
 | ------------------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Presentation        | Production-build desktop/mobile smoke                      | Populated-profile/filter end-to-end coverage                                                                           |
+| Presentation        | Production-build desktop/mobile smoke; empty founders API  | Populated-directory pagination e2e; sitemap still lists all founders                                                   |
 | Domain logic        | Synthetic unit tests                                       | Broader international location evaluation                                                                              |
 | Weft reliability    | Missing-key, retry, payload, and scan budget tests         | Live upstream availability, durable payment reconciliation; a single hung Weft call can still hit the platform timeout |
 | Persistence         | Parameterized queries; guarded repair updates              | Isolated database integration suite and versioned migrations                                                           |

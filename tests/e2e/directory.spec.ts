@@ -41,6 +41,27 @@ test("directory works without credentials on desktop and mobile", async ({
   expect(errors).toEqual([]);
 });
 
+test("founders API is public and empty without a database", async ({
+  request,
+}) => {
+  const empty = {
+    founders: [],
+    total: 0,
+    nextCursor: null,
+    categories: [],
+    countries: [],
+    cities: [],
+  };
+  const get = await request.get("/api/founders");
+  expect(get.status()).toBe(200);
+  expect(await get.json()).toEqual(empty);
+  const filtered = await request.get(
+    "/api/founders?q=alice&cursor=not-a-cursor",
+  );
+  expect(filtered.status()).toBe(200);
+  expect(await filtered.json()).toEqual(empty);
+});
+
 test("presence is public and the header shows an online count without a database", async ({
   page,
   request,
