@@ -1,3 +1,4 @@
+import { discoveryQuery } from "@/lib/discovery";
 import { SiteHeader } from "../site-header";
 import { DiscoveryBrowser } from "../discovery-browser";
 import { loadDiscovery } from "@/lib/discovery-data";
@@ -7,12 +8,17 @@ export const metadata = {
   description: "Find founders around the world, city by city.",
   alternates: { canonical: "/map" },
 };
-export default async function MapPage() {
-  const data = await loadDiscovery();
+export default async function MapPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const query = discoveryQuery(await searchParams);
+  const data = await loadDiscovery(query, "map");
   return (
     <>
       <SiteHeader mapCurrent />
-      <DiscoveryBrowser {...data} mode="map" />
+      <DiscoveryBrowser key={JSON.stringify(query)} {...data} mode="map" />
     </>
   );
 }

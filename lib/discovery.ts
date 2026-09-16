@@ -81,3 +81,95 @@ export function filterDiscovery(
           .includes(needle)),
   );
 }
+
+export type MapPlace = {
+  city: string;
+  country: string;
+  coordinates: [number, number];
+  count: number;
+};
+export type DiscoveryQuery = {
+  q: string;
+  category: string;
+  country: string;
+  city: string;
+  metric: Metric;
+  page: number;
+};
+export type DiscoveryPageInfo = {
+  query: DiscoveryQuery;
+  total: number;
+  globalTotal: number;
+  rankedTotal: number;
+  mappedTotal: number;
+  countries: string[];
+  categories: string[];
+  places: MapPlace[];
+  hasMore: boolean;
+};
+export const DISCOVERY_PAGE_SIZE = 48;
+export function discoveryQuery(
+  params: Record<string, string | string[] | undefined>,
+): DiscoveryQuery {
+  const get = (key: string) =>
+    typeof params[key] === "string"
+      ? (params[key] as string).slice(0, 200)
+      : "";
+  const page = Number(get("page"));
+  return {
+    q: get("q"),
+    category: get("category"),
+    country: get("country"),
+    city: get("city"),
+    metric: get("metric") === "views" ? "views" : "likes",
+    page: Number.isSafeInteger(page) && page > 0 ? Math.min(page, 10000) : 1,
+  };
+}
+export function discoveryPage(
+  founders: DiscoveryFounder[],
+  query: DiscoveryQuery,
+  mode: "map" | "leaderboard",
+) {
+  const filtered = filterDiscovery(
+    founders,
+    query.q,
+    query.category,
+    query.country,
+  ).filter((f) => !query.city || f.city === query.city);
+  const ranked = rankFounders(filtered, query.metric);
+  const rows = mode === "map" ? filtered : ranked;
+  const places = new Map<string, MapPlace>();
+  for (const f of filtered) {
+    if (!f.coordinates || !f.city || !f.country) continue;
+    const key = JSON.stringify([f.city, f.country]);
+    const existing = places.get(key);
+    if (existing) existing.count++;
+    else
+      places.set(key, {
+        city: f.city,
+        country: f.country,
+        coordinates: f.coordinates,
+        count: 1,
+      });
+  }
+  const offset = (query.page - 1) * DISCOVERY_PAGE_SIZE;
+  const serverPage: DiscoveryPageInfo = {
+    query,
+    total: filtered.length,
+    globalTotal: founders.length,
+    rankedTotal: ranked.length,
+    mappedTotal: [...places.values()].reduce((n, p) => n + p.count, 0),
+    countries: [
+      ...new Set(
+        founders.map((f) => f.country).filter((c): c is string => Boolean(c)),
+      ),
+    ].sort(),
+    categories: [...new Set(founders.map((f) => f.category))].sort(),
+    places: mode === "map" ? [...places.values()] : [],
+    hasMore: rows.length > offset + DISCOVERY_PAGE_SIZE,
+  };
+  return {
+    founders: rows.slice(offset, offset + DISCOVERY_PAGE_SIZE),
+    serverPage,
+  };
+}

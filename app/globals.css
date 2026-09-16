@@ -1558,3 +1558,24 @@ main.about code {
   margin-top: 4px;
   font-size: 10px;
 }
+.directory-search-submit,
+.discovery-search-submit {
+  border: 0;
+  border-radius: 6px;
+  background: #d8ff3e;
+  color: #15180b;
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.page-navigation {
+  display: flex;
+  justify-content: center;
+  gap: 24px;
+  padding: 24px;
+}
+.page-navigation a {
+  color: #d8ff3e;
+  font-size: 14px;
+}

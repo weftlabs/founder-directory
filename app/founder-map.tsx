@@ -5,18 +5,35 @@ import maplibregl, {
   type Map as MapInstance,
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import type { DiscoveryFounder } from "@/lib/discovery";
+import type { DiscoveryFounder, MapPlace } from "@/lib/discovery";
 
-function collection(founders: DiscoveryFounder[]) {
+function collection(founders: DiscoveryFounder[], places?: MapPlace[]) {
+  const points = places
+    ? places.map((p) => ({
+        coordinates: p.coordinates,
+        handle: "",
+        name: "",
+        city: p.city,
+        country: p.country,
+        count: p.count,
+      }))
+    : founders
+        .filter((f) => f.coordinates)
+        .map((f) => ({
+          coordinates: f.coordinates!,
+          handle: f.handle,
+          name: f.name,
+          city: f.city ?? "",
+          country: f.country ?? "",
+          count: 1,
+        }));
   return {
     type: "FeatureCollection" as const,
-    features: founders
-      .filter((f) => f.coordinates)
-      .map((f) => ({
-        type: "Feature" as const,
-        geometry: { type: "Point" as const, coordinates: f.coordinates! },
-        properties: { handle: f.handle, name: f.name },
-      })),
+    features: points.map(({ coordinates, ...properties }) => ({
+      type: "Feature" as const,
+      geometry: { type: "Point" as const, coordinates },
+      properties,
+    })),
   };
 }
 export default function FounderMap({
@@ -24,23 +41,29 @@ export default function FounderMap({
   selected,
   onSelect,
   onSelectGroup,
+  places,
+  onSelectPlace,
 }: {
   founders: DiscoveryFounder[];
+  places?: MapPlace[];
+  onSelectPlace?: (city: string, country: string) => void;
   selected: DiscoveryFounder | null;
   onSelect: (handle: string) => void;
   onSelectGroup: (handles: string[]) => void;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const instance = useRef<MapInstance | null>(null);
-  const data = useRef(founders);
+  const data = useRef(collection(founders, places));
+  const selectPlace = useRef(onSelectPlace);
   const select = useRef(onSelect);
   const selectGroup = useRef(onSelectGroup);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
-    data.current = founders;
+    data.current = collection(founders, places);
+    selectPlace.current = onSelectPlace;
     select.current = onSelect;
     selectGroup.current = onSelectGroup;
-  }, [founders, onSelect, onSelectGroup]);
+  }, [founders, places, onSelect, onSelectGroup, onSelectPlace]);
   useEffect(() => {
     if (!container.current) return;
     let map: MapInstance;
@@ -68,8 +91,9 @@ export default function FounderMap({
       setFailed(false);
       map.addSource("founders", {
         type: "geojson",
-        data: collection(data.current),
+        data: data.current,
         cluster: true,
+        clusterProperties: { founderCount: ["+", ["get", "count"]] },
         clusterRadius: 42,
         clusterMaxZoom: 12,
       });
@@ -99,7 +123,7 @@ export default function FounderMap({
         source: "founders",
         filter: ["has", "point_count"],
         layout: {
-          "text-field": ["get", "point_count_abbreviated"],
+          "text-field": ["get", "founderCount"],
           "text-size": 13,
         },
         paint: { "text-color": "#15180b" },
@@ -134,6 +158,13 @@ export default function FounderMap({
             ),
           );
           if (locations.size === 1 || map.getZoom() >= 12) {
+            if (leaves[0]?.properties?.handle === "" && selectPlace.current) {
+              selectPlace.current(
+                String(leaves[0].properties.city),
+                String(leaves[0].properties.country),
+              );
+              return;
+            }
             selectGroup.current(
               leaves.map((f) => String(f.properties?.handle)),
             );
@@ -151,6 +182,11 @@ export default function FounderMap({
         }
       });
       map.on("click", "founder-pins", (e) => {
+        const place = e.features?.[0]?.properties;
+        if (place?.handle === "" && selectPlace.current) {
+          selectPlace.current(String(place.city), String(place.country));
+          return;
+        }
         const handles = [
           ...new Set(
             (e.features ?? []).map((f) => String(f.properties.handle)),
@@ -176,8 +212,8 @@ export default function FounderMap({
   useEffect(() => {
     const source = instance.current?.getSource("founders") as
       GeoJSONSource | undefined;
-    source?.setData(collection(founders));
-  }, [founders]);
+    source?.setData(collection(founders, places));
+  }, [founders, places]);
   useEffect(() => {
     const map = instance.current;
     if (!map || !selected?.coordinates) return;

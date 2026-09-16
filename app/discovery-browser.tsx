@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { useMemo, useState } from "react";
 import {
@@ -9,6 +10,8 @@ import {
   rankFounders,
   type DiscoveryFounder,
   type Metric,
+  type DiscoveryPageInfo,
+  type DiscoveryQuery,
 } from "@/lib/discovery";
 import { safeHttpUrl } from "@/lib/model";
 
@@ -48,21 +51,29 @@ export function DiscoveryBrowser({
   founders,
   mode,
   unavailable = false,
+  serverPage,
+  navigationBase,
 }: {
   founders: DiscoveryFounder[];
   mode: "map" | "leaderboard";
   unavailable?: boolean;
+  serverPage?: DiscoveryPageInfo;
+  navigationBase?: string;
 }) {
-  const [q, setQ] = useState("");
-  const [category, setCategory] = useState("");
-  const [country, setCountry] = useState("");
-  const [metric, setMetric] = useState<Metric>("likes");
+  const router = useRouter();
+  const [q, setQ] = useState(serverPage?.query.q ?? "");
+  const [category, setCategory] = useState(serverPage?.query.category ?? "");
+  const [country, setCountry] = useState(serverPage?.query.country ?? "");
+  const [metric, setMetric] = useState<Metric>(
+    serverPage?.query.metric ?? "likes",
+  );
   const [selected, setSelected] = useState<string | null>(null);
   const [limit, setLimit] = useState(48);
   const [group, setGroup] = useState<string[]>([]);
   const filtered = useMemo(
-    () => filterDiscovery(founders, q, category, country),
-    [founders, q, category, country],
+    () =>
+      serverPage ? founders : filterDiscovery(founders, q, category, country),
+    [founders, q, category, country, serverPage],
   );
   const mapped = useMemo(
     () => filtered.filter((f) => f.coordinates),
@@ -75,15 +86,49 @@ export function DiscoveryBrowser({
   const rows = mode === "map" ? filtered : ranked;
   const groupFounders = filtered.filter((f) => group.includes(f.handle));
   const active = filtered.find((f) => f.handle === selected) ?? null;
-  const countries = [
-    ...new Set(
-      founders.map((f) => f.country).filter((c): c is string => Boolean(c)),
-    ),
-  ].sort();
-  const categories = [...new Set(founders.map((f) => f.category))].sort();
+  const countries =
+    serverPage?.countries ??
+    [
+      ...new Set(
+        founders.map((f) => f.country).filter((c): c is string => Boolean(c)),
+      ),
+    ].sort();
+  const categories =
+    serverPage?.categories ??
+    [...new Set(founders.map((f) => f.category))].sort();
   const selectedMetric = mode === "leaderboard" ? metric : "likes";
-  const top = mode === "leaderboard" ? ranked.slice(0, 3) : [];
+  const top =
+    mode === "leaderboard" && (!serverPage || serverPage.query.page === 1)
+      ? ranked.slice(0, 3)
+      : [];
+  const total = serverPage?.total ?? filtered.length;
+  const mappedTotal = serverPage?.mappedTotal ?? mapped.length;
+  const offset = serverPage ? (serverPage.query.page - 1) * 48 : 0;
+  function pageUrl(changes: Partial<DiscoveryQuery> = {}) {
+    const values = {
+      ...serverPage?.query,
+      q,
+      category,
+      country,
+      metric,
+      page: 1,
+      ...changes,
+    };
+    const [pathname, search] = (navigationBase ?? `/${mode}`).split("?");
+    const params = new URLSearchParams(search);
+    for (const [key, value] of Object.entries(values))
+      if (value) params.set(key, String(value));
+    return `${pathname}?${params}`;
+  }
+  function navigate(changes: Partial<DiscoveryQuery>) {
+    if (serverPage) router.push(pageUrl(changes));
+  }
+
   function clear() {
+    if (serverPage) {
+      router.push(navigationBase ?? `/${mode}`);
+      return;
+    }
     setQ("");
     setCategory("");
     setCountry("");
@@ -121,7 +166,7 @@ export function DiscoveryBrowser({
         </div>
         <div className="discovery-stats">
           <div>
-            <b>{number.format(founders.length)}</b>
+            <b>{number.format(serverPage?.globalTotal ?? founders.length)}</b>
             <span>founders</span>
           </div>
           <div>
@@ -140,7 +185,13 @@ export function DiscoveryBrowser({
           The directory could not be loaded. Please try again later.
         </p>
       ) : null}
-      <div className="discovery-toolbar">
+      <form
+        className="discovery-toolbar"
+        onSubmit={(e) => {
+          e.preventDefault();
+          navigate({ q });
+        }}
+      >
         <label className="discovery-search">
           <span aria-hidden="true">⌕</span>
           <input
@@ -154,6 +205,11 @@ export function DiscoveryBrowser({
             }}
           />
         </label>
+        {serverPage ? (
+          <button className="discovery-search-submit" type="submit">
+            Search
+          </button>
+        ) : null}
         <label className="discovery-select">
           <span className="sr-only">Country</span>
           <select
@@ -161,6 +217,7 @@ export function DiscoveryBrowser({
             value={country}
             onChange={(e) => {
               setCountry(e.target.value);
+              navigate({ country: e.target.value, city: "" });
               setLimit(48);
             }}
           >
@@ -171,17 +228,24 @@ export function DiscoveryBrowser({
           </select>
         </label>
         {q || category || country ? (
-          <button className="discovery-clear" onClick={clear}>
+          <button className="discovery-clear" type="button" onClick={clear}>
             Clear filters
           </button>
         ) : null}
-      </div>
+      </form>
+      {serverPage?.query.city ? (
+        <p className="coverage-note">
+          City: {serverPage.query.city}{" "}
+          <a href={pageUrl({ city: "" })}>Clear city</a>
+        </p>
+      ) : null}
       <div className="discovery-tabs">
         <div className="craft-tabs" aria-label="Founder categories">
           <button
             aria-pressed={!category}
             onClick={() => {
               setCategory("");
+              navigate({ category: "" });
               setLimit(48);
             }}
           >
@@ -193,6 +257,7 @@ export function DiscoveryBrowser({
               aria-pressed={category === c}
               onClick={() => {
                 setCategory(c);
+                navigate({ category: c });
                 setLimit(48);
               }}
             >
@@ -206,6 +271,7 @@ export function DiscoveryBrowser({
               aria-pressed={metric === "likes"}
               onClick={() => {
                 setMetric("likes");
+                navigate({ metric: "likes" });
                 setLimit(48);
               }}
             >
@@ -215,6 +281,7 @@ export function DiscoveryBrowser({
               aria-pressed={metric === "views"}
               onClick={() => {
                 setMetric("views");
+                navigate({ metric: "views" });
                 setLimit(48);
               }}
             >
@@ -227,13 +294,14 @@ export function DiscoveryBrowser({
         <>
           <p className="ranking-explanation">
             Ranked by recorded X intro {metric}. These are snapshots, not live
-            counts. {filtered.length - ranked.length} founders have no recorded{" "}
-            {metric}.
+            counts. {total - (serverPage?.rankedTotal ?? ranked.length)}{" "}
+            founders have no recorded {metric}.
           </p>
           {top.length ? (
             <div className="podium">
               {top.map((f, i) => (
                 <Link
+                  prefetch={false}
                   className="podium-card"
                   key={f.handle}
                   href={`/u/${f.handle}`}
@@ -268,19 +336,25 @@ export function DiscoveryBrowser({
         >
           <div className="list-heading">
             <h2>{mode === "map" ? "Find your people" : "The leaderboard"}</h2>
-            <span aria-live="polite">{rows.length} founders</span>
+            <span aria-live="polite">
+              {serverPage
+                ? `${rows.length} of ${mode === "map" ? total : serverPage.rankedTotal}`
+                : rows.length}{" "}
+              founders
+            </span>
           </div>
           {mode === "map" ? (
             <p className="coverage-note">
-              {mapped.length} mapped · {filtered.length - mapped.length} without
-              a supported city. Pins show approximate city centers.
+              {mappedTotal} mapped · {total - mappedTotal} without a supported
+              city. Pins show approximate city centers.
             </p>
           ) : null}
           {rows.length === 0 ? (
             <div className="discovery-empty">
               <span aria-hidden="true">◎</span>
               <h2>
-                {founders.length && (q || category || country)
+                {(serverPage?.globalTotal ?? founders.length) &&
+                (q || category || country || serverPage?.query.city)
                   ? "No founders match these filters."
                   : mode === "leaderboard"
                     ? "The spotlight is waiting."
@@ -303,7 +377,7 @@ export function DiscoveryBrowser({
               <li key={f.handle} data-selected={active?.handle === f.handle}>
                 <span className="row-rank">
                   {mode === "leaderboard" ? (
-                    String(i + 1).padStart(2, "0")
+                    String(offset + i + 1).padStart(2, "0")
                   ) : (
                     <span
                       className={
@@ -314,7 +388,7 @@ export function DiscoveryBrowser({
                 </span>
                 <FounderAvatar founder={f} />
                 <div className="row-person">
-                  <Link href={`/u/${f.handle}`}>
+                  <Link prefetch={false} href={`/u/${f.handle}`}>
                     <strong>{f.name}</strong> <span>@{f.handle}</span>
                   </Link>
                   <p>{f.bio || "A founder with an introduction to share."}</p>
@@ -370,7 +444,21 @@ export function DiscoveryBrowser({
               </li>
             ))}
           </ol>
-          {rows.length > limit ? (
+          {serverPage ? (
+            <nav className="page-navigation" aria-label="Founder pages">
+              {serverPage.query.page > 1 ? (
+                <a href={pageUrl({ page: serverPage.query.page - 1 })}>
+                  ← Previous
+                </a>
+              ) : null}
+              {serverPage.hasMore ? (
+                <a href={pageUrl({ page: serverPage.query.page + 1 })}>
+                  Next page →
+                </a>
+              ) : null}
+            </nav>
+          ) : null}
+          {!serverPage && rows.length > limit ? (
             <button
               className="discovery-more"
               onClick={() => setLimit((n) => n + 48)}
@@ -383,6 +471,8 @@ export function DiscoveryBrowser({
           <section className="map-panel" aria-label="Interactive founder map">
             <FounderMap
               founders={mapped}
+              places={serverPage?.places}
+              onSelectPlace={(city, country) => navigate({ city, country })}
               selected={active}
               onSelect={(handle) => {
                 setSelected(handle);
@@ -444,7 +534,9 @@ export function DiscoveryBrowser({
                 </p>
                 <h2>{active.name}</h2>
                 <p>{active.bio || `Meet @${active.handle}.`}</p>
-                <Link href={`/u/${active.handle}`}>Meet this founder ↗</Link>
+                <Link prefetch={false} href={`/u/${active.handle}`}>
+                  Meet this founder ↗
+                </Link>
               </div>
             ) : null}
             <p className="map-credit">

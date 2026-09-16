@@ -103,3 +103,33 @@ test("map network failure keeps the founder list usable", async ({ page }) => {
   await page.getByRole("searchbox").fill("Berlin");
   await expect(page.locator(".discovery-rows li")).toHaveCount(1);
 });
+
+test("bounded pages do not embed the hidden index and require page navigation", async ({
+  page,
+  request,
+}) => {
+  for (const mode of ["map", "leaderboard"]) {
+    const response = await request.get(
+      `/discovery-preview?bounded=1&mode=${mode}`,
+    );
+    const html = await response.text();
+    expect(html).toContain("bounded_47");
+    expect(html).not.toContain("bounded_48");
+    expect(html).not.toContain("bounded_119");
+    await page.goto(`/discovery-preview?bounded=1&mode=${mode}`);
+    await expect(page.locator(".discovery-rows li")).toHaveCount(48);
+    await page.getByRole("link", { name: "Next page" }).click();
+    await expect(page.locator(".discovery-rows li").first()).toContainText(
+      "Bounded Founder 48",
+    );
+    await expect(page.locator(".discovery-rows li")).toHaveCount(48);
+    if (mode === "leaderboard")
+      await expect(page.locator(".row-rank").first()).toHaveText("49");
+    await page.getByRole("searchbox").fill("Visible bio 119");
+    await page.getByRole("button", { name: "Search", exact: true }).click();
+    await expect(page.locator(".discovery-rows li")).toHaveCount(1);
+    await expect(page.locator(".discovery-rows li")).toContainText(
+      "Bounded Founder 119",
+    );
+  }
+});

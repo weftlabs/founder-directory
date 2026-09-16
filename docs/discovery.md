@@ -8,8 +8,8 @@ failure leaves the searchable founder list usable.
 The map matches normalized city and country against a bundled
 [GeoNames gazetteer](../lib/data/README.md). Pins are approximate city centers,
 not personal addresses. Ambiguous names within the gazetteer and unsupported
-locations stay in the list and count as unmapped. Several people at one point
-have a chooser. Search, country and craft filters apply to both list and map.
+locations stay in the list and count as unmapped. A city pin opens its paginated founder list. Search, country and craft filters
+apply to both list and map.
 
 The leaderboard sorts **X introduction likes or views**, descending, with handle
 as a stable tiebreaker. There is no combined score or quality claim. Unknown
@@ -60,3 +60,21 @@ Set `DIRECTORY_PREVIEW=1` on an isolated local server, then open
 clearly labelled fictional data and return 404 without the flag. Unit tests cover
 place matching, ranking and count parsing. Browser tests cover filters, selection,
 ranking modes, map failure, no-key empty states and mobile layout.
+
+## Public data boundary
+
+There is no public `/api/founders` route. Directory, map and leaderboard responses
+contain at most 48 founder cards. Live filters and pagination request a new page;
+there is no hidden complete founder array or automatic next-page fetch. Profile
+links do not prefetch additional profile data. Directory cards omit profile-only
+source text, external links and analysis details.
+
+The map overview exposes city centers and aggregate counts only. Clicking a city
+opens its paginated founder list. Ranking, filtering and paging happen on the
+server before rendering or serialization. The sitemap lists static pages only,
+not a bulk list of profile URLs. Synthetic previews remain explicitly gated.
+
+This removes convenient bulk extraction; it is not scrape prevention. Public HTML
+and Next.js page responses remain readable by automated clients one page at a time.
+No header checks, hidden endpoint names or robots.txt rules are treated as access
+control. Strict scraping limits need edge-level request controls or authentication.

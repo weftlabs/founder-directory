@@ -36,7 +36,10 @@ export default async function Home({
   let page = emptyDirectoryPage();
   let scanned = "not yet";
   try {
-    page = await listDirectoryPage(filters);
+    page = await listDirectoryPage({
+      ...filters,
+      cursor: first(params.cursor),
+    });
     scanned = relativeTime(await lastScanAt());
   } catch {
     page = emptyDirectoryPage();
@@ -48,6 +51,7 @@ export default async function Home({
     <>
       <SiteHeader directoryCurrent />
       <Directory
+        key={JSON.stringify(params)}
         initialPage={page}
         initialSearch={initialSearch ? `?${initialSearch}` : ""}
         scanned={scanned}

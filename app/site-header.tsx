@@ -16,27 +16,37 @@ export function SiteHeader({
 }) {
   return (
     <header className="top">
-      <Link className="brand" href="/">
+      <Link prefetch={false} className="brand" href="/">
         Founder <em>Directory</em>
       </Link>
       <div className="top-nav">
         <Link
+          prefetch={false}
           className="directory-link"
           href="/"
           aria-current={directoryCurrent ? "page" : undefined}
         >
           Directory
         </Link>
-        <Link href="/map" aria-current={mapCurrent ? "page" : undefined}>
+        <Link
+          prefetch={false}
+          href="/map"
+          aria-current={mapCurrent ? "page" : undefined}
+        >
           Map
         </Link>
         <Link
+          prefetch={false}
           href="/leaderboard"
           aria-current={leaderboardCurrent ? "page" : undefined}
         >
           Leaderboard
         </Link>
-        <Link href="/about" aria-current={aboutCurrent ? "page" : undefined}>
+        <Link
+          prefetch={false}
+          href="/about"
+          aria-current={aboutCurrent ? "page" : undefined}
+        >
           About
         </Link>
         <OnlineNow />

@@ -2,16 +2,30 @@ import type { Founder } from "./model";
 import type { DirectoryFilters, LocationOption } from "./directory-filters";
 
 export const DIRECTORY_PAGE_SIZE = 48;
-/** Start the next page this far before the sentinel enters the viewport. */
-export const DIRECTORY_PREFETCH_ROOT_MARGIN = "0px 0px 1200px 0px";
-
 export type DirectoryCursor = {
   updatedAt: string;
   handle: string;
 };
 
+export type DirectoryCard = Pick<
+  Founder,
+  "handle" | "name" | "bio" | "city" | "country" | "avatarUrl" | "category"
+> & { vibe: Pick<Founder["vibe"], "label"> };
+export function directoryCard(f: Founder): DirectoryCard {
+  return {
+    handle: f.handle,
+    name: f.name,
+    bio: f.bio,
+    city: f.city,
+    country: f.country,
+    avatarUrl: f.avatarUrl,
+    category: f.category,
+    vibe: { label: f.vibe.label },
+  };
+}
+
 export type DirectoryPage = {
-  founders: Founder[];
+  founders: DirectoryCard[];
   total: number;
   nextCursor: string | null;
   categories: string[];
@@ -27,27 +41,6 @@ export function emptyDirectoryPage(): DirectoryPage {
     categories: [],
     countries: [],
     cities: [],
-  };
-}
-
-export function appendDirectoryPage(
-  current: DirectoryPage,
-  page: DirectoryPage,
-  expectedKey: string,
-  currentKey: string,
-): DirectoryPage {
-  if (currentKey !== expectedKey) return current;
-  const seen = new Set(current.founders.map((founder) => founder.handle));
-  return {
-    ...page,
-    founders: [
-      ...current.founders,
-      ...page.founders.filter((founder) => !seen.has(founder.handle)),
-    ],
-    total: current.total,
-    categories: current.categories,
-    countries: current.countries,
-    cities: current.cities,
   };
 }
 

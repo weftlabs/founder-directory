@@ -1,3 +1,4 @@
+import { discoveryPage, discoveryQuery } from "@/lib/discovery";
 import { notFound } from "next/navigation";
 import { DiscoveryBrowser } from "../discovery-browser";
 import { SiteHeader } from "../site-header";
@@ -80,11 +81,11 @@ const examples = [
 export default async function DiscoveryPreview({
   searchParams,
 }: {
-  searchParams: Promise<{ mode?: string }>;
+  searchParams: Promise<Record<string, string | undefined>>;
 }) {
   if (process.env.DIRECTORY_PREVIEW !== "1") notFound();
-  const mode =
-    (await searchParams).mode === "leaderboard" ? "leaderboard" : "map";
+  const params = await searchParams;
+  const mode = params.mode === "leaderboard" ? "leaderboard" : "map";
   const founders: DiscoveryFounder[] = examples.map(
     ([name, city, country, category, bio], i) => ({
       name,
@@ -106,6 +107,21 @@ export default async function DiscoveryPreview({
             },
     }),
   );
+  const bounded = params.bounded === "1";
+  const query = discoveryQuery(params);
+  const dataset = bounded
+    ? Array.from({ length: 120 }, (_, i) => ({
+        ...founders[0],
+        handle: `bounded_${i}`,
+        name: `Bounded Founder ${i}`,
+        bio: `Visible bio ${i}`,
+        introMetrics: {
+          likes: 120 - i,
+          views: i,
+          observedAt: "2026-09-17T00:00:00Z",
+        },
+      }))
+    : founders;
   return (
     <>
       <SiteHeader
@@ -115,7 +131,12 @@ export default async function DiscoveryPreview({
       <p className="preview-banner">
         Design preview · fictional sample profiles and counts
       </p>
-      <DiscoveryBrowser founders={founders} mode={mode} />
+      <DiscoveryBrowser
+        key={JSON.stringify(params)}
+        {...(bounded ? discoveryPage(dataset, query, mode) : { founders })}
+        mode={mode}
+        navigationBase={`/discovery-preview?bounded=1&mode=${mode}`}
+      />
     </>
   );
 }

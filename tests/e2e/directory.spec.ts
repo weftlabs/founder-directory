@@ -41,25 +41,18 @@ test("directory works without credentials on desktop and mobile", async ({
   expect(errors).toEqual([]);
 });
 
-test("founders API is public and empty without a database", async ({
-  request,
-}) => {
-  const empty = {
-    founders: [],
-    total: 0,
-    nextCursor: null,
-    categories: [],
-    countries: [],
-    cities: [],
-  };
-  const get = await request.get("/api/founders");
-  expect(get.status()).toBe(200);
-  expect(await get.json()).toEqual(empty);
-  const filtered = await request.get(
-    "/api/founders?q=alice&cursor=not-a-cursor",
-  );
-  expect(filtered.status()).toBe(200);
-  expect(await filtered.json()).toEqual(empty);
+test("the directory has no public JSON API", async ({ request }) => {
+  for (const path of [
+    "/api/founders",
+    "/api/founders?limit=100000",
+    "/api/founders?cursor=anything",
+  ]) {
+    const response = await request.get(path);
+    expect(response.status()).toBe(404);
+    expect(response.headers()["content-type"]).not.toContain(
+      "application/json",
+    );
+  }
 });
 
 test("presence is public and the header shows an online count without a database", async ({
@@ -191,4 +184,15 @@ test("unknown profiles return 404 rather than inventing a founder", async ({
 }) => {
   const response = await request.get("/u/fixture_missing");
   expect(response.status()).toBe(404);
+});
+
+test("a new directory search resets the previous page cursor", async ({
+  page,
+}) => {
+  await page.goto("/?cursor=stale-page");
+  await page
+    .getByRole("searchbox", { name: "Search founders", exact: true })
+    .fill("Berlin");
+  await page.getByRole("button", { name: "Search", exact: true }).click();
+  await expect(page).toHaveURL(/\?q=Berlin$/);
 });
