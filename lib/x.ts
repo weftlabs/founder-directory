@@ -110,13 +110,13 @@ export function isIntro(text: string): boolean {
 
 export async function searchIntroPage(
   cursor?: string,
-  dependencies: WeftDependencies = defaultWeftDependencies,
+  dependencies?: WeftDependencies,
   phrase: string = TREND_PHRASE,
 ): Promise<{
   hits: TrendHit[];
   cursor: string | null;
 }> {
-  const client = weft(dependencies);
+  const client = weft(dependencies ?? defaultWeftDependencies);
   const params = new URLSearchParams({
     phrase,
     type: "latest",

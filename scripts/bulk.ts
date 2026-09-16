@@ -1,7 +1,7 @@
-import { BULK_SCAN_PAGES, runScan } from "../lib/scan";
+import { runScan, scanLimits } from "../lib/scan";
 
 async function main() {
-  const result = await runScan({ maxPages: BULK_SCAN_PAGES });
+  const result = await runScan(scanLimits(true));
   console.log(JSON.stringify(result));
 }
 
