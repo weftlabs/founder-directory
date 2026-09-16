@@ -1,4 +1,5 @@
-import { WeftClient, type FetchResponse } from "@weft-labs/sdk";
+import { type FetchResponse } from "@weft-labs/sdk";
+import { defaultWeftDependencies, type WeftDependencies } from "./weft";
 import { emptyPlace } from "./place";
 import { fetchWithRetry } from "./weft-retry";
 import {
@@ -25,10 +26,10 @@ const X_SEARCH = {
   accessMethodId: "bazaar-x402-atlas-177-x402",
 } as const;
 
-function weft() {
-  const apiKey = process.env.WEFT_API_KEY;
+function weft(dependencies: WeftDependencies) {
+  const apiKey = dependencies.apiKey();
   if (!apiKey) throw new Error("WEFT_API_KEY is not set");
-  return new WeftClient({ apiKey });
+  return dependencies.createClient(apiKey);
 }
 
 function decodeBody(response: FetchResponse): Record<string, unknown> {
@@ -61,11 +62,14 @@ export type TrendHit = {
   tweetId: string | null;
 };
 
-export async function searchIntroPage(cursor?: string): Promise<{
+export async function searchIntroPage(
+  cursor?: string,
+  dependencies: WeftDependencies = defaultWeftDependencies,
+): Promise<{
   hits: TrendHit[];
   cursor: string | null;
 }> {
-  const client = weft();
+  const client = weft(dependencies);
   const params = new URLSearchParams({
     phrase: TREND_PHRASE,
     type: "latest",
@@ -135,8 +139,7 @@ function parseHits(payload: Record<string, unknown>): TrendHit[] {
     const row = asRecord(item);
     if (!row) continue;
     const author = asRecord(row.author) ?? asRecord(row.user);
-    const handle =
-      asString(author?.screen_name) ?? asString(author?.username);
+    const handle = asString(author?.screen_name) ?? asString(author?.username);
     const name = asString(author?.name) ?? handle;
     const text = asString(row.text) ?? asString(row.full_text);
     const tweetId =
@@ -153,10 +156,12 @@ export async function fetchProfile(
   handle: string,
   introText: string | null,
   tweetId: string | null = null,
+  dependencies: WeftDependencies = defaultWeftDependencies,
 ): Promise<Founder | null> {
-  if (!process.env.WEFT_API_KEY) return null;
-  const client = weft();
-  const response = await fetchWithRetry(client,
+  if (!dependencies.apiKey()) return null;
+  const client = weft(dependencies);
+  const response = await fetchWithRetry(
+    client,
     {
       url: `${X_USER_DETAILS_URL}?username=${encodeURIComponent(handle)}`,
       method: "GET",
@@ -164,6 +169,7 @@ export async function fetchProfile(
       maxCostUsd: MAX_COST_USD,
       ...X_PROFILE,
     },
+    dependencies.sleep,
   );
   if (!response || response.status < 200 || response.status >= 300) return null;
   let payload: Record<string, unknown>;
@@ -173,7 +179,7 @@ export async function fetchProfile(
     return null;
   }
   const data = asRecord(payload.data);
-  if (!data) return null;
+  if (!data || asRecord(data.privacy)?.protected) return null;
   const core = asRecord(data.core);
   const name = asString(core?.name);
   const screen = asString(core?.screen_name) ?? handle;
@@ -214,9 +220,7 @@ export async function fetchProfile(
     category: categorize({ bio, website, github, professional }),
     vibe,
     introText,
-    introUrl: tweetId
-      ? `https://x.com/${screen}/status/${tweetId}`
-      : null,
+    introUrl: tweetId ? `https://x.com/${screen}/status/${tweetId}` : null,
     updatedAt: new Date().toISOString(),
   };
 }

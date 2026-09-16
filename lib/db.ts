@@ -1,3 +1,4 @@
+import "./assert-server";
 import { neon } from "@neondatabase/serverless";
 import type { Founder, VibeCheck } from "./model";
 
@@ -167,9 +168,10 @@ export async function touchScan() {
 
 export async function lastScanAt(): Promise<string | null> {
   await ensureSchema();
-  const rows = (await sql()`SELECT last_scan_at FROM scan_meta WHERE id = 1`) as {
-    last_scan_at: string | Date | null;
-  }[];
+  const rows =
+    (await sql()`SELECT last_scan_at FROM scan_meta WHERE id = 1`) as {
+      last_scan_at: string | Date | null;
+    }[];
   const value = rows[0]?.last_scan_at;
   if (!value) return null;
   return value instanceof Date ? value.toISOString() : value;

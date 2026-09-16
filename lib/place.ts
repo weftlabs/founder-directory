@@ -1,4 +1,4 @@
-import { WeftClient } from "@weft-labs/sdk";
+import { defaultWeftDependencies, type WeftDependencies } from "./weft";
 import { fetchWithRetry } from "./weft-retry";
 
 export type Place = { city: string | null; country: string | null };
@@ -28,28 +28,31 @@ export function emptyPlace(): Place {
 export async function normalizePlaces(
   raws: string[],
   options: { strict?: boolean } = {},
+  dependencies: WeftDependencies = defaultWeftDependencies,
 ): Promise<Map<string, Place>> {
-  const unique = [
-    ...new Set(raws.filter((raw) => raw.trim().length > 0)),
-  ];
+  const unique = [...new Set(raws.filter((raw) => raw.trim().length > 0))];
   const out = new Map<string, Place>();
   const pending: string[] = [];
   for (const raw of unique) {
-    const override = OVERRIDES[keyOf(raw)];
-    if (override) out.set(raw, override);
+    const override = Object.hasOwn(OVERRIDES, keyOf(raw))
+      ? OVERRIDES[keyOf(raw)]
+      : undefined;
+    if (override) out.set(raw, { ...override });
     else pending.push(raw);
   }
   if (pending.length === 0) return out;
 
-  const apiKey = process.env.WEFT_API_KEY;
+  const apiKey = dependencies.apiKey();
   if (!apiKey) {
-    if (options.strict) throw new Error("Place normalization unavailable: missing API key");
+    if (options.strict)
+      throw new Error("Place normalization unavailable: missing API key");
     for (const raw of pending) out.set(raw, emptyPlace());
     return out;
   }
 
-  const client = new WeftClient({ apiKey });
-  const response = await fetchWithRetry(client,
+  const client = dependencies.createClient(apiKey);
+  const response = await fetchWithRetry(
+    client,
     {
       url: OPENROUTER_URL,
       method: "POST",
@@ -69,30 +72,59 @@ export async function normalizePlaces(
       maxCostUsd: "0.002",
       ...OPENROUTER,
     },
+    dependencies.sleep,
   );
   if (!response || response.status < 200 || response.status >= 300) {
-    if (options.strict) throw new Error(`Place normalization unavailable: HTTP ${response?.status ?? "error"}`);
+    if (options.strict)
+      throw new Error(
+        `Place normalization unavailable: HTTP ${response?.status ?? "error"}`,
+      );
     for (const raw of pending) out.set(raw, emptyPlace());
     return out;
   }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(Buffer.from(response.bodyBase64, "base64").toString("utf8"));
+    parsed = JSON.parse(
+      Buffer.from(response.bodyBase64, "base64").toString("utf8"),
+    );
   } catch {
-    if (options.strict) throw new Error("Place normalization returned invalid JSON");
+    if (options.strict)
+      throw new Error("Place normalization returned invalid JSON");
     for (const raw of pending) out.set(raw, emptyPlace());
     return out;
   }
   const content = extractContent(parsed);
   const rows = parseJsonArray(content);
   const byRaw = new Map<string, Place>();
+  const expected = new Set(pending.map(keyOf));
+  const invalid = new Set<string>();
+  let malformed = false;
   for (const row of rows) {
-    if (!row || typeof row !== "object") continue;
+    if (!row || typeof row !== "object" || Array.isArray(row)) {
+      malformed = true;
+      continue;
+    }
     const rec = row as Record<string, unknown>;
-    const raw = typeof rec.raw === "string" ? rec.raw : null;
-    if (!raw) continue;
-    byRaw.set(keyOf(raw), cleanPlace({ city: clean(rec.city), country: clean(rec.country) }));
+    const key = typeof rec.raw === "string" ? keyOf(rec.raw) : "";
+    if (!expected.has(key)) {
+      malformed = true;
+      continue;
+    }
+    const validField = (value: unknown) =>
+      value === null || (typeof value === "string" && value.trim().length > 0);
+    if (byRaw.has(key) || !validField(rec.city) || !validField(rec.country)) {
+      malformed = true;
+      invalid.add(key);
+      continue;
+    }
+    byRaw.set(
+      key,
+      cleanPlace({ city: clean(rec.city), country: clean(rec.country) }),
+    );
   }
+  for (const key of invalid) byRaw.delete(key);
+  if (options.strict && malformed)
+    throw new Error("Place normalization returned malformed mappings");
   if (options.strict && pending.some((raw) => !byRaw.has(keyOf(raw)))) {
     throw new Error("Place normalization returned incomplete mappings");
   }
@@ -105,7 +137,12 @@ export async function normalizePlaces(
 // Defensive checks for observed model mistakes; not a geographic gazetteer.
 export function cleanPlace(place: Place): Place {
   let { city, country } = place;
-  if (country && /^(europe|asia|africa|north america|south america|oceania|antarctica|earth|worldwide)$/i.test(country)) {
+  if (
+    country &&
+    /^(europe|asia|africa|north america|south america|oceania|antarctica|earth|worldwide)$/i.test(
+      country,
+    )
+  ) {
     return emptyPlace();
   }
   if (country === "United States of America") country = "United States";
@@ -129,11 +166,8 @@ function extractContent(parsed: unknown): string {
 }
 
 function parseJsonArray(content: string): unknown[] {
-  const start = content.indexOf("[");
-  const end = content.lastIndexOf("]");
-  if (start < 0 || end < start) return [];
   try {
-    const value: unknown = JSON.parse(content.slice(start, end + 1));
+    const value: unknown = JSON.parse(content);
     return Array.isArray(value) ? value : [];
   } catch {
     return [];

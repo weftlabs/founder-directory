@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import type { Founder } from "@/lib/model";
 
 export function Directory({
@@ -20,14 +21,20 @@ export function Directory({
     [founders],
   );
   const countries = useMemo(
-    () => ["All", ...unique(founders.map((f) => f.country).filter(Boolean) as string[])],
+    () => [
+      "All",
+      ...unique(founders.map((f) => f.country).filter(Boolean) as string[]),
+    ],
     [founders],
   );
   const cities = useMemo(() => {
     const pool = founders.filter(
       (f) => country === "All" || f.country === country,
     );
-    return ["All", ...unique(pool.map((f) => f.city).filter(Boolean) as string[])];
+    return [
+      "All",
+      ...unique(pool.map((f) => f.city).filter(Boolean) as string[]),
+    ];
   }, [founders, country]);
 
   const rows = founders.filter((f) => {
@@ -50,13 +57,15 @@ export function Directory({
 
   return (
     <main className="dir">
-      <h1 className="hero">Find the people doing the intro.</h1>
+      <h1 className="hero">Find the people building.</h1>
       <p className="lede">
         Each founder has a public profile page. Search by name, city, or
         country, then open a card.
       </p>
       <div className="search">
         <input
+          aria-label="Search founders"
+          type="search"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Search name, handle, city, or country"
@@ -87,9 +96,11 @@ export function Directory({
       ) : (
         <div className="grid">
           {rows.map((p) => (
-            <a className="card" href={`/u/${p.handle}`} key={p.handle}>
+            <Link className="card" href={`/u/${p.handle}`} key={p.handle}>
               <div className="card-top">
                 {p.avatarUrl ? (
+                  // Remote avatars use their intrinsic size, without an image proxy.
+                  // eslint-disable-next-line @next/next/no-img-element
                   <img src={p.avatarUrl} alt="" width={56} height={56} />
                 ) : (
                   <span
@@ -118,7 +129,7 @@ export function Directory({
                 </div>
               </div>
               <p>{p.bio}</p>
-            </a>
+            </Link>
           ))}
         </div>
       )}

@@ -7,7 +7,12 @@ async function main() {
   const rows = (await sql`
     SELECT handle, location, city, country FROM founders
     ORDER BY location
-  `) as { handle: string; location: string | null; city: string | null; country: string | null }[];
+  `) as {
+    handle: string;
+    location: string | null;
+    city: string | null;
+    country: string | null;
+  }[];
   console.log(JSON.stringify(rows, null, 2));
 }
 

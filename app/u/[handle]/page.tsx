@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import Link from "next/link";
 import { SiteHeader } from "../../site-header";
+import { notFound } from "next/navigation";
 import { getFounder } from "@/lib/db";
-import { displayLink } from "@/lib/model";
+import { displayLink, safeHttpUrl } from "@/lib/model";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +15,7 @@ export async function generateMetadata({
   const { handle } = await params;
   const founder = await getFounder(handle).catch(() => null);
   if (!founder) return { title: "Not found" };
-  const description = `${founder.name} (@${founder.handle}) is a solo founder${
+  const description = `${founder.name} (@${founder.handle}) is listed in Founder Directory${
     founder.city ? ` in ${founder.city}` : ""
   }. ${founder.bio ?? ""}`;
   return {
@@ -44,6 +45,7 @@ export default async function ProfilePage({
   const founder = await getFounder(handle).catch(() => null);
   if (!founder) notFound();
   const place = [founder.city, founder.country].filter(Boolean).join(", ");
+  const introUrl = safeHttpUrl(founder.introUrl);
 
   return (
     <>
@@ -58,9 +60,7 @@ export default async function ProfilePage({
           )}
           <div>
             <p className="cat">{founder.category}</p>
-            <h1>
-              I'm {founder.name}, I'm a solo founder
-            </h1>
+            <h1>{founder.name}</h1>
             <p className="handle">
               @{founder.handle}
               {place ? ` · ${place}` : ""}
@@ -71,10 +71,10 @@ export default async function ProfilePage({
         {founder.introText ? (
           <blockquote className="tweet">
             {founder.introText}
-            {founder.introUrl ? (
+            {introUrl ? (
               <>
                 {"\n"}
-                <a href={founder.introUrl}>View on X</a>
+                <a href={introUrl}>View on X</a>
               </>
             ) : null}
           </blockquote>
@@ -96,30 +96,28 @@ export default async function ProfilePage({
         <section className="panel">
           <h2>Public links</h2>
           <dl>
-            <LinkRow
-              label="X"
-              href={`https://x.com/${founder.handle}`}
-            />
+            <LinkRow label="X" href={`https://x.com/${founder.handle}`} />
             <LinkRow label="Website" href={founder.website} />
             <LinkRow label="GitHub" href={founder.github} />
             <LinkRow label="LinkedIn" href={founder.linkedin} />
           </dl>
         </section>
-        <a className="back" href="/">
+        <Link className="back" href="/">
           ← Directory
-        </a>
+        </Link>
       </main>
     </>
   );
 }
 
 function LinkRow({ label, href }: { label: string; href: string | null }) {
+  const safeUrl = safeHttpUrl(href);
   return (
     <div>
       <dt>{label}</dt>
       <dd>
-        {href ? (
-          <a href={href}>{displayLink(href)}</a>
+        {safeUrl ? (
+          <a href={safeUrl}>{displayLink(safeUrl)}</a>
         ) : (
           <span className="miss">Not found</span>
         )}

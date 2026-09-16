@@ -19,8 +19,8 @@ export async function GET(request: Request) {
       bulk ? { maxPages: 25, maxNew: 120 } : { maxPages: 1, maxNew: 8 },
     );
     return Response.json(result);
-  } catch (cause) {
-    const message = cause instanceof Error ? cause.message : "Scan failed";
-    return Response.json({ error: message }, { status: 500 });
+  } catch {
+    // Provider and database errors can contain credentials or personal data.
+    return Response.json({ error: "Scan unavailable" }, { status: 503 });
   }
 }
