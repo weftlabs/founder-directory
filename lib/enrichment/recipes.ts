@@ -29,6 +29,7 @@ export const DEFAULT_STAGES = [
 ] as const;
 
 const FIELDS = {
+  product_discovery: ["products"],
   product_descriptions: [
     "name",
     "description",
@@ -53,6 +54,7 @@ Do not copy secrets, personal contact details or unrelated private information. 
 
 export function buildAnalysisInput(input: {
   entityId: string;
+  subjectName?: string;
   releaseId: string;
   generation: number;
   purpose: keyof typeof FIELDS;
@@ -61,13 +63,21 @@ export function buildAnalysisInput(input: {
   codeDigest: string;
 }): AnalysisInput {
   const fields = FIELDS[input.purpose];
-  const claimFields = fields.map((name) => ({ name, type: "string" as const }));
+  const claimFields = fields.map((name) => ({
+    name,
+    type:
+      name === "products" ? ("product_array" as const) : ("string" as const),
+  }));
+  const template =
+    input.purpose === "product_discovery"
+      ? `${TEMPLATE}\nThe products claim value is an array of at most 8 objects with name, website (string or null), and evidenceIds. Each object requires cited evidence of the subject's ownership or building role. No products established means unknown/null; only explicit evidence of no products permits absent/[]. Never treat an unrelated mentioned product as owned.`
+      : TEMPLATE;
   const recipe: AnalysisRecipe = {
     purpose: input.purpose,
     schemaVersion: "claims-v1",
     parserVersion: "json-chat-content-v1",
     promptVersion: "evidence-only-v1",
-    template: TEMPLATE,
+    template,
     provider: input.model.provider,
     model: input.model.model,
     modelRevision: input.model.revision,
@@ -88,7 +98,32 @@ export function buildAnalysisInput(input: {
             required: ["field", "value", "kind", "state", "evidenceIds"],
             properties: {
               field: { enum: [...fields] },
-              value: { type: ["string", "null"] },
+              value:
+                input.purpose === "product_discovery"
+                  ? {
+                      anyOf: [
+                        { type: "null" },
+                        {
+                          type: "array",
+                          maxItems: 8,
+                          items: {
+                            type: "object",
+                            additionalProperties: false,
+                            required: ["name", "website", "evidenceIds"],
+                            properties: {
+                              name: { type: "string", minLength: 1 },
+                              website: { type: ["string", "null"] },
+                              evidenceIds: {
+                                type: "array",
+                                minItems: 1,
+                                items: { type: "string" },
+                              },
+                            },
+                          },
+                        },
+                      ],
+                    }
+                  : { type: ["string", "null"] },
               kind: {
                 enum: ["self_report", "publisher_statement", "inference"],
               },
@@ -106,7 +141,7 @@ export function buildAnalysisInput(input: {
     selectionPolicy: "all-supplied-evidence-v1",
     claimFields,
   };
-  return {
+  const output: AnalysisInput = {
     entityId: input.entityId,
     releaseId: input.releaseId,
     generation: input.generation,
@@ -115,20 +150,34 @@ export function buildAnalysisInput(input: {
     requiredEvidenceIds: input.evidence.map((item) => item.id),
     upstreamOutputs: [],
     context: [],
-    messages: [
-      { role: "system", content: TEMPLATE },
-      {
-        role: "user",
-        content: canonicalJson({
-          subjectEntityId: input.entityId,
-          purpose: input.purpose,
-          schemaVersion: "claims-v1",
-          requiredFields: fields,
-          evidence: input.evidence,
-        }),
-      },
-    ],
+    messages: [],
   };
+  if (input.subjectName) output.subjectName = input.subjectName;
+  output.messages = renderAnalysisMessages(output);
+  return output;
+}
+
+export function renderAnalysisMessages(
+  input: Pick<
+    AnalysisInput,
+    "entityId" | "subjectName" | "recipe" | "evidence"
+  >,
+): AnalysisInput["messages"] {
+  return [
+    { role: "system", content: input.recipe.template },
+    {
+      role: "user",
+      content: canonicalJson({
+        subjectEntityId: input.entityId,
+        subjectName: input.subjectName ?? null,
+        purpose: input.recipe.purpose,
+        schemaVersion: input.recipe.schemaVersion,
+        requiredFields:
+          input.recipe.claimFields?.map((field) => field.name) ?? [],
+        evidence: input.evidence,
+      }),
+    },
+  ];
 }
 
 export function releaseManifestDigest(

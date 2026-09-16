@@ -11,6 +11,7 @@ import {
   type PreparedAnalysis,
   type RenderedAnalysisRequest,
 } from "./contracts";
+import { renderAnalysisMessages } from "./recipes";
 
 /** Inputs are already saved, permitted evidence. There is no source-network fallback. */
 export function prepareAnalysis(input: AnalysisInput): PreparedAnalysis {
@@ -140,7 +141,43 @@ export function validateAnalysisOutput(
     if (claimFields) {
       const expected = claimFields.find((field) => field.name === claim.field);
       if (!expected) errors.push("unknown_claim_field");
-      else if (
+      else if (expected.type === "product_array" && claim.value !== null) {
+        if (
+          !Array.isArray(claim.value) ||
+          claim.value.length > 8 ||
+          (claim.state === "supported" && !claim.value.length)
+        )
+          errors.push("invalid_products");
+        else {
+          const productNames = new Set<string>();
+          for (const product of claim.value) {
+            if (
+              !object(product) ||
+              typeof product.name !== "string" ||
+              !product.name.trim() ||
+              product.name.length > 200 ||
+              !Array.isArray(product.evidenceIds) ||
+              !product.evidenceIds.length ||
+              product.evidenceIds.some(
+                (id) =>
+                  typeof id !== "string" ||
+                  !allowed.has(id) ||
+                  !(claim.evidenceIds as unknown[]).includes(id),
+              ) ||
+              (product.website !== null &&
+                (typeof product.website !== "string" ||
+                  !/^https?:\/\//.test(product.website))) ||
+              Object.keys(product).some(
+                (key) => !["name", "website", "evidenceIds"].includes(key),
+              )
+            )
+              errors.push("invalid_product_claim");
+            else if (productNames.has(product.name.trim().toLowerCase()))
+              errors.push("duplicate_product_claim");
+            else productNames.add(product.name.trim().toLowerCase());
+          }
+        }
+      } else if (
         claim.value !== null &&
         (expected.type === "string"
           ? typeof claim.value !== "string"
@@ -208,6 +245,9 @@ export function compatibleEmbeddings(
 export interface AnalysisStore {
   assertAnalysisInputs(input: {
     entityId: string;
+    purpose: string;
+    recipeDigest: string;
+    subjectName?: string;
     releaseId: string;
     generation: number;
     evidence: {
@@ -309,10 +349,18 @@ export async function runAnalysis(
   options: { rerunId?: string } = {},
 ) {
   const prepared = prepareAnalysis(input);
+  if (
+    stableDigest(prepared.messages) !==
+    stableDigest(renderAnalysisMessages(prepared))
+  )
+    throw new Error("untrusted_message_rendering");
   if (prepared.context.length || prepared.upstreamOutputs.length)
     throw new Error("unverified_context_not_supported");
   await store.assertAnalysisInputs({
     entityId: prepared.entityId,
+    purpose: prepared.recipe.purpose,
+    recipeDigest: stableDigest(prepared.recipe),
+    ...(prepared.subjectName ? { subjectName: prepared.subjectName } : {}),
     releaseId: prepared.releaseId,
     generation: prepared.generation,
     evidence: prepared.evidence.map(

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { stableDigest } from "../lib/enrichment/contracts";
+import { stableDigest, type AnalysisInput } from "../lib/enrichment/contracts";
 import {
   prepareAnalysis,
   validateAnalysisOutput,
@@ -11,7 +11,11 @@ import {
   generationContent,
   type AnalysisStore,
 } from "../lib/enrichment/analysis";
-import { buildAnalysisInput, DEFAULT_STAGES } from "../lib/enrichment/recipes";
+import {
+  buildAnalysisInput,
+  DEFAULT_STAGES,
+  renderAnalysisMessages,
+} from "../lib/enrichment/recipes";
 
 const evidence = {
   id: "e1",
@@ -36,7 +40,7 @@ const recipe = {
   codeDigest: "code1",
   selectionPolicy: "all-v1",
 };
-const input = {
+const input: AnalysisInput = {
   entityId: "founder1",
   releaseId: "release1",
   generation: 1,
@@ -47,6 +51,7 @@ const input = {
   messages: [{ role: "user" as const, content: "Describe: Builds tools" }],
   context: [],
 };
+input.messages = renderAnalysisMessages(input);
 
 test("canonical hashes ignore key insertion order but preserve ordered input", () => {
   assert.equal(stableDigest({ b: 2, a: 1 }), stableDigest({ a: 1, b: 2 }));
@@ -68,8 +73,8 @@ test("recipe and source input identities are independent of release labels", () 
   assert.deepEqual(first.request.messages, input.messages);
   assert.deepEqual(first.manifest.evidence, [evidence]);
   input.messages[0].content = "changed after preparation";
-  assert.equal(first.request.messages[0].content, "Describe: Builds tools");
-  input.messages[0].content = "Describe: Builds tools";
+  assert.equal(first.request.messages[0].content, recipe.template);
+  input.messages = renderAnalysisMessages(input);
 });
 
 test("rederive refuses missing evidence and altered bytes without a source callback", () => {
@@ -277,6 +282,10 @@ test("forged evidence and suppressed entities fail before cache access or dispat
       {
         ...input,
         evidence: [{ ...evidence, text, contentHash: stableDigest(text) }],
+        messages: renderAnalysisMessages({
+          ...input,
+          evidence: [{ ...evidence, text, contentHash: stableDigest(text) }],
+        }),
       },
       unreachable,
     ),

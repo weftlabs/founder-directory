@@ -82,7 +82,10 @@ export interface AnalysisRecipe {
   toolDefinitions: JsonValue[];
   codeDigest: string;
   selectionPolicy: string;
-  claimFields?: { name: string; type: "string" | "string_array" }[];
+  claimFields?: {
+    name: string;
+    type: "string" | "string_array" | "product_array";
+  }[];
 }
 
 export interface AnalysisMessage {
@@ -92,6 +95,7 @@ export interface AnalysisMessage {
 
 export interface AnalysisInput {
   entityId: string;
+  subjectName?: string;
   releaseId: string;
   generation: number;
   recipe: AnalysisRecipe;
