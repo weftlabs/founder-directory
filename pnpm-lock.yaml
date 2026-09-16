@@ -46,8 +46,8 @@ importers:
         specifier: ^26.2.0
         version: 26.6.1
       '@types/pg':
-        specifier: 8.15.5
-        version: 8.15.5
+        specifier: 8.23.1
+        version: 8.23.1
       '@types/react':
         specifier: ^19.2.18
         version: 19.3.0
@@ -708,8 +708,8 @@ packages:
   '@types/node@26.6.1':
     resolution: {integrity: sha512-VqGJBMCtdhqkBUCcBLvywI0NJ+KLuVzgNnlBUNFOQjqVxzo2lxLUNg1DSey8+u2u6ktswSAxg+s68QLzWHNOuA==}
 
-  '@types/pg@8.15.5':
-    resolution: {integrity: sha512-LF7lF6zWEKxuT3/OR8wAZGzkg4ENGXFNyiV/JeOt9z5B+0ZVwbql9McqX5c/WStFq1GaGso7H1AzP/qSzmlCKQ==}
+  '@types/pg@8.23.1':
+    resolution: {integrity: sha512-fKVHpikPdg4GKks3JuLEhvwSyvwzF23hnabPy6DD8ljVbC7+6J5dQzdv4arV6jqq57djnMgs1HKBxX4P8aBI3A==}
 
   '@types/react-dom@19.3.0':
     resolution: {integrity: sha512-ZI7bU42mZXXKHn/qNLEw2IrbiINU7X5+vfgdixBHkCNpYWXjKgfQ/P+uyGb5CjOLB9UcnTeg3rylQtV2hym44Q==}
@@ -2646,7 +2646,7 @@ snapshots:
   '@neondatabase/serverless@1.0.2':
     dependencies:
       '@types/node': 22.20.3
-      '@types/pg': 8.15.5
+      '@types/pg': 8.23.1
 
   '@next/env@16.3.2': {}
 
@@ -2726,7 +2726,7 @@ snapshots:
     dependencies:
       undici-types: 8.9.0
 
-  '@types/pg@8.15.5':
+  '@types/pg@8.23.1':
     dependencies:
       '@types/node': 26.6.1
       pg-protocol: 1.16.0

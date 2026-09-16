@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { PGlite } from "@electric-sql/pglite";
 import {
   migrateEnrichment,
@@ -28,6 +28,44 @@ async function fixture() {
   await migrateEnrichment(db);
   return { pg, db, store: new EnrichmentStore(db) };
 }
+test("database export restores exact source bytes and lineage in a fresh engine", async () => {
+  const { pg, store } = await fixture();
+  const body = Buffer.from(Array.from({ length: 65536 }, (_, i) => i % 256));
+  const artifact = await store.putArtifact({
+    kind: "legacy_import",
+    body,
+    contentType: "application/octet-stream",
+    redactionVersion: "none",
+    importBatch: "synthetic-restore",
+  });
+  const evidence = await store.addEvidence({
+    artifactId: artifact.id,
+    extractorVersion: "v1",
+    locator: "bytes",
+    payload: { length: body.length },
+    excerpt: "synthetic bytes",
+  });
+  const backup = await pg.dumpDataDir();
+  await pg.close();
+  const restored = new PGlite({ loadDataDir: backup });
+  try {
+    const row = (
+      await restored.query<{
+        body: Uint8Array;
+        sha256: string;
+        artifact_id: string;
+      }>(
+        "SELECT a.body,a.sha256,e.artifact_id FROM enrichment_artifacts a JOIN enrichment_evidence e ON e.artifact_id=a.id WHERE e.id=$1",
+        [evidence],
+      )
+    ).rows[0];
+    assert.deepEqual(Buffer.from(row.body), body);
+    assert.equal(row.sha256, createHash("sha256").update(body).digest("hex"));
+    assert.equal(row.artifact_id, artifact.id);
+  } finally {
+    await restored.close();
+  }
+});
 test("durable request exclusion, exact reservations and raw response survive repository restart", async () => {
   const { pg, db, store } = await fixture();
   try {
@@ -345,6 +383,28 @@ test("required stages stay ordered; expired work blocks and withdrawal prevents 
     await store.linkEvidence(entityId, evidence, "source");
     await store.intake("test", entityId);
     await store.intake("test", entityId);
+    const trusted = {
+      entityId,
+      releaseId: release,
+      generation: 0,
+      evidence: [
+        {
+          id: evidence,
+          artifactId: raw.id,
+          contentHash: createHash("sha256")
+            .update(JSON.stringify("synthetic source"))
+            .digest("hex"),
+          text: "synthetic source",
+        },
+      ],
+    };
+    await store.assertAnalysisInputs(trusted);
+    await assert.rejects(() =>
+      store.assertAnalysisInputs({
+        ...trusted,
+        evidence: [{ ...trusted.evidence[0], text: "invented source" }],
+      }),
+    );
     await store.reconcileTargets("test");
     const first = await store.claimStage();
     assert.equal(first?.stage, "collect");
@@ -392,6 +452,7 @@ test("required stages stay ordered; expired work blocks and withdrawal prevents 
     );
     assert.equal(await store.publishAnalysis(id), true);
     await store.withdrawArtifact(raw.id, "test", "withdrawn");
+    await assert.rejects(() => store.assertAnalysisInputs(trusted));
     assert.equal(await store.getArtifact(raw.id), null);
     assert.equal(await store.publishAnalysis(id), false);
     assert.equal(

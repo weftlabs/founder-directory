@@ -95,7 +95,7 @@ export class EnrichmentStore {
   }): Promise<{ id: string }> {
     return one(
       this.db,
-      "INSERT INTO enrichment_collection_requests(id,scope,fingerprint,generation,operation,args,policy_id) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(scope,fingerprint,generation) DO UPDATE SET fingerprint=EXCLUDED.fingerprint RETURNING id",
+      "INSERT INTO enrichment_collection_requests(id,scope,fingerprint,generation,operation,args,policy_id) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(scope,fingerprint,generation) DO UPDATE SET fingerprint=EXCLUDED.fingerprint WHERE enrichment_collection_requests.operation=EXCLUDED.operation AND enrichment_collection_requests.args=EXCLUDED.args AND enrichment_collection_requests.policy_id=EXCLUDED.policy_id RETURNING id",
       [
         randomUUID(),
         input.scope,
@@ -479,9 +479,7 @@ export class EnrichmentStore {
     });
     return id;
   }
-  async claimStage(
-    workerLeaseSeconds = 60,
-  ): Promise<{
+  async claimStage(workerLeaseSeconds = 60): Promise<{
     id: string;
     leaseToken: string;
     entityId: string;
@@ -572,6 +570,43 @@ export class EnrichmentStore {
     );
     return id;
   }
+  async assertAnalysisInputs(input: {
+    entityId: string;
+    releaseId: string;
+    generation: number;
+    evidence: Array<{
+      id: string;
+      artifactId: string;
+      contentHash: string;
+      text: string;
+    }>;
+  }): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx.query("SELECT pg_advisory_xact_lock(73422002)");
+      await one(
+        tx,
+        `SELECT t.entity_id FROM enrichment_targets t
+        JOIN enrichment_entities e ON e.id=t.entity_id AND e.status='active'
+        JOIN enrichment_intake i ON i.scope=t.scope AND i.revision=t.revision AND i.release_id=t.release_id
+        JOIN enrichment_releases r ON r.id=t.release_id AND r.status='approved'
+        WHERE t.entity_id=$1 AND t.release_id=$2 AND t.generation=$3`,
+        [input.entityId, input.releaseId, input.generation],
+      );
+      for (const evidence of input.evidence) {
+        if (hash(json(evidence.text)) !== evidence.contentHash)
+          throw new Error("evidence text digest mismatch");
+        await one(
+          tx,
+          `SELECT e.id FROM enrichment_evidence e
+          JOIN enrichment_entity_evidence link ON link.evidence_id=e.id AND link.entity_id=$3
+          JOIN enrichment_artifacts a ON a.id=e.artifact_id AND a.purged_at IS NULL
+          WHERE e.id=$1 AND e.artifact_id=$2 AND e.excerpt=$4 AND (a.expires_at IS NULL OR a.expires_at>now())
+          AND NOT EXISTS(SELECT 1 FROM enrichment_artifact_withdrawals x WHERE x.artifact_id=a.id)`,
+          [evidence.id, evidence.artifactId, input.entityId, evidence.text],
+        );
+      }
+    });
+  }
   async findSuccessfulAnalysis(input: {
     entityId: string;
     purpose: string;
@@ -604,9 +639,7 @@ export class EnrichmentStore {
       ).rows[0] ?? null
     );
   }
-  async findAnalysis(
-    id: string,
-  ): Promise<{
+  async findAnalysis(id: string): Promise<{
     id: string;
     output: unknown;
     inputArtifactId: string;
@@ -645,6 +678,7 @@ export class EnrichmentStore {
     if (!actor || !reason)
       throw new Error("withdrawal actor and reason required");
     await this.db.transaction(async (tx) => {
+      await tx.query("SELECT pg_advisory_xact_lock(73422002)");
       await tx.query(
         "INSERT INTO enrichment_artifact_withdrawals(artifact_id,actor,reason) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",
         [artifactId, actor, reason],
@@ -669,6 +703,7 @@ export class EnrichmentStore {
     fields: { category?: string; tags?: string[] } = {},
   ): Promise<boolean> {
     return this.db.transaction(async (tx) => {
+      await tx.query("SELECT pg_advisory_xact_lock(73422002)");
       const run = (
         await tx.query<{
           entity_id: string;
@@ -682,7 +717,7 @@ export class EnrichmentStore {
       if (!run) return false;
       const target = (
         await tx.query(
-          "SELECT t.entity_id FROM enrichment_targets t JOIN enrichment_entities e ON e.id=t.entity_id JOIN enrichment_releases r ON r.id=t.release_id JOIN enrichment_intake i ON i.scope=t.scope AND i.release_id=t.release_id AND i.revision=t.revision WHERE t.entity_id=$1 AND t.release_id=$2 AND t.generation=$3 AND e.status='active' AND r.status='approved' FOR UPDATE OF t,e FOR SHARE OF i",
+          "SELECT t.entity_id FROM enrichment_targets t JOIN enrichment_entities e ON e.id=t.entity_id JOIN enrichment_releases r ON r.id=t.release_id JOIN enrichment_intake i ON i.scope=t.scope AND i.release_id=t.release_id AND i.revision=t.revision WHERE t.entity_id=$1 AND t.release_id=$2 AND t.generation=$3 AND e.status='active' AND r.status='approved' FOR UPDATE OF t,e FOR SHARE OF i,r",
           [run.entity_id, run.release_id, run.generation],
         )
       ).rows[0];
@@ -712,6 +747,7 @@ export class EnrichmentStore {
   async suppressEntity(entityId: string, reason: string) {
     if (!reason) throw new Error("reason required");
     await this.db.transaction(async (tx) => {
+      await tx.query("SELECT pg_advisory_xact_lock(73422002)");
       await one(
         tx,
         "UPDATE enrichment_entities SET status='suppressed' WHERE id=$1 RETURNING id",
@@ -732,6 +768,14 @@ export class EnrichmentStore {
         "INSERT INTO enrichment_publication_events(id,entity_id,reason) VALUES($1,$2,$3)",
         [randomUUID(), entityId, reason],
       );
+      const queue = await tx.query<{ exists: boolean }>(
+        "SELECT to_regclass('enrichment_founder_intake') IS NOT NULL AS exists",
+      );
+      if (queue.rows[0].exists)
+        await tx.query(
+          "UPDATE enrichment_founder_intake SET snapshot='{}'::jsonb WHERE founder_key=(SELECT legacy_key FROM enrichment_entities WHERE id=$1)",
+          [entityId],
+        );
     });
   }
   async saveEmbedding(input: {
@@ -772,10 +816,17 @@ export class EnrichmentStore {
     embeddingId: string,
     purpose: string,
   ) {
-    await one(
-      this.db,
-      "INSERT INTO enrichment_analysis_embeddings SELECT e.id,a.id,$3,$4 FROM enrichment_entities e JOIN enrichment_analysis_runs a ON a.entity_id=e.id WHERE e.id=$1 AND a.id=$2 AND e.status='active' AND a.status='succeeded' ON CONFLICT DO NOTHING RETURNING entity_id",
-      [entityId, analysisId, embeddingId, purpose],
-    );
+    await this.db.transaction(async (tx) => {
+      await tx.query("SELECT pg_advisory_xact_lock(73422002)");
+      await one(
+        tx,
+        "SELECT id FROM enrichment_eligible_analyses WHERE id=$1 AND entity_id=$2 AND status='succeeded'",
+        [analysisId, entityId],
+      );
+      await tx.query(
+        "INSERT INTO enrichment_analysis_embeddings VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING",
+        [entityId, analysisId, embeddingId, purpose],
+      );
+    });
   }
 }
