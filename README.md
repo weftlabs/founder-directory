@@ -46,10 +46,12 @@ Current per-request ceilings are **$0.01 for X search/profile requests** and
 can add cost; a scan is multiple requests. See [payment and failure semantics](docs/weft.md).
 
 The current collection searches latest intro phrases for solo founders,
-founders, builders, and indie hackers, then hydrates every first-person
-intro it has not stored yet. The five-minute job walks five pages per phrase
-and keeps going through retweet-only pages. `?bulk=1` walks 25 pages. It
-does not discard people already found on those pages.
+founders, builders, and indie hackers, then hydrates first-person intros it
+has not stored yet. Each cron tick is time-boxed (~240s) and capped (eight
+searches and 15 profile hydrations on the schedule; bulk is higher). Search
+cursors and leftover intros persist so the next tick resumes history and
+still imports everyone already found. It keeps walking through retweet-only
+pages. Per-request Weft caps stay $0.01 / $0.002.
 The product is not limited to one template. It does
 not verify identities, guarantee location accuracy,
 collect private accounts, message founders or automate outreach. Signal labels

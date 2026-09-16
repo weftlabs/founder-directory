@@ -23,10 +23,14 @@ this is not a durable one-charge guarantee. Known payment holds or charges must
 not be replayed. Policy/auth/budget refusals and ambiguous transport failures stop.
 An HTTP 200 with a pending receipt can be usable data with settlement unfinished.
 
-A cap limits one request, not the whole scan. Every new intro found on the
-scanned pages is hydrated. The scheduled scan walks five latest pages per
-phrase; bulk walks 25. Retweet-only pages do not stop pagination. Budget for
-every eligible attempt and account for both paid and held funds. Never raise limits automatically after
+A cap limits one request, not the whole scan. Every new intro found is
+imported; a tick may persist leftover handles and finish them on the next
+run so Vercel’s 300s limit cannot drop people. The scheduled scan spends at
+most eight search requests and 15 profile hydrations (bulk: 16 and 30),
+stops before ~240s, and resumes each phrase from a stored cursor instead of
+restarting at latest page 1. Retweet-only pages do not stop pagination.
+Per-request Weft caps are unchanged. Budget for every eligible attempt and
+account for both paid and held funds. Never raise limits automatically after
 a refusal. The Weft account policy is the final wallet-level spending control.
 
 Do not surface provider exceptions verbatim in the public app. Store only the

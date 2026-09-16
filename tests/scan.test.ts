@@ -1,11 +1,22 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { Founder } from "../lib/model";
 import {
+  BULK_MAX_HYDRATIONS,
+  BULK_MAX_SEARCHES,
   BULK_SCAN_PAGES,
+  parseCursors,
+  parsePendingIntros,
+  runScan,
+  SCAN_DEADLINE_MS,
+  SCHEDULED_MAX_HYDRATIONS,
+  SCHEDULED_MAX_SEARCHES,
   SCHEDULED_SCAN_PAGES,
+  scanLimits,
   unknownHits,
+  type ScanStore,
 } from "../lib/scan";
-import type { TrendHit } from "../lib/x";
+import { TREND_PHRASES, type TrendHit } from "../lib/x";
 
 function hit(handle: string): TrendHit {
   return {
@@ -14,6 +25,65 @@ function hit(handle: string): TrendHit {
     text: `I'm a solo founder ${handle}`,
     tweetId: handle,
   };
+}
+
+function founderFor(handle: string): Founder {
+  return {
+    handle,
+    name: handle,
+    bio: null,
+    website: null,
+    github: null,
+    linkedin: null,
+    city: null,
+    country: null,
+    location: null,
+    avatarUrl: null,
+    category: "Unclear",
+    vibe: { score: 0, label: "Weak founder signal", signals: [] },
+    introText: `I'm a solo founder ${handle}`,
+    introUrl: null,
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+}
+
+function memoryStore(init?: {
+  pending?: TrendHit[];
+  cursors?: Record<string, string | null>;
+  handles?: string[];
+}) {
+  const founders = new Set(
+    (init?.handles ?? []).map((value) => value.toLowerCase()),
+  );
+  const record = {
+    touches: 0,
+    cursors: { ...(init?.cursors ?? {}) },
+    pending: [...(init?.pending ?? [])],
+    added: [] as string[],
+  };
+  const store: ScanStore = {
+    async existingHandles() {
+      return new Set(founders);
+    },
+    async upsertFounder(founder) {
+      founders.add(founder.handle.toLowerCase());
+      record.added.push(founder.handle);
+    },
+    async touchScan() {
+      record.touches += 1;
+    },
+    async loadProgress() {
+      return {
+        cursors: { ...record.cursors },
+        pending: [...record.pending],
+      };
+    },
+    async saveProgress(progress) {
+      record.cursors = { ...progress.cursors };
+      record.pending = [...progress.pending];
+    },
+  };
+  return { record, store };
 }
 
 test("imports every unknown intro instead of dropping a quota", () => {
@@ -37,9 +107,213 @@ test("imports every unknown intro instead of dropping a quota", () => {
   );
 });
 
-test("scheduled scans look past the first latest page", () => {
+test("scheduled ticks cap Weft work below one phrase times five pages", () => {
   assert.equal(SCHEDULED_SCAN_PAGES, 5);
   assert.equal(BULK_SCAN_PAGES, 25);
-  assert.ok(SCHEDULED_SCAN_PAGES > 1);
-  assert.ok(BULK_SCAN_PAGES > SCHEDULED_SCAN_PAGES);
+  assert.equal(SCHEDULED_MAX_SEARCHES, 8);
+  assert.equal(SCHEDULED_MAX_HYDRATIONS, 15);
+  assert.equal(SCAN_DEADLINE_MS, 240_000);
+  assert.ok(
+    SCHEDULED_MAX_SEARCHES < TREND_PHRASES.length * SCHEDULED_SCAN_PAGES,
+  );
+  assert.ok(scanLimits(true).maxSearches > scanLimits(false).maxSearches);
+  assert.equal(BULK_MAX_SEARCHES, 16);
+  assert.equal(BULK_MAX_HYDRATIONS, 30);
+  assert.ok(BULK_MAX_SEARCHES < TREND_PHRASES.length * BULK_SCAN_PAGES);
+});
+
+test("malformed persisted scan progress fails closed", () => {
+  assert.deepEqual(parseCursors(null), {});
+  assert.deepEqual(parseCursors("nope"), {});
+  assert.deepEqual(parseCursors({ a: 1, b: "c2", d: null }), {
+    b: "c2",
+    d: null,
+  });
+  assert.deepEqual(parsePendingIntros(null), []);
+  assert.deepEqual(parsePendingIntros([{ handle: "alice" }]), []);
+  assert.deepEqual(
+    parsePendingIntros([{ handle: " alice ", text: "hi", tweetId: "1" }]),
+    [{ handle: "alice", name: "alice", text: "hi", tweetId: "1" }],
+  );
+});
+
+test("search cap stops a tick and still calls touchScan when added is 0", async () => {
+  const { record, store } = memoryStore({ handles: ["alice"] });
+  let searches = 0;
+  const result = await runScan({
+    store,
+    maxSearches: 2,
+    maxHydrations: 15,
+    maxPages: 5,
+    now: () => 0,
+    deadlineMs: SCAN_DEADLINE_MS,
+    async searchIntroPage(_cursor, phrase) {
+      searches += 1;
+      return {
+        hits: phrase === TREND_PHRASES[0] ? [hit("alice")] : [],
+        cursor: `next-${searches}`,
+      };
+    },
+    async fetchProfile() {
+      assert.fail("known handles must not be hydrated");
+    },
+    async normalizePlaces() {
+      return new Map();
+    },
+  });
+  assert.equal(searches, 2);
+  assert.equal(result.added, 0);
+  assert.equal(result.searches, 2);
+  assert.equal(result.stopped, "search-cap");
+  assert.equal(record.touches, 1);
+  assert.equal(record.added.length, 0);
+});
+
+test("deadline stops further Weft work before the Vercel cap", async () => {
+  const { record, store } = memoryStore();
+  let t = 0;
+  let searches = 0;
+  const result = await runScan({
+    store,
+    maxSearches: 40,
+    maxHydrations: 40,
+    maxPages: 25,
+    now: () => t,
+    deadlineMs: SCAN_DEADLINE_MS,
+    async searchIntroPage() {
+      searches += 1;
+      t += 100_000;
+      return { hits: [hit(`user${searches}`)], cursor: `c${searches}` };
+    },
+    async fetchProfile(handle) {
+      return founderFor(handle);
+    },
+    async normalizePlaces() {
+      return new Map();
+    },
+  });
+  assert.equal(searches, 3);
+  assert.equal(result.stopped, "deadline");
+  assert.ok(t <= SCAN_DEADLINE_MS + 100_000);
+  assert.equal(record.touches, 1);
+  assert.ok(record.pending.length > 0);
+});
+
+test("the next tick resumes each phrase from its stored cursor", async () => {
+  const { record, store } = memoryStore();
+  const seen: Array<{ cursor?: string; phrase: string }> = [];
+  await runScan({
+    store,
+    maxSearches: 1,
+    maxHydrations: 0,
+    maxPages: 5,
+    now: () => 0,
+    async searchIntroPage(cursor, phrase) {
+      seen.push({ cursor, phrase });
+      return { hits: [hit("alice")], cursor: "page-2" };
+    },
+    async fetchProfile() {
+      return founderFor("unused");
+    },
+    async normalizePlaces() {
+      return new Map();
+    },
+  });
+  assert.equal(record.cursors[TREND_PHRASES[0]], "page-2");
+  await runScan({
+    store,
+    maxSearches: 1,
+    maxHydrations: 0,
+    maxPages: 5,
+    now: () => 0,
+    async searchIntroPage(cursor, phrase) {
+      seen.push({ cursor, phrase });
+      return { hits: [hit("bob")], cursor: "page-3" };
+    },
+    async fetchProfile() {
+      return founderFor("unused");
+    },
+    async normalizePlaces() {
+      return new Map();
+    },
+  });
+  assert.deepEqual(seen, [
+    { cursor: undefined, phrase: TREND_PHRASES[0] },
+    { cursor: "page-2", phrase: TREND_PHRASES[0] },
+  ]);
+  assert.equal(record.cursors[TREND_PHRASES[0]], "page-3");
+});
+
+test("unhydrated intros survive to the next runScan and are hydrated first", async () => {
+  const { record, store } = memoryStore();
+  const first = await runScan({
+    store,
+    maxSearches: 1,
+    maxHydrations: 1,
+    maxPages: 5,
+    now: () => 0,
+    async searchIntroPage() {
+      return { hits: [hit("alice"), hit("bob"), hit("carol")], cursor: "p2" };
+    },
+    async fetchProfile(handle) {
+      return founderFor(handle);
+    },
+    async normalizePlaces() {
+      return new Map();
+    },
+  });
+  assert.equal(first.added, 1);
+  assert.equal(record.added[0], "alice");
+  assert.deepEqual(
+    record.pending.map((row) => row.handle),
+    ["bob", "carol"],
+  );
+
+  let searched = 0;
+  const hydrated: string[] = [];
+  const second = await runScan({
+    store,
+    maxSearches: 0,
+    maxHydrations: 2,
+    maxPages: 5,
+    now: () => 0,
+    async searchIntroPage() {
+      searched += 1;
+      return { hits: [], cursor: null };
+    },
+    async fetchProfile(handle) {
+      hydrated.push(handle);
+      return founderFor(handle);
+    },
+    async normalizePlaces() {
+      return new Map();
+    },
+  });
+  assert.equal(searched, 0);
+  assert.deepEqual(hydrated, ["bob", "carol"]);
+  assert.equal(second.added, 2);
+  assert.deepEqual(record.pending, []);
+  assert.equal(record.touches, 2);
+});
+
+test("retweet-only pages keep the cursor so history walking continues", async () => {
+  const { record, store } = memoryStore();
+  await runScan({
+    store,
+    maxSearches: 1,
+    maxHydrations: 1,
+    maxPages: 5,
+    now: () => 0,
+    async searchIntroPage() {
+      return { hits: [], cursor: "after-rts" };
+    },
+    async fetchProfile() {
+      return founderFor("unused");
+    },
+    async normalizePlaces() {
+      return new Map();
+    },
+  });
+  assert.equal(record.cursors[TREND_PHRASES[0]], "after-rts");
+  assert.equal(record.touches, 1);
 });

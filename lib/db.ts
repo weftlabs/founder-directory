@@ -36,6 +36,8 @@ export async function ensureSchema() {
     id INTEGER PRIMARY KEY DEFAULT 1,
     last_scan_at TIMESTAMPTZ
   )`;
+  await db`ALTER TABLE scan_meta ADD COLUMN IF NOT EXISTS search_cursors JSONB NOT NULL DEFAULT '{}'::jsonb`;
+  await db`ALTER TABLE scan_meta ADD COLUMN IF NOT EXISTS pending_intros JSONB NOT NULL DEFAULT '[]'::jsonb`;
   await db`INSERT INTO scan_meta (id) VALUES (1) ON CONFLICT (id) DO NOTHING`;
   await db`CREATE TABLE IF NOT EXISTS presence (
     session_id TEXT PRIMARY KEY,
@@ -169,6 +171,34 @@ export async function updateFounderPlace(
 export async function touchScan() {
   await ensureSchema();
   await sql()`UPDATE scan_meta SET last_scan_at = now() WHERE id = 1`;
+}
+
+export async function loadScanProgress(): Promise<{
+  searchCursors: unknown;
+  pendingIntros: unknown;
+}> {
+  await ensureSchema();
+  const rows = (await sql()`
+    SELECT search_cursors, pending_intros FROM scan_meta WHERE id = 1
+  `) as { search_cursors: unknown; pending_intros: unknown }[];
+  return {
+    searchCursors: rows[0]?.search_cursors ?? {},
+    pendingIntros: rows[0]?.pending_intros ?? [],
+  };
+}
+
+export async function saveScanProgress(progress: {
+  searchCursors: unknown;
+  pendingIntros: unknown;
+}) {
+  await ensureSchema();
+  await sql()`
+    UPDATE scan_meta
+    SET
+      search_cursors = ${JSON.stringify(progress.searchCursors)}::jsonb,
+      pending_intros = ${JSON.stringify(progress.pendingIntros)}::jsonb
+    WHERE id = 1
+  `;
 }
 
 export async function touchPresence(sessionId: string) {
