@@ -523,6 +523,26 @@ main.dir {
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 12px;
 }
+.load-more {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-top: 24px;
+}
+.load-more button {
+  font: inherit;
+  color: #f4f1e8;
+  background: transparent;
+  border: 1px solid #2c2e28;
+  border-radius: 999px;
+  padding: 8px 16px;
+  cursor: pointer;
+}
+.load-more button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
 .card {
   text-align: left;
   background: #161714;

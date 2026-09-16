@@ -1,5 +1,13 @@
 import "./assert-server";
 import { neon } from "@neondatabase/serverless";
+import type { DirectoryFilters, LocationOption } from "./directory-filters";
+import {
+  DIRECTORY_PAGE_SIZE,
+  decodeDirectoryCursor,
+  emptyDirectoryPage,
+  encodeDirectoryCursor,
+  type DirectoryPage,
+} from "./directory-page";
 import type { Founder, VibeCheck } from "./model";
 import { isPresenceSessionId } from "./presence";
 
@@ -44,6 +52,8 @@ export async function ensureSchema() {
     session_id TEXT PRIMARY KEY,
     seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`;
+  await db`CREATE INDEX IF NOT EXISTS founders_updated_at_handle_idx
+    ON founders (updated_at DESC, handle DESC)`;
 }
 
 type Row = {
@@ -103,6 +113,158 @@ export async function listFounders(): Promise<Founder[]> {
     SELECT * FROM founders ORDER BY updated_at DESC
   `) as Row[];
   return rows.map(toFounder);
+}
+
+type Bind = { values: unknown[]; ph: (value: unknown) => string };
+
+function bind(): Bind {
+  const values: unknown[] = [];
+  return {
+    values,
+    ph(value: unknown) {
+      values.push(value);
+      return `$${values.length}`;
+    },
+  };
+}
+
+function searchClause(q: string, ph: Bind["ph"]): string | null {
+  const needle = q.trim().toLowerCase();
+  if (!needle) return null;
+  return `POSITION(${ph(needle)} IN LOWER(CONCAT_WS(' ', name, handle, COALESCE(bio, ''), COALESCE(city, ''), COALESCE(country, ''), COALESCE(location, ''), category, CASE WHEN category = 'Unclear' THEN 'Uncategorized' ELSE '' END))) > 0`;
+}
+
+function filterClauses(
+  filters: DirectoryFilters,
+  ph: Bind["ph"],
+  scope: "rows" | "facets" | "cities",
+): string[] {
+  const clauses: string[] = [];
+  const search = searchClause(filters.q, ph);
+  if (search) clauses.push(search);
+  if (filters.category) clauses.push(`category = ${ph(filters.category)}`);
+  if (scope === "rows") {
+    if (filters.country) clauses.push(`country = ${ph(filters.country)}`);
+    if (filters.city) clauses.push(`city = ${ph(filters.city)}`);
+  }
+  if (scope === "cities" && filters.country)
+    clauses.push(`country = ${ph(filters.country)}`);
+  return clauses;
+}
+
+function whereSql(clauses: string[]): string {
+  return clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+}
+
+async function query<T>(text: string, values: unknown[] = []): Promise<T> {
+  return (await sql().query(text, values)) as unknown as T;
+}
+
+async function inferCountry(city: string, country: string): Promise<string> {
+  if (!city || country) return country;
+  const rows = await query<{ country: string | null }[]>(
+    `SELECT DISTINCT country FROM founders WHERE city = $1`,
+    [city],
+  );
+  const countries = new Set(rows.map((row) => row.country));
+  return countries.size === 1 ? ([...countries][0] ?? "") : country;
+}
+
+export async function listDirectoryPage(
+  input: DirectoryFilters & { cursor?: string | null },
+): Promise<DirectoryPage> {
+  if (input.cursor && !decodeDirectoryCursor(input.cursor))
+    return emptyDirectoryPage();
+  await ensureSchema();
+  const filters: DirectoryFilters = {
+    q: input.q ?? "",
+    category: input.category ?? "",
+    country: await inferCountry(input.city ?? "", input.country ?? ""),
+    city: input.city ?? "",
+  };
+  const cursor = input.cursor ? decodeDirectoryCursor(input.cursor) : null;
+  const list = bind();
+  const listWhere = filterClauses(filters, list.ph, "rows");
+  if (cursor) {
+    listWhere.push(
+      `(updated_at, handle) < (${list.ph(cursor.updatedAt)}::timestamptz, ${list.ph(cursor.handle)})`,
+    );
+  }
+  const count = bind();
+  const countries = bind();
+  const cities = bind();
+  const [listRows, countRows, categoryRows, countryRows, cityRows] =
+    await Promise.all([
+      query<Row[]>(
+        `SELECT * FROM founders ${whereSql(listWhere)} ORDER BY updated_at DESC, handle DESC LIMIT ${DIRECTORY_PAGE_SIZE + 1}`,
+        list.values,
+      ),
+      query<{ n: number }[]>(
+        `SELECT COUNT(*)::int AS n FROM founders ${whereSql(filterClauses(filters, count.ph, "rows"))}`,
+        count.values,
+      ),
+      query<{ category: string }[]>(`SELECT DISTINCT category FROM founders`),
+      query<{ value: string; label: string; count: number }[]>(
+        `SELECT country AS value, country AS label, COUNT(*)::int AS count
+       FROM founders
+       ${whereSql([
+         ...filterClauses(filters, countries.ph, "facets"),
+         `country IS NOT NULL`,
+         `country <> ''`,
+       ])}
+       GROUP BY country`,
+        countries.values,
+      ),
+      query<{ value: string; country: string; count: number }[]>(
+        `SELECT city AS value, COALESCE(country, '') AS country, COUNT(*)::int AS count
+       FROM founders
+       ${whereSql([
+         ...filterClauses(filters, cities.ph, "cities"),
+         `city IS NOT NULL`,
+         `city <> ''`,
+       ])}
+       GROUP BY city, country`,
+        cities.values,
+      ),
+    ]);
+  const hasMore = listRows.length > DIRECTORY_PAGE_SIZE;
+  const pageRows = hasMore ? listRows.slice(0, DIRECTORY_PAGE_SIZE) : listRows;
+  const last = pageRows[pageRows.length - 1];
+  const nextCursor =
+    hasMore && last
+      ? encodeDirectoryCursor({
+          updatedAt:
+            last.updated_at instanceof Date
+              ? last.updated_at.toISOString()
+              : (last.updated_at ?? ""),
+          handle: last.handle,
+        })
+      : null;
+  const sort = (options: LocationOption[]) =>
+    options.sort((a, b) => a.label.localeCompare(b.label));
+  return {
+    founders: pageRows.map(toFounder),
+    total: countRows[0]?.n ?? 0,
+    nextCursor,
+    categories: [...new Set(categoryRows.map((row) => row.category))].sort(
+      (a, b) => a.localeCompare(b),
+    ),
+    countries: sort(
+      countryRows.map((row) => ({
+        value: row.value,
+        label: row.label,
+        count: row.count,
+      })),
+    ),
+    cities: sort(
+      cityRows.map((row) => ({
+        value: row.value,
+        country: row.country,
+        label: `${row.value}, ${row.country || "Country unknown"}`,
+        count: row.count,
+      })),
+    ),
+  };
 }
 
 export async function getFounder(handle: string): Promise<Founder | null> {

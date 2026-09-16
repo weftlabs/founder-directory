@@ -16,15 +16,15 @@ export const emptyFilters: DirectoryFilters = {
 
 export function readFilters(
   search: string,
-  founders: Founder[],
+  founders?: Founder[],
 ): DirectoryFilters {
   const params = new URLSearchParams(search);
   const filters = { ...emptyFilters };
   for (const key of Object.keys(filters) as (keyof DirectoryFilters)[]) {
     filters[key] = params.get(key) ?? "";
   }
-  // A city-only link is unambiguous only when it belongs to one country.
-  if (filters.city && !filters.country) {
+  // Infer only from a complete list. A paginated page would guess wrongly.
+  if (filters.city && !filters.country && founders) {
     const countries = new Set(
       founders.filter((f) => f.city === filters.city).map((f) => f.country),
     );

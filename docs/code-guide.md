@@ -5,17 +5,20 @@ platform architecture specification.
 
 ```text
 app/                  Next.js routes and presentation
-  directory.tsx       browser-side search and filter state
+  directory.tsx       browser-side search; live index pages, in-memory preview
   site-header.tsx     shared product navigation
   analytics.tsx       optional PostHog; $pageview/$pageleave on App Router nav
   online-now.tsx      Neon heartbeat for the online chip (~20s ping, 45s window)
+  api/founders/       public directory pages (filters + keyset cursor); no Weft
   api/cron/scan/      authenticated collection entry point
   api/presence/       anonymous session heartbeat; no Weft
 lib/
   model.ts            pure founder types and heuristics
+  directory-filters.ts  URL filter parsing and in-memory matching
+  directory-page.ts   cursor encode/decode and empty page JSON
   presence.ts         anonymous session-id shape for the online chip
   scan.ts             collection workflow
-  db.ts               Neon persistence
+  db.ts               Neon persistence, including listDirectoryPage
   x.ts                X search/profile adapter through Weft
   place.ts            location normalization through Weft
   weft.ts             server-side Weft client boundary
@@ -26,7 +29,12 @@ tests/                synthetic unit contracts and browser smoke
 
 ## Default data flow
 
-A visitor reads stored founders from Neon. Client-side filters never call Weft.
+A visitor reads stored founders from Neon. The homepage SSRs one page of 48
+and `GET /api/founders` serves further pages and filter refetches. Pagination
+is a keyset on `(updated_at DESC, handle DESC)`. Search and location filters
+run in SQL and match the in-memory helpers in `directory-filters.ts`.
+`/filter-preview` still passes a synthetic `founders` list so Playwright can
+exercise chips without a database. Client filters never call Weft.
 An authenticated scheduled request calls `runScan`: discover intros, ignore
 known handles, hydrate new handles, normalize locations, then persist. Each
 tick is bounded so it can return JSON and record `last_scan_at` inside

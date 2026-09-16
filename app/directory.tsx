@@ -1,6 +1,14 @@
 "use client";
 
-import { useMemo, useRef, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import Link from "next/link";
 import { FilterControls, categoryLabel } from "./filter-controls";
 import {
   emptyFilters,
@@ -10,6 +18,8 @@ import {
   writeFilters,
   type DirectoryFilters,
 } from "@/lib/directory-filters";
+import { emptyDirectoryPage, type DirectoryPage } from "@/lib/directory-page";
+import type { Founder } from "@/lib/model";
 
 function subscribe(callback: () => void) {
   window.addEventListener("popstate", callback);
@@ -20,36 +30,52 @@ function subscribe(callback: () => void) {
   };
 }
 const getSearch = () => window.location.search;
-const getServerSearch = () => "";
-import Link from "next/link";
-import type { Founder } from "@/lib/model";
 
 export function Directory({
   founders,
   scanned,
+  initialPage,
+  initialSearch = "",
 }: {
-  founders: Founder[];
+  founders?: Founder[];
   scanned: string;
+  initialPage?: DirectoryPage;
+  initialSearch?: string;
 }) {
-  const search = useSyncExternalStore(subscribe, getSearch, getServerSearch);
+  const preview = founders !== undefined;
+  const search = useSyncExternalStore(
+    subscribe,
+    getSearch,
+    () => initialSearch,
+  );
   const filters = useMemo(
-    () => readFilters(search, founders),
-    [search, founders],
+    () => readFilters(search, preview ? founders : undefined),
+    [search, founders, preview],
   );
   const dialog = useRef<HTMLDialogElement>(null);
   const filterTrigger = useRef<HTMLButtonElement>(null);
-  const categories = useMemo(
-    () => unique(founders.map((f) => f.category)),
+  const sentinel = useRef<HTMLDivElement>(null);
+  const fetchedKey = useRef(initialSearch.replace(/^\?/, ""));
+  const [live, setLive] = useState<DirectoryPage>(
+    initialPage ?? emptyDirectoryPage(),
+  );
+  const [loadingMore, setLoadingMore] = useState(false);
+  const loadMoreInFlight = useRef(false);
+  const previewCategories = useMemo(
+    () => unique((founders ?? []).map((f) => f.category)),
     [founders],
   );
-  const { countries, cities } = useMemo(
-    () => locationOptions(founders, filters),
+  const previewLocations = useMemo(
+    () => locationOptions(founders ?? [], filters),
     [founders, filters],
   );
+  const categories = preview ? previewCategories : live.categories;
+  const countries = preview ? previewLocations.countries : live.countries;
+  const cities = preview ? previewLocations.cities : live.cities;
   const activeCount = Object.values(filters).filter(Boolean).length;
   function update(changes: Partial<DirectoryFilters>, replace = false) {
     const next = {
-      ...readFilters(window.location.search, founders),
+      ...readFilters(window.location.search, preview ? founders : undefined),
       ...changes,
     };
     const params = writeFilters(window.location.search, next);
@@ -66,14 +92,98 @@ export function Directory({
     );
     window.dispatchEvent(new Event("directory-filters"));
   }
-  const rows = founders.filter(
-    (f) =>
-      (!filters.category || f.category === filters.category) &&
-      (!filters.country || f.country === filters.country) &&
-      (!filters.city || f.city === filters.city) &&
-      matchesSearch(f, filters.q),
-  );
+  const previewRows = founders
+    ? founders.filter(
+        (f) =>
+          (!filters.category || f.category === filters.category) &&
+          (!filters.country || f.country === filters.country) &&
+          (!filters.city || f.city === filters.city) &&
+          matchesSearch(f, filters.q),
+      )
+    : [];
+  const rows = preview ? previewRows : live.founders;
+  const total = preview ? previewRows.length : live.total;
   const controls = { filters, categories, countries, cities, onChange: update };
+
+  const loadMore = useCallback(async () => {
+    if (preview || !live.nextCursor || loadMoreInFlight.current) return;
+    const key = writeFilters("", filters);
+    const cursor = live.nextCursor;
+    loadMoreInFlight.current = true;
+    setLoadingMore(true);
+    try {
+      const query = `${key ? `${key}&` : ""}cursor=${encodeURIComponent(cursor)}`;
+      const response = await fetch(`/api/founders?${query}`);
+      if (!response.ok) return;
+      const page = (await response.json()) as DirectoryPage;
+      setLive((current) => {
+        if (fetchedKey.current !== key) return current;
+        return {
+          ...page,
+          founders: [...current.founders, ...page.founders],
+          total: current.total,
+          categories: current.categories,
+          countries: current.countries,
+          cities: current.cities,
+        };
+      });
+    } catch {
+      // Keep the rows already on screen.
+    } finally {
+      loadMoreInFlight.current = false;
+      setLoadingMore(false);
+    }
+  }, [filters, live.nextCursor, preview]);
+
+  useEffect(() => {
+    if (preview) return;
+    const key = writeFilters("", filters);
+    if (key === fetchedKey.current) return;
+    const previous = new URLSearchParams(fetchedKey.current);
+    const qOnly =
+      filters.q !== (previous.get("q") ?? "") &&
+      filters.category === (previous.get("category") ?? "") &&
+      filters.country === (previous.get("country") ?? "") &&
+      filters.city === (previous.get("city") ?? "");
+    const controller = new AbortController();
+    const timer = window.setTimeout(
+      () => {
+        fetch(`/api/founders${key ? `?${key}` : ""}`, {
+          signal: controller.signal,
+        })
+          .then(async (response) => {
+            if (!response.ok) throw new Error("directory page failed");
+            return (await response.json()) as DirectoryPage;
+          })
+          .then((page) => {
+            fetchedKey.current = key;
+            setLive(page);
+          })
+          .catch((error: unknown) => {
+            if (controller.signal.aborted) return;
+            if (error instanceof DOMException && error.name === "AbortError")
+              return;
+            fetchedKey.current = key;
+            setLive(emptyDirectoryPage());
+          });
+      },
+      qOnly ? 200 : 0,
+    );
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [filters, preview]);
+
+  useEffect(() => {
+    if (preview || !live.nextCursor || !sentinel.current) return;
+    const node = sentinel.current;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) void loadMore();
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [loadMore, live.nextCursor, preview, rows.length]);
 
   return (
     <main className="dir">
@@ -91,7 +201,7 @@ export function Directory({
           placeholder="Search name, handle, city, or country"
         />
         <span className="count">
-          {rows.length} founders
+          {total} founders
           <span className="updated">
             Updated <b>{scanned}</b>
           </span>
@@ -144,7 +254,7 @@ export function Directory({
             type="button"
             onClick={() => dialog.current?.close()}
           >
-            Show {rows.length} {rows.length === 1 ? "result" : "results"}
+            Show {total} {total === 1 ? "result" : "results"}
           </button>
         </div>
       </dialog>
@@ -186,14 +296,19 @@ export function Directory({
         </div>
       )}
       <p className="sr-only" role="status" aria-live="polite">
-        {rows.length} founders found
+        {total} founders found
       </p>
       {rows.length === 0 ? (
         <p className="empty">No one matches that filter.</p>
       ) : (
         <div className="grid">
           {rows.map((p) => (
-            <Link className="card" href={`/u/${p.handle}`} key={p.handle}>
+            <Link
+              className="card"
+              href={`/u/${p.handle}`}
+              key={p.handle}
+              prefetch={false}
+            >
               <div className="card-top">
                 {p.avatarUrl ? (
                   // Remote avatars use their intrinsic size, without an image proxy.
@@ -230,6 +345,18 @@ export function Directory({
           ))}
         </div>
       )}
+      {!preview && live.nextCursor ? (
+        <div className="load-more">
+          <button
+            type="button"
+            onClick={() => void loadMore()}
+            disabled={loadingMore}
+          >
+            {loadingMore ? "Loading…" : "Load more"}
+          </button>
+          <div ref={sentinel} aria-hidden="true" />
+        </div>
+      ) : null}
     </main>
   );
 }
