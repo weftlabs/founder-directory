@@ -33,6 +33,8 @@ A visitor reads stored founders from Neon. The homepage SSRs one page of 48
 and `GET /api/founders` serves further pages and filter refetches. Pagination
 is a keyset on `(updated_at DESC, handle DESC)`. Search and location filters
 run in SQL and match the in-memory helpers in `directory-filters.ts`.
+The client prefetches the next page as soon as a cursor exists and appends it
+about 1200px before the list end, so scrolling does not wait on the network.
 `/filter-preview` still passes a synthetic `founders` list so Playwright can
 exercise chips without a database. Client filters never call Weft.
 An authenticated scheduled request calls `runScan`: discover intros, ignore
