@@ -206,9 +206,18 @@ export function compatibleEmbeddings(
 }
 
 export interface AnalysisStore {
-  findAnalysis(
-    id: string,
-  ): Promise<{
+  assertAnalysisInputs(input: {
+    entityId: string;
+    releaseId: string;
+    generation: number;
+    evidence: {
+      id: string;
+      artifactId: string;
+      contentHash: string;
+      text: string;
+    }[];
+  }): Promise<void>;
+  findAnalysis(id: string): Promise<{
     id: string;
     output: unknown;
     inputArtifactId: string;
@@ -300,6 +309,21 @@ export async function runAnalysis(
   options: { rerunId?: string } = {},
 ) {
   const prepared = prepareAnalysis(input);
+  if (prepared.context.length || prepared.upstreamOutputs.length)
+    throw new Error("unverified_context_not_supported");
+  await store.assertAnalysisInputs({
+    entityId: prepared.entityId,
+    releaseId: prepared.releaseId,
+    generation: prepared.generation,
+    evidence: prepared.evidence.map(
+      ({ id, artifactId, contentHash, text }) => ({
+        id,
+        artifactId,
+        contentHash,
+        text,
+      }),
+    ),
+  });
   const key = {
     entityId: input.entityId,
     purpose: input.recipe.purpose,

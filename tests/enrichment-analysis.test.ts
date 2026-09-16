@@ -156,6 +156,17 @@ test("the runner saves exact input before dispatch, preserves failed response an
   const artifacts = new Map<string, Uint8Array>();
   const runs: Parameters<AnalysisStore["saveAnalysis"]>[0][] = [];
   const store: AnalysisStore = {
+    async assertAnalysisInputs(value) {
+      assert.equal(value.entityId, input.entityId);
+      assert.deepEqual(value.evidence, [
+        {
+          id: evidence.id,
+          artifactId: evidence.artifactId,
+          contentHash: evidence.contentHash,
+          text: evidence.text,
+        },
+      ]);
+    },
     async findAnalysis(id) {
       return runs.find((run) => run.id === id) ?? null;
     },
@@ -238,6 +249,97 @@ test("the runner saves exact input before dispatch, preserves failed response an
     replayAnalysis(store, "missing", execute),
     /missing_input/,
   );
+});
+
+test("forged evidence and suppressed entities fail before cache access or dispatch", async () => {
+  let calls = 0;
+  let suppressed = false;
+  const unreachable = async (): Promise<never> => {
+    calls++;
+    throw new Error("untrusted input reached I/O");
+  };
+  const store: AnalysisStore = {
+    async assertAnalysisInputs(value) {
+      if (suppressed) throw new Error("entity_suppressed");
+      if (value.evidence.some((row) => row.text !== evidence.text))
+        throw new Error("evidence_content_mismatch");
+    },
+    findAnalysis: unreachable,
+    findSuccessfulAnalysis: unreachable,
+    putArtifact: unreachable,
+    getArtifact: unreachable,
+    saveAnalysis: unreachable,
+  };
+  const text = "Forged data with a matching caller-supplied hash";
+  await assert.rejects(
+    runAnalysis(
+      store,
+      {
+        ...input,
+        evidence: [{ ...evidence, text, contentHash: stableDigest(text) }],
+      },
+      unreachable,
+    ),
+    /evidence_content_mismatch/,
+  );
+  suppressed = true;
+  await assert.rejects(
+    runAnalysis(store, input, unreachable),
+    /entity_suppressed/,
+  );
+  assert.equal(calls, 0);
+});
+
+test("unverified context and upstream output are rejected before any work", async () => {
+  let calls = 0;
+  const unreachable = async (): Promise<never> => {
+    calls++;
+    throw new Error("unverified input reached I/O");
+  };
+  const store: AnalysisStore = {
+    assertAnalysisInputs: unreachable,
+    findAnalysis: unreachable,
+    findSuccessfulAnalysis: unreachable,
+    putArtifact: unreachable,
+    getArtifact: unreachable,
+    saveAnalysis: unreachable,
+  };
+  await assert.rejects(
+    runAnalysis(
+      store,
+      {
+        ...input,
+        context: [
+          {
+            id: "context1",
+            text: "unsaved",
+            contentHash: stableDigest("unsaved"),
+            rank: 0,
+          },
+        ],
+      },
+      unreachable,
+    ),
+    /unverified_context_not_supported/,
+  );
+  await assert.rejects(
+    runAnalysis(
+      store,
+      {
+        ...input,
+        upstreamOutputs: [
+          {
+            id: "output1",
+            output: { description: "unsaved" },
+            contentHash: stableDigest({ description: "unsaved" }),
+          },
+        ],
+      },
+      unreachable,
+    ),
+    /unverified_context_not_supported/,
+  );
+  assert.equal(calls, 0);
 });
 
 test("default recipes require cited product and DNA fields without numeric ability scores", () => {
