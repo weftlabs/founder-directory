@@ -47,8 +47,9 @@ can add cost; a scan is multiple requests. See [payment and failure semantics](d
 
 The current collection searches latest intro phrases for solo founders,
 founders, builders, and indie hackers, then hydrates every first-person
-intro it has not stored yet. Search page count bounds how far a tick looks;
-it does not discard people already found on those pages.
+intro it has not stored yet. The five-minute job walks five pages per phrase
+and keeps going through retweet-only pages. `?bulk=1` walks 25 pages. It
+does not discard people already found on those pages.
 The product is not limited to one template. It does
 not verify identities, guarantee location accuracy,
 collect private accounts, message founders or automate outreach. Signal labels

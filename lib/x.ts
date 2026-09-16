@@ -148,25 +148,24 @@ export async function searchIntroPage(
   };
 }
 
-export async function searchIntroPages(maxPages: number): Promise<TrendHit[]> {
+export async function searchIntroPages(
+  maxPages: number,
+  dependencies: WeftDependencies = defaultWeftDependencies,
+): Promise<TrendHit[]> {
   const seen = new Set<string>();
   const out: TrendHit[] = [];
   for (const phrase of TREND_PHRASES) {
     let cursor: string | undefined;
     for (let page = 0; page < maxPages; page += 1) {
-      const result = await searchIntroPage(
-        cursor,
-        defaultWeftDependencies,
-        phrase,
-      );
+      const result = await searchIntroPage(cursor, dependencies, phrase);
       for (const hit of result.hits) {
         const key = hit.handle.toLowerCase();
         if (seen.has(key)) continue;
         seen.add(key);
         out.push(hit);
       }
-      if (!result.cursor || result.hits.length === 0) break;
-      if (result.cursor === cursor) break;
+      // Latest pages are often all RTs. Keep walking while a cursor exists.
+      if (!result.cursor || result.cursor === cursor) break;
       cursor = result.cursor;
     }
   }

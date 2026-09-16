@@ -29,8 +29,10 @@ tests/                synthetic unit contracts and browser smoke
 A visitor reads stored founders from Neon. Client-side filters never call Weft.
 An authenticated scheduled request calls `runScan`: discover intros, ignore
 known handles, hydrate every new handle found on those pages, normalize
-locations, then persist. Page count bounds discovery; found intros are not
-dropped to meet a second import quota.
+locations, then persist. The five-minute cron walks five latest pages per
+phrase and does not stop because a page was only retweets. `?bulk=1` walks
+25 pages. Page count bounds discovery; found intros are not dropped to meet
+a second import quota.
 Profiles whose upstream data is unavailable are skipped. Uncertain places are
 empty, not comma-split guesses. The original intro links back to its source.
 

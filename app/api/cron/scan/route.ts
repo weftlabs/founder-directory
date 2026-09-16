@@ -1,4 +1,4 @@
-import { runScan } from "@/lib/scan";
+import { BULK_SCAN_PAGES, runScan, SCHEDULED_SCAN_PAGES } from "@/lib/scan";
 
 export const maxDuration = 300;
 
@@ -15,7 +15,9 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const bulk = url.searchParams.get("bulk") === "1";
   try {
-    const result = await runScan(bulk ? { maxPages: 25 } : { maxPages: 1 });
+    const result = await runScan(
+      bulk ? { maxPages: BULK_SCAN_PAGES } : { maxPages: SCHEDULED_SCAN_PAGES },
+    );
     return Response.json(result);
   } catch {
     // Provider and database errors can contain credentials or personal data.
