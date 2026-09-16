@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { SiteHeader } from "../site-header";
-import { NITTARAB_X, SITE_URL, WEFTLABS_URL } from "@/lib/site";
+import { GITHUB_REPO, NITTARAB_X, SITE_URL, WEFTLABS_URL } from "@/lib/site";
 
 export const metadata: Metadata = {
   title: "About",
@@ -67,12 +67,9 @@ export default function AboutPage() {
         </p>
         <p>
           If you&apos;re building something similar, you can explore the code or
-          contribute on{" "}
-          <a
-            href="https://github.com/weftlabs/founder-directory"
-            rel="noopener noreferrer"
-          >
-            GitHub
+          contribute at{" "}
+          <a href={GITHUB_REPO} rel="noopener noreferrer">
+            weftlabs/founder-directory
           </a>
           .
         </p>

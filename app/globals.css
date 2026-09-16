@@ -688,6 +688,11 @@ footer.site {
   color: #9a978c;
   font-size: 13px;
 }
+footer.site nav {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
 footer.site a {
   color: #d8ff3e;
   text-decoration: none;
