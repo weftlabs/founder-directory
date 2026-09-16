@@ -24,7 +24,6 @@ const TREND_PHRASES = [
   "indie hacker",
   "I'm a builder",
 ] as const;
-const MAX_NEW_PER_SCAN = 8;
 
 const X_PROFILE = {
   operationId: "bazaar-x402-atlas-183",
@@ -308,4 +307,4 @@ function enlargeAvatar(url: string | null): string | null {
   return url.replace(/_normal(\.[a-z0-9]+)$/i, "_400x400$1");
 }
 
-export { MAX_NEW_PER_SCAN, TREND_PHRASE, TREND_PHRASES };
+export { TREND_PHRASE, TREND_PHRASES };

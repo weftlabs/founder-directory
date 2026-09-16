@@ -23,8 +23,9 @@ this is not a durable one-charge guarantee. Known payment holds or charges must
 not be replayed. Policy/auth/budget refusals and ambiguous transport failures stop.
 An HTTP 200 with a pending receipt can be usable data with settlement unfinished.
 
-A cap limits one request, not the whole scan. Budget for every eligible attempt
-and account for both paid and held funds. Never raise limits automatically after
+A cap limits one request, not the whole scan. Every new intro found on the
+scanned pages is hydrated; page count is the discovery bound. Budget for every
+eligible attempt and account for both paid and held funds. Never raise limits automatically after
 a refusal. The Weft account policy is the final wallet-level spending control.
 
 Do not surface provider exceptions verbatim in the public app. Store only the
