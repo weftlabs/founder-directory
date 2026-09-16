@@ -56,7 +56,7 @@ test("About navigation, attribution, and SEO survive the branding change", async
   ).toHaveAttribute("aria-current", "page");
   await expect(
     page.getByRole("heading", {
-      name: "The feed moved on. The people did not.",
+      name: "Find the founders taking part in the trend.",
     }),
   ).toBeVisible();
   await expect(
