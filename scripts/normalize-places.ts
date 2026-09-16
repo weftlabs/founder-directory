@@ -8,22 +8,27 @@ async function main() {
   const rows = (await sql`
     SELECT handle, location FROM founders
   `) as { handle: string; location: string | null }[];
-  const places = await normalizePlaces(
-    rows
-      .map((row) => row.location)
-      .filter((value): value is string => Boolean(value)),
-  );
+  const raws = [...new Set(rows.map((row) => row.location?.trim()).filter((value): value is string => Boolean(value)))];
+  // Keep model output below the upstream delivery timeout. Resolve every batch
+  // before writing, so an outage cannot wipe existing chips.
+  const places = new Map<string, import("../lib/place").Place>();
+  for (let i = 0; i < raws.length; i += 40) {
+    const batch = await normalizePlaces(raws.slice(i, i + 40), { strict: true });
+    for (const [raw, place] of batch) places.set(raw, place);
+    console.log(JSON.stringify({ normalized: places.size, total: raws.length }));
+  }
   let updated = 0;
   for (const row of rows) {
     const place = row.location
-      ? (places.get(row.location) ?? emptyPlace())
+      ? (places.get(row.location.trim()) ?? emptyPlace())
       : emptyPlace();
-    await sql`
+    const changed = await sql`
       UPDATE founders
       SET city = ${place.city}, country = ${place.country}
-      WHERE handle = ${row.handle}
+      WHERE handle = ${row.handle} AND location IS NOT DISTINCT FROM ${row.location}
+      RETURNING handle
     `;
-    updated += 1;
+    updated += changed.length;
   }
   console.log(JSON.stringify({ updated, mapped: places.size }));
 }

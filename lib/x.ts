@@ -1,10 +1,11 @@
 import { WeftClient, type FetchResponse } from "@weft-labs/sdk";
+import { emptyPlace } from "./place";
+import { fetchWithRetry } from "./weft-retry";
 import {
   categorize,
   extractGithub,
   extractLinkedin,
   scoreVibe,
-  splitLocation,
   type Founder,
 } from "./model";
 
@@ -153,8 +154,9 @@ export async function fetchProfile(
   introText: string | null,
   tweetId: string | null = null,
 ): Promise<Founder | null> {
+  if (!process.env.WEFT_API_KEY) return null;
   const client = weft();
-  const response = await client.fetch(
+  const response = await fetchWithRetry(client,
     {
       url: `${X_USER_DETAILS_URL}?username=${encodeURIComponent(handle)}`,
       method: "GET",
@@ -162,10 +164,14 @@ export async function fetchProfile(
       maxCostUsd: MAX_COST_USD,
       ...X_PROFILE,
     },
-    { idempotencyKey: crypto.randomUUID() },
   );
-  if (response.status < 200 || response.status >= 300) return null;
-  const payload = decodeBody(response);
+  if (!response || response.status < 200 || response.status >= 300) return null;
+  let payload: Record<string, unknown>;
+  try {
+    payload = decodeBody(response);
+  } catch {
+    return null;
+  }
   const data = asRecord(payload.data);
   if (!data) return null;
   const core = asRecord(data.core);
@@ -181,7 +187,8 @@ export async function fetchProfile(
   const linkedin = extractLinkedin(blob);
   const professional = firstProfessional(data);
   const location = asString(asRecord(data.location)?.location);
-  const place = splitLocation(location);
+  // Raw X locations are not validated places. runScan normalizes them.
+  const place = emptyPlace();
   const protectedAccount = Boolean(asRecord(data.privacy)?.protected);
   const tweets = asNumber(asRecord(data.tweet_counts)?.tweets);
   const avatar = enlargeAvatar(asString(asRecord(data.avatar)?.image_url));
