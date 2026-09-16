@@ -73,6 +73,36 @@ test("place request keeps its cap/routing; recovery preserves raw keys and null 
   );
 });
 
+test("case and whitespace variants share one mapping without losing raw keys", async () => {
+  const raws = ["Paris", "paris", " Paris ", "New York", "new  york"];
+  for (const strict of [false, true]) {
+    const result = await normalizePlaces(
+      raws,
+      { strict },
+      offline(async (request) => {
+        const body = JSON.parse(request.body as string);
+        const requested = JSON.parse(body.messages[1].content) as string[];
+        assert.deepEqual(requested, ["Paris", "New York"]);
+        return placesResponse(
+          requested.map((raw) => ({
+            raw,
+            city: raw,
+            country: raw === "Paris" ? "France" : "United States",
+          })),
+        );
+      }),
+    );
+    for (const raw of raws) {
+      assert.deepEqual(
+        result.get(raw),
+        raw.toLowerCase().includes("paris")
+          ? { city: "Paris", country: "France" }
+          : { city: "New York", country: "United States" },
+      );
+    }
+  }
+});
+
 test("strict rejects malformed, incomplete, duplicate and unsolicited mappings", async () => {
   for (const rows of [
     [],
