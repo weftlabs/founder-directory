@@ -13,10 +13,45 @@ import {
   createStageHandlers,
   buildWorkerManifest,
   selectProductEvidence,
+  extractProfile,
   type WorkerDependencies,
 } from "../lib/enrichment/worker";
 import { runPendingStages } from "../lib/enrichment/pipeline";
 import type { EvidenceInput } from "../lib/enrichment/contracts";
+
+test("Atlas website expansion uses only one exact safe mapping", () => {
+  const short = "https://t.co/verified";
+  const entry = { url: short, expanded_url: "https://product.example/" };
+  for (const [urls, expected] of [
+    [[entry], "https://product.example/"],
+    [[{ ...entry, url: "https://t.co/unrelated" }], short],
+    [[{ ...entry, expanded_url: "http://127.0.0.1/" }], null],
+    [
+      [{ ...entry, expanded_url: "https://user:password@product.example/" }],
+      null,
+    ],
+    [[entry, entry], null],
+    [[entry, { ...entry, expanded_url: "https://other.example/" }], null],
+  ] as const) {
+    const result = extractProfile(
+      Buffer.from(
+        JSON.stringify({
+          data: {
+            core: { name: "Builder", screen_name: "builder" },
+            website: { url: short },
+            profile_bio: {
+              description: "Builds tools",
+              entities: { url: { urls } },
+            },
+          },
+        }),
+      ),
+    );
+    assert.equal(result.status, "available");
+    if (result.status === "available")
+      assert.equal(result.payload.website, expected);
+  }
+});
 
 test("product-only evidence makes personal DNA unavailable without generation", async () => {
   const worker = {

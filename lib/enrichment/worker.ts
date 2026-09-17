@@ -87,7 +87,7 @@ export function buildWorkerManifest(configuration: WorkerConfiguration) {
     model: configuration.model,
     embedding: configuration.embedding ?? null,
     recipeVersion: RECIPE_VERSION,
-    extractorVersion: "atlas-profile-v1",
+    extractorVersion: "atlas-profile-v2",
     sourceBundleVersion: SOURCE_BUNDLE_VERSION,
     extractionVersion: EXTRACTION_VERSION,
     website: configuration.website ?? null,
@@ -188,7 +188,32 @@ export function extractProfile(body: Uint8Array):
   const bio = record(data.profile_bio)
     ? text(data.profile_bio.description)
     : null;
-  const website = record(data.website) ? text(data.website.url) : null;
+  const websiteUrl = record(data.website) ? text(data.website.url) : null;
+  const entities =
+    record(data.profile_bio) && record(data.profile_bio.entities)
+      ? data.profile_bio.entities
+      : null;
+  const urlEntities =
+    entities && record(entities.url) && Array.isArray(entities.url.urls)
+      ? entities.url.urls
+      : [];
+  // Atlas supplies the expansion alongside its exact short URL. Never select
+  // an unrelated bio link or resolve an ambiguous mapping by array order.
+  const matches = websiteUrl
+    ? urlEntities.filter((entry) => record(entry) && entry.url === websiteUrl)
+    : [];
+  const expanded =
+    matches.length === 1 && record(matches[0])
+      ? text(matches[0].expanded_url)
+      : null;
+  const website =
+    matches.length > 0
+      ? matches.length === 1 && expanded
+        ? publicWebsiteUrl(expanded)
+        : null
+      : websiteUrl
+        ? publicWebsiteUrl(websiteUrl)
+        : null;
   const location = record(data.location) ? text(data.location.location) : null;
   return {
     status: "available",
@@ -451,7 +476,7 @@ export function createStageHandlers(
           };
         const id = await store.addEvidence({
           artifactId: artifact.id,
-          extractorVersion: "atlas-profile-v1",
+          extractorVersion: "atlas-profile-v2",
           locator: "data.profile",
           sourceUrl: result.sourceUrl,
           payload: result.payload,

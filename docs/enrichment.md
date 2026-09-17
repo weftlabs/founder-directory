@@ -205,9 +205,15 @@ Product context retains cited evidence and other saved excerpts at the exact
 product-page URL (ignoring fragments and trailing slashes). It does not retrieve
 new pages or expand to every page on a domain. The selected evidence is retained
 in the analysis manifest for comparison and replay.
-The current acquisition worker supplies its profile-extraction artifact only;
-this selection rule does not add website collection. An analysis pilot using
-separately imported excerpts does not prove the full acquisition worker path.
+When website collection is configured, the acquisition worker captures the
+profile's public website with Exa or the free Jina Reader route. Atlas short URLs
+use an expanded URL only when exactly one saved URL entity matches the profile
+website URL. Unsafe or duplicate matches yield no website. Unrelated bio links
+are not used. Full provider responses are saved before source-text extraction;
+the source bundle records the provider for later replay without a new purchase.
+Product-page evidence can support product descriptions, not personal DNA.
+Changing the profile extractor requires an approved new release; saved profile
+responses can be parsed again without buying another profile response.
 
 `publish --id ANALYSIS_UUID --confirm-write` updates the projection only when
 the release, evidence generation and current intake revision permit it. Failed
