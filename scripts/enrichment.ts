@@ -1,3 +1,9 @@
+import { isAbsolute } from "node:path";
+import {
+  localEmbeddingConfiguration,
+  validateLocalEmbeddingConfiguration,
+  LOCAL_EMBEDDING_OPERATION,
+} from "../lib/enrichment/local-embedding";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
@@ -43,6 +49,7 @@ const HELP = `Enrichment operator commands (no environment files are loaded)
   publish --id ANALYSIS_UUID --confirm-write
 
 Set ENRICHMENT_DATABASE_URL explicitly. This tool never falls back to DATABASE_URL.
+local-embedding-config prints the pinned offline vector configuration.
 Release-template reads configuration and prints a manifest; no database or paid calls.
 Migrate installs additive tables and a no-spend intake trigger on an existing founders table.
 Analyze uses saved evidence in INPUT.json. It never recollects sources.
@@ -139,6 +146,32 @@ async function workerFile(
       transport.websiteMaxCostUsd !== "0"
     )
       throw new Error("jina_requires_zero_cap");
+    if (transport.localEmbedding !== undefined) {
+      if (transport.embeddingEndpoint !== undefined)
+        throw new Error("conflicting_embedding_transports");
+      const local = transport.localEmbedding;
+      if (
+        !record(local) ||
+        !nonempty(local.pythonExecutable) ||
+        !isAbsolute(local.pythonExecutable) ||
+        !nonempty(local.modelDirectory) ||
+        !isAbsolute(local.modelDirectory)
+      )
+        throw new Error("invalid_local_embedding_configuration");
+      validateLocalEmbeddingConfiguration(
+        configuration.embedding as WorkerConfiguration["embedding"],
+      );
+      const policy = transport.policies[LOCAL_EMBEDDING_OPERATION];
+      if (
+        !record(policy) ||
+        !nonempty(policy.id) ||
+        policy.scope !== transport.scope ||
+        policy.operation !== LOCAL_EMBEDDING_OPERATION ||
+        policy.storageVerified !== true ||
+        policy.retentionApproved !== true
+      )
+        throw new Error("local_embedding_policy_not_approved");
+    }
     if (
       transport.embeddingEndpoint !== undefined &&
       (!record(transport.embeddingEndpoint) ||
@@ -169,6 +202,10 @@ export async function main(args = process.argv.slice(2)) {
   const command = args[0];
   if (!command || command === "--help" || command === "help") {
     console.log(HELP);
+    return;
+  }
+  if (command === "local-embedding-config") {
+    console.log(JSON.stringify(localEmbeddingConfiguration(), null, 2));
     return;
   }
   if (command === "release-template") {

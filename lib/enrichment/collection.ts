@@ -54,6 +54,11 @@ export type CollectionInput = {
 };
 
 export type ReceivedResponse = {
+  capture?: {
+    status: "complete" | "size_limit";
+    limitBytes: number;
+    observedBytes: number;
+  };
   body: Uint8Array;
   status: number;
   contentType: string;
@@ -186,6 +191,7 @@ export async function collectResponse(
       ...outcome,
       metadata: {
         status: response.status,
+        ...(response.capture ? { capture: response.capture } : {}),
         paymentStatus: response.paymentStatus ?? null,
         paidUsd: response.paidUsd ?? null,
         heldUsd: response.heldUsd ?? null,

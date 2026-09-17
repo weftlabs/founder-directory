@@ -133,7 +133,7 @@ the aggregate budget.
 For vectors, add `configuration.embedding` with `model`, `modelVersion` and
 `dimensions`. Also add `transport.embeddingEndpoint` with the reviewed `url`,
 `operationId`, `accessMethodId`, `maxCostUsd` and boolean `includeDimensions`,
-plus its matching policy. The endpoint must accept the configured model and
+plus its matching policy, or use the offline worker option below. The endpoint must accept the configured model and
 input text and return `data[0].embedding`. No embedding endpoint is guessed.
 Without this configuration, the vector stage is blocked, not falsely complete.
 Regenerate and approve a new release manifest after changing configuration.
@@ -214,9 +214,9 @@ in the analysis manifest for comparison and replay.
 When website collection is configured, the acquisition worker captures the
 profile's public website with Exa or the free Jina Reader route.
 Jina uses direct anonymous HTTPS, not the paid Weft gateway. Its zero-cost
-attempt and complete HTTP response are still recorded by the same local ledger.
+attempt and bounded HTTP capture are still recorded by the same local ledger.
 The client has a 60-second timeout, sends no credentials, does not follow outer
-HTTP redirects, and does not retry. HTTP error bodies are retained too.
+HTTP redirects, and does not retry. HTTP error bodies are retained within the same byte limit.
 Atlas short URLs use an expanded URL only when exactly one saved URL entity matches the profile
 website URL. Unsafe or duplicate matches yield no website. Unrelated bio links
 are not used. Full provider responses are saved before source-text extraction;
@@ -246,3 +246,64 @@ An external response can be lost if the process dies before persistence and
 the provider offers no retrieval. Such attempts stay uncertain; never repeat
 the purchase merely because no local body exists. Backup retention and deletion
 replay need an operator-tested policy before production activation.
+
+## Offline embeddings on a worker host
+
+The bounded worker can use local MiniLM inference instead of a paid embedding
+endpoint. This is a CLI option; the web deployment does not provision a Python
+worker or schedule enrichment.
+
+On the intended worker host, install the versions in
+[`scripts/local-embedding-requirements.txt`](../scripts/local-embedding-requirements.txt)
+in an isolated Python environment. Supply the model's `onnx/model.onnx` and
+`tokenizer.json` files from revision `1110a243fdf4706b3f48f1d95db1a4f5529b4d41`
+of `sentence-transformers/all-MiniLM-L6-v2`. The runner checks both file hashes
+and all three inference library versions before inference. It never downloads
+assets. Review the model license and source-input reuse policy before activation.
+Keep model assets and the installed runtime outside Git.
+
+Run `pnpm exec tsx scripts/enrichment.ts local-embedding-config` to print the
+exact `configuration.embedding` value for this checkout. The vector identity
+includes the runner digest; regenerate the release when that identity changes.
+Set `transport.localEmbedding` to an object with absolute `pythonExecutable` and
+`modelDirectory` paths. Add an approved `local-minilm-inference` policy under
+`transport.policies`. Do not also configure `embeddingEndpoint`.
+
+Inference uses an isolated Python process, a 30-second execution limit and a
+1 MiB output limit. It inherits no account credentials. Inputs are truncated to
+256 word pieces, with input and used counts recorded in the output. The saved
+request includes the exact input text, template, model revision, file hashes,
+runner digest and pooling settings. The complete successful process output is
+stored before response validation. Process failures remain explicit unresolved
+attempts; there is no automatic retry. Compatible saved outputs require neither
+the model assets nor another process execution. Each local capture has a zero
+price cap and records no charge; the worker's other stages retain their paid gates.
+
+## Website response capacity
+
+Direct Jina capture limits decoded response bytes to 2 MiB while reading the
+stream. It does not trust `Content-Length`. At the first excess byte it cancels
+the reader and stores only the bounded prefix with `capture.status=size_limit`,
+the configured limit and observed byte count. This is an incomplete capture,
+never usable source evidence. The stage reports `website_response_size_limit`;
+replay preserves that outcome without a new request. Responses exactly at the
+limit remain complete. Text excerpt limits are separate from this raw-byte limit.
+
+This streaming limit applies to direct Jina only. Paid SDK responses arrive
+buffered; their upstream size contract still needs review before enabling bulk
+collection. An Exa policy must remain disabled without that proof and applicable
+retention approval.
+
+## Original indexing post display
+
+After enrichment migrations and intake are verified in the directory database,
+set server-only `ENRICHMENT_READ_ORIGINS=1` to make profile pages read the saved
+indexing post. The flag uses `DATABASE_URL`; the enrichment schema must be in
+that same database. With the flag off, existing directory behavior is unchanged.
+An imported origin keeps its original text and URL even if the founder row later
+changes. Unknown, expired, withdrawn or purged origins show no tweet; suppressed
+entities return no profile. Unimported rows retain their existing display.
+
+The flag does not collect a new tweet or establish historical certainty for a
+legacy snapshot. It does not change map or directory-list suppression behavior.
+Verify broader deletion and backup replay separately before production rollout.

@@ -11,6 +11,41 @@ import type {
 import { collectWeft } from "./weft-transport";
 import { collectResponse } from "./collection";
 
+// Limit decoded response bytes, independent of Content-Length or compression.
+export const WEBSITE_RESPONSE_LIMIT_BYTES = 2 * 1024 * 1024;
+
+async function readWebsiteResponse(response: Response) {
+  const limitBytes = WEBSITE_RESPONSE_LIMIT_BYTES;
+  const reader = response.body?.getReader();
+  const chunks: Uint8Array[] = [];
+  let observedBytes = 0;
+  let status: "complete" | "size_limit" = "complete";
+  if (reader) {
+    try {
+      while (true) {
+        const next = await reader.read();
+        if (next.done) break;
+        const remaining = limitBytes - observedBytes;
+        observedBytes += next.value.byteLength;
+        // Copy only the retained prefix; a subarray would hold the whole chunk.
+        chunks.push(next.value.slice(0, Math.max(0, remaining)));
+        if (observedBytes > limitBytes) {
+          status = "size_limit";
+          // Cancellation failure must not erase the explicit size-limit result.
+          await reader.cancel().catch(() => undefined);
+          break;
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+  return {
+    body: Buffer.concat(chunks),
+    capture: { status, limitBytes, observedBytes },
+  };
+}
+
 export const WEBSITE_OPERATION = "exa-contents";
 // Manually reviewed official free endpoint, not a discovered catalog operation.
 export const JINA_WEBSITE_OPERATION = "local-reviewed-jina-reader";
@@ -148,6 +183,7 @@ export async function collectWebsite(
               method: "GET",
               headers,
               transport: "direct-anonymous-http-v1",
+              maxResponseBytes: WEBSITE_RESPONSE_LIMIT_BYTES,
               redirect: "manual",
               credentials: "omit",
             },
@@ -163,7 +199,7 @@ export async function collectWebsite(
               signal: AbortSignal.timeout(60000),
             });
             return {
-              body: new Uint8Array(await response.arrayBuffer()),
+              ...(await readWebsiteResponse(response)),
               status: response.status,
               contentType:
                 response.headers.get("content-type") ??
@@ -217,6 +253,8 @@ export function parseWebsiteArtifact(
     artifact,
   });
   const provider = input.provider ?? "exa";
+  if (object(artifact.metadata.capture)?.status === "size_limit")
+    return unavailable("website_response_size_limit");
   if (
     !["exa", "jina"].includes(provider) ||
     (artifact.metadata.websiteProvider !== undefined &&

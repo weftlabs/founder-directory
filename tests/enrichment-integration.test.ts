@@ -1,3 +1,4 @@
+import { withIndexingOrigin } from "../lib/enrichment/origin";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { randomUUID } from "node:crypto";
@@ -468,6 +469,54 @@ test("real source adapter archives malformed raw data before it rejects parsing"
         (row) => Buffer.from(row.body).toString() === "malformed raw source",
       ),
     );
+  } finally {
+    await pg.close();
+  }
+});
+
+test("profile read keeps the saved indexing tweet and never falls back after withdrawal", async () => {
+  const { pg, db, store } = await fixture();
+  const current = {
+    handle: "fixture_old",
+    introText: "A later intro",
+    introUrl: "https://x.com/fixture_old/status/999",
+  };
+  try {
+    await importLegacyIntake(db, "test");
+    const original = await withIndexingOrigin(db, current);
+    assert.equal(original?.introText, "I am a founder");
+    assert.equal(original?.introUrl, "https://x.com/fixture_old/status/123");
+    const row = (
+      await db.query<{ artifact_id: string }>(
+        "SELECT e.artifact_id FROM enrichment_index_origins o JOIN enrichment_evidence e ON e.id=o.evidence_id",
+      )
+    ).rows[0];
+    const unknownId = await store.createEntity("founder", "unknown_origin");
+    const evidence = (
+      await db.query<{ evidence_id: string }>(
+        "SELECT evidence_id FROM enrichment_index_origins WHERE evidence_id IS NOT NULL LIMIT 1",
+      )
+    ).rows[0];
+    await store.recordOrigin(unknownId, evidence.evidence_id, "unknown");
+    const unknown = await withIndexingOrigin(db, {
+      ...current,
+      handle: "unknown_origin",
+    });
+    assert.equal(unknown?.introText, null);
+    assert.equal(unknown?.introUrl, null);
+    await store.withdrawArtifact(row.artifact_id, "test", "source removed");
+    const withdrawn = await withIndexingOrigin(db, current);
+    assert.equal(withdrawn?.introText, null);
+    assert.equal(withdrawn?.introUrl, null);
+    const owner = (
+      await db.query<{ id: string }>(
+        "SELECT id FROM enrichment_entities WHERE legacy_key='fixture_old'",
+      )
+    ).rows[0];
+    await store.suppressEntity(owner.id, "fixture removed");
+    assert.equal(await withIndexingOrigin(db, current), null);
+    const unindexed = { ...current, handle: "not_imported" };
+    assert.deepEqual(await withIndexingOrigin(db, unindexed), unindexed);
   } finally {
     await pg.close();
   }

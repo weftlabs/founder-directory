@@ -3,6 +3,10 @@ import "../assert-server";
 import type { WeftTransport } from "../weft";
 import type { CollectionStore } from "./collection";
 import type { CaptureConfig } from "./runtime";
+import {
+  localEmbeddingAdapter,
+  LOCAL_EMBEDDING_OPERATION,
+} from "./local-embedding";
 import { collectWeft } from "./weft-transport";
 import { weftGeneration, generationRoute } from "./generation";
 import {
@@ -15,6 +19,7 @@ export type WorkerTransportConfig = CaptureConfig & {
   sourceMaxCostUsd: string;
   modelMaxCostUsd: string;
   websiteMaxCostUsd?: string;
+  localEmbedding?: { pythonExecutable: string; modelDirectory: string };
   embeddingEndpoint?: {
     url: string;
     operationId: string;
@@ -31,6 +36,8 @@ export function workerAdapters(
   enabled: () => boolean,
   modelProvider = "weft/openrouter",
 ) {
+  if (config.localEmbedding && config.embeddingEndpoint)
+    throw new Error("conflicting_embedding_transports");
   const route = generationRoute(modelProvider);
   const executeGeneration = weftGeneration(store, client, {
     scope: config.scope,
@@ -142,71 +149,81 @@ export function workerAdapters(
           ...(result.artifact ? { artifactId: result.artifact.id } : {}),
         };
   };
-  const embed = config.embeddingEndpoint
-    ? async (input: {
-        entityId: string;
-        analysisId: string;
-        generation: number;
-        text: string;
-        templateVersion: string;
-        model: string;
-        modelVersion: string;
-        dimensions: number;
-      }) => {
-        const endpoint = config.embeddingEndpoint!;
-        const policy = config.policies[endpoint.operationId];
-        if (!policy) throw new Error("embedding_policy_missing");
-        const artifact = await collectWeft(
-          store,
-          client,
-          {
-            scope: config.scope,
-            budgetId: config.budgetId,
-            generation: 0,
-            operation: endpoint.operationId,
-            mode: "acquire",
-            policy,
-            requestIdentity: `${input.templateVersion}:${input.modelVersion}`,
-          },
-          {
-            url: endpoint.url,
-            operationId: endpoint.operationId,
-            accessMethodId: endpoint.accessMethodId,
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            maxCostUsd: endpoint.maxCostUsd,
-            body: JSON.stringify({
-              model: input.model,
-              input: input.text,
-              ...(endpoint.includeDimensions
-                ? { dimensions: input.dimensions }
-                : {}),
-            }),
-          },
-          enabled,
-        );
-        if (
-          typeof artifact.metadata.status !== "number" ||
-          artifact.metadata.status < 200 ||
-          artifact.metadata.status >= 300
-        )
-          throw new Error("embedding_http_failure");
-        const payload = JSON.parse(Buffer.from(artifact.body).toString("utf8"));
-        const vector: unknown = payload.data?.[0]?.embedding;
-        if (
-          !Array.isArray(vector) ||
-          vector.length !== input.dimensions ||
-          !vector.every((n) => typeof n === "number" && Number.isFinite(n))
-        )
-          throw new Error("invalid_embedding_response");
-        if (typeof artifact.metadata.attemptId !== "string")
-          throw new Error("embedding_attempt_missing");
-        return {
-          vector: vector as number[],
-          attemptId: artifact.metadata.attemptId,
-          responseArtifactId: artifact.id,
-        };
-      }
-    : undefined;
+  const embed = config.localEmbedding
+    ? localEmbeddingAdapter(store, {
+        ...config.localEmbedding,
+        scope: config.scope,
+        budgetId: config.budgetId,
+        policy: config.policies[LOCAL_EMBEDDING_OPERATION],
+        enabled,
+      })
+    : config.embeddingEndpoint
+      ? async (input: {
+          entityId: string;
+          analysisId: string;
+          generation: number;
+          text: string;
+          templateVersion: string;
+          model: string;
+          modelVersion: string;
+          dimensions: number;
+        }) => {
+          const endpoint = config.embeddingEndpoint!;
+          const policy = config.policies[endpoint.operationId];
+          if (!policy) throw new Error("embedding_policy_missing");
+          const artifact = await collectWeft(
+            store,
+            client,
+            {
+              scope: config.scope,
+              budgetId: config.budgetId,
+              generation: 0,
+              operation: endpoint.operationId,
+              mode: "acquire",
+              policy,
+              requestIdentity: `${input.templateVersion}:${input.modelVersion}`,
+            },
+            {
+              url: endpoint.url,
+              operationId: endpoint.operationId,
+              accessMethodId: endpoint.accessMethodId,
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              maxCostUsd: endpoint.maxCostUsd,
+              body: JSON.stringify({
+                model: input.model,
+                input: input.text,
+                ...(endpoint.includeDimensions
+                  ? { dimensions: input.dimensions }
+                  : {}),
+              }),
+            },
+            enabled,
+          );
+          if (
+            typeof artifact.metadata.status !== "number" ||
+            artifact.metadata.status < 200 ||
+            artifact.metadata.status >= 300
+          )
+            throw new Error("embedding_http_failure");
+          const payload = JSON.parse(
+            Buffer.from(artifact.body).toString("utf8"),
+          );
+          const vector: unknown = payload.data?.[0]?.embedding;
+          if (
+            !Array.isArray(vector) ||
+            vector.length !== input.dimensions ||
+            !vector.every((n) => typeof n === "number" && Number.isFinite(n))
+          )
+            throw new Error("invalid_embedding_response");
+          if (typeof artifact.metadata.attemptId !== "string")
+            throw new Error("embedding_attempt_missing");
+          return {
+            vector: vector as number[],
+            attemptId: artifact.metadata.attemptId,
+            responseArtifactId: artifact.id,
+          };
+        }
+      : undefined;
   return { executeGeneration, collectProfile, collectWebsite, embed };
 }

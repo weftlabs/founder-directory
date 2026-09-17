@@ -509,3 +509,124 @@ test("duplicate results and duplicate statuses fail closed", async () => {
     );
   }
 });
+
+test("Jina bounds streamed bytes and archives an explicit size-limit outcome without retry", async () => {
+  const limit = 2 * 1024 * 1024;
+  for (const advertised of [undefined, "1", String(limit * 2)]) {
+    const f = fixture(null);
+    const prefix = Buffer.from(
+      JSON.stringify({
+        code: 200,
+        data: { url, content: "valid prefix must not become evidence" },
+      }),
+    );
+    let cancelled = false;
+    let reads = 0;
+    let calls = 0;
+    const stream = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          reads++;
+          if (reads === 1) controller.enqueue(prefix);
+          else if (reads < 4) controller.enqueue(new Uint8Array(limit));
+          else controller.close();
+        },
+        cancel() {
+          cancelled = true;
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const input = {
+      ...f.input,
+      provider: "jina" as const,
+      maxCostUsd: "0",
+      policy: { ...f.input.policy, operation: "local-reviewed-jina-reader" },
+    };
+    const freeFetch: typeof fetch = async () => {
+      calls++;
+      return new Response(stream, {
+        headers: advertised ? { "content-length": advertised } : {},
+      });
+    };
+    const result = await collectWebsite(
+      f.store,
+      f.client,
+      input,
+      () => true,
+      undefined,
+      freeFetch,
+    );
+    assert.equal(result.status, "unavailable");
+    if (result.status !== "unavailable") return;
+    assert.equal(result.reason, "website_response_size_limit");
+    assert.equal(cancelled, true);
+    assert.equal(reads, 2);
+    assert.equal(f.saved()!.body.byteLength, limit);
+    assert.deepEqual(f.saved()!.metadata.capture, {
+      status: "size_limit",
+      limitBytes: limit,
+      observedBytes: limit + prefix.length,
+    });
+    assert.equal(f.saved()!.metadata.paymentState, "not_charged");
+    const replay = await collectWebsite(
+      f.store,
+      f.client,
+      { ...input, mode: "replay" },
+      () => false,
+      undefined,
+      freeFetch,
+    );
+    assert.equal(replay.status, "unavailable");
+    assert.equal(calls, 1);
+  }
+});
+
+test("Jina keeps an exact-limit UTF-8 response complete and rejects broken streams", async () => {
+  const limit = 2 * 1024 * 1024;
+  const raw = Buffer.from(
+    JSON.stringify({ code: 200, data: { url, content: "é" } }),
+  );
+  const body = Buffer.concat([raw, Buffer.alloc(limit - raw.length, 32)]);
+  const f = fixture(null);
+  const input = {
+    ...f.input,
+    provider: "jina" as const,
+    maxCostUsd: "0",
+    policy: { ...f.input.policy, operation: "local-reviewed-jina-reader" },
+  };
+  const result = await collectWebsite(
+    f.store,
+    f.client,
+    input,
+    () => true,
+    undefined,
+    async () => new Response(body),
+  );
+  assert.equal(result.status, "captured");
+  assert.deepEqual(Buffer.from(f.saved()!.body), body);
+  assert.equal(
+    (f.saved()!.metadata.capture as { status: string }).status,
+    "complete",
+  );
+  const broken = fixture(null);
+  await assert.rejects(
+    collectWebsite(
+      broken.store,
+      broken.client,
+      input,
+      () => true,
+      undefined,
+      async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.error(new Error("broken"));
+            },
+          }),
+        ),
+    ),
+    /collection_uncertain/,
+  );
+  assert.equal(broken.saved(), null);
+});

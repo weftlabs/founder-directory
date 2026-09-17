@@ -57,3 +57,20 @@ test("worker requires explicit paid flag before reading config or opening databa
     /paid_worker_not_enabled/,
   );
 });
+
+test("local embedding configuration can be generated without a database", async () => {
+  const original = console.log;
+  let output = "";
+  console.log = (value: unknown) => {
+    output = String(value);
+  };
+  try {
+    await main(["local-embedding-config"]);
+    const config = JSON.parse(output);
+    assert.equal(config.model, "sentence-transformers/all-MiniLM-L6-v2");
+    assert.equal(config.dimensions, 384);
+    assert.match(config.modelVersion, /script-[a-f0-9]{64}$/);
+  } finally {
+    console.log = original;
+  }
+});

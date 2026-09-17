@@ -1,4 +1,5 @@
 import "./assert-server";
+import { withIndexingOrigin } from "./enrichment/origin";
 import { neon } from "@neondatabase/serverless";
 import type { DirectoryFilters, LocationOption } from "./directory-filters";
 import {
@@ -274,7 +275,18 @@ export async function getFounder(handle: string): Promise<Founder | null> {
   const rows = (await sql()`
     SELECT * FROM founders WHERE lower(handle) = ${handle.toLowerCase()} LIMIT 1
   `) as Row[];
-  return rows[0] ? toFounder(rows[0]) : null;
+  if (!rows[0]) return null;
+  const founder = toFounder(rows[0]);
+  if (process.env.ENRICHMENT_READ_ORIGINS !== "1") return founder;
+  const db = sql();
+  return withIndexingOrigin(
+    {
+      async query<T>(text: string, values?: unknown[]) {
+        return { rows: (await db.query(text, values)) as T[] };
+      },
+    },
+    founder,
+  );
 }
 
 export async function existingHandles(): Promise<Set<string>> {
