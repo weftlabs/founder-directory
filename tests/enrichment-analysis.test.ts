@@ -41,7 +41,7 @@ test("description recipes distinguish founder behavior, source attribution and p
       model: { provider: "fixture", model: "fixture", revision: null },
       codeDigest: "test",
     });
-    assert.equal(recipe.promptVersion, "evidence-only-v7");
+    assert.equal(recipe.promptVersion, "evidence-only-v8");
     assert.deepEqual(recipe.parameters, { temperature: 0, max_tokens: 1800 });
     assert.match(recipe.template, /Write values in English/);
     assert.match(recipe.template, /publisher_statement/);
@@ -137,6 +137,41 @@ test("provider response schemas type every scalar enum and constant explicitly",
     visit(schema);
   }
 });
+test("rendered citation schemas bind outer and product citations without changing release recipes", () => {
+  const base = {
+    entityId: "f",
+    releaseId: "r",
+    generation: 0,
+    purpose: "product_discovery" as const,
+    model: { provider: "fixture", model: "fixture", revision: null },
+    codeDigest: "test",
+  };
+  const value = buildAnalysisInput({ ...base, evidence: [evidence] });
+  const empty = buildAnalysisInput({ ...base, evidence: [] });
+  assert.equal(stableDigest(value.recipe), stableDigest(empty.recipe));
+  const saved = prepareAnalysis(value);
+  let count = 0;
+  function visit(node: unknown) {
+    if (!node || typeof node !== "object") return;
+    for (const [key, child] of Object.entries(node)) {
+      if (key === "evidenceIds") {
+        assert.deepEqual(child.items, { type: "string", enum: ["e1"] });
+        count++;
+      } else visit(child);
+    }
+  }
+  visit(saved.request.responseSchema);
+  assert.equal(count, 2);
+  assert.equal(
+    JSON.stringify(value.recipe.responseSchema).includes('"e1"'),
+    false,
+  );
+  assert.deepEqual(
+    prepareAnalysis(JSON.parse(JSON.stringify(saved))).request,
+    saved.request,
+  );
+});
+
 const recipe = {
   purpose: "founder_dna",
   schemaVersion: "1",
@@ -173,6 +208,7 @@ test("canonical hashes ignore key insertion order but preserve ordered input", (
 
 test("recipe and source input identities are independent of release labels", () => {
   const first = prepareAnalysis(input);
+  assert.equal("responseSchema" in first.request, false);
   const next = prepareAnalysis({ ...input, releaseId: "release2" });
   assert.equal(first.recipeDigest, next.recipeDigest);
   assert.equal(first.inputDigest, next.inputDigest);

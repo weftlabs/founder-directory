@@ -92,6 +92,7 @@ export interface AnalysisRecipe {
   modelRevision: string | null;
   parameters: JsonValue;
   responseSchema: JsonValue;
+  responseSchemaBinding?: "selected-evidence-v1";
   toolDefinitions: JsonValue[];
   codeDigest: string;
   selectionPolicy: string;
@@ -121,6 +122,7 @@ export interface AnalysisInput {
 
 export interface RenderedAnalysisRequest {
   recipe: AnalysisRecipe;
+  responseSchema?: JsonValue;
   messages: AnalysisMessage[];
   context: AnalysisInput["context"];
   evidence: EvidenceInput[];

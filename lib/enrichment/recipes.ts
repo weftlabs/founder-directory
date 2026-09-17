@@ -43,7 +43,7 @@ const FIELDS = {
   founder_dna: ["summary", "craft", "working_style", "interests"],
 } as const;
 
-export const RECIPE_VERSION = "evidence-only-v7";
+export const RECIPE_VERSION = "evidence-only-v8";
 
 export function selectAnalysisEvidence(
   purpose: keyof typeof FIELDS,
@@ -115,6 +115,7 @@ export function buildAnalysisInput(input: {
     model: input.model.model,
     modelRevision: input.model.revision,
     parameters: { temperature: 0, max_tokens: 1800 },
+    responseSchemaBinding: "selected-evidence-v1",
     responseSchema: {
       type: "object",
       additionalProperties: false,

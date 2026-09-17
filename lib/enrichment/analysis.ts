@@ -14,6 +14,25 @@ import {
 } from "./contracts";
 import { renderAnalysisMessages } from "./recipes";
 
+/** Versioned schema rendering is saved before dispatch, separate from the release recipe. */
+function bindEvidenceSchema(schema: JsonValue, ids: string[]): JsonValue {
+  if (Array.isArray(schema))
+    return schema.map((node) => bindEvidenceSchema(node, ids));
+  if (schema === null || typeof schema !== "object") return schema;
+  return Object.fromEntries(
+    Object.entries(schema).map(([key, value]) => {
+      if (
+        key === "evidenceIds" &&
+        value !== null &&
+        typeof value === "object" &&
+        !Array.isArray(value)
+      )
+        return [key, { ...value, items: { type: "string", enum: ids } }];
+      return [key, bindEvidenceSchema(value, ids)];
+    }),
+  );
+}
+
 /** Inputs are already saved, permitted evidence. There is no source-network fallback. */
 export function prepareAnalysis(input: AnalysisInput): PreparedAnalysis {
   const copy: AnalysisInput = JSON.parse(canonicalJson(input));
@@ -69,6 +88,14 @@ export function prepareAnalysis(input: AnalysisInput): PreparedAnalysis {
   };
   const request = {
     recipe: copy.recipe,
+    ...(copy.recipe.responseSchemaBinding === "selected-evidence-v1"
+      ? {
+          responseSchema: bindEvidenceSchema(
+            copy.recipe.responseSchema,
+            [...ids].sort(),
+          ),
+        }
+      : {}),
     messages: copy.messages,
     context: copy.context,
     evidence: copy.evidence,
@@ -77,6 +104,9 @@ export function prepareAnalysis(input: AnalysisInput): PreparedAnalysis {
   const recipeDigest = stableDigest({
     recipe: copy.recipe,
     messages: copy.messages,
+    ...(request.responseSchema !== undefined
+      ? { responseSchema: request.responseSchema }
+      : {}),
   });
   return {
     ...copy,
