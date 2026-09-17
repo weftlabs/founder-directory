@@ -3,6 +3,7 @@ import { neon } from "@neondatabase/serverless";
 import type { DirectoryFilters, LocationOption } from "./directory-filters";
 import {
   DIRECTORY_PAGE_SIZE,
+  directoryCard,
   decodeDirectoryCursor,
   emptyDirectoryPage,
   encodeDirectoryCursor,
@@ -244,7 +245,7 @@ export async function listDirectoryPage(
   const sort = (options: LocationOption[]) =>
     options.sort((a, b) => a.label.localeCompare(b.label));
   return {
-    founders: pageRows.map(toFounder),
+    founders: pageRows.map((row) => directoryCard(toFounder(row))),
     total: countRows[0]?.n ?? 0,
     nextCursor,
     categories: [...new Set(categoryRows.map((row) => row.category))].sort(

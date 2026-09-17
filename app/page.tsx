@@ -1,56 +1,31 @@
-import type { Metadata } from "next";
-import { Directory } from "./directory";
+import { discoveryQuery } from "@/lib/discovery";
 import { SiteHeader } from "./site-header";
-import { lastScanAt, listDirectoryPage } from "@/lib/db";
-import { emptyFilters } from "@/lib/directory-filters";
-import { emptyDirectoryPage } from "@/lib/directory-page";
-import { relativeTime } from "@/lib/model";
-
-export const metadata: Metadata = {
+import { DiscoveryBrowser } from "./discovery-browser";
+import { loadDiscovery } from "@/lib/discovery-data";
+export const dynamic = "force-dynamic";
+export const metadata = {
+  title: "Founder map",
+  description: "Find founders around the world, city by city.",
   alternates: { canonical: "/" },
 };
-
-export const dynamic = "force-dynamic";
-
-function first(value: string | string[] | undefined) {
-  return typeof value === "string"
-    ? value
-    : Array.isArray(value)
-      ? (value[0] ?? "")
-      : "";
-}
-
-export default async function Home({
+export default async function MapPage({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const params = await searchParams;
-  const filters = {
-    ...emptyFilters,
-    q: first(params.q),
-    category: first(params.category),
-    country: first(params.country),
-    city: first(params.city),
-  };
-  let page = emptyDirectoryPage();
-  let scanned = "not yet";
-  try {
-    page = await listDirectoryPage(filters);
-    scanned = relativeTime(await lastScanAt());
-  } catch {
-    page = emptyDirectoryPage();
-  }
-  const initialSearch = new URLSearchParams(
-    Object.entries(filters).filter(([, value]) => value),
-  ).toString();
+  const query = discoveryQuery(await searchParams);
+  const data = await loadDiscovery(query);
   return (
     <>
-      <SiteHeader directoryCurrent />
-      <Directory
-        initialPage={page}
-        initialSearch={initialSearch ? `?${initialSearch}` : ""}
-        scanned={scanned}
+      <SiteHeader mapCurrent />
+      <DiscoveryBrowser
+        key={JSON.stringify([
+          query.q,
+          query.country,
+          query.category,
+          query.city,
+        ])}
+        {...data}
       />
     </>
   );

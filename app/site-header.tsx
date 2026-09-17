@@ -6,24 +6,38 @@ export const GITHUB_REPO_URL = "https://github.com/weftlabs/founder-directory";
 export function SiteHeader({
   directoryCurrent = false,
   aboutCurrent = false,
+  mapCurrent = false,
 }: {
   directoryCurrent?: boolean;
   aboutCurrent?: boolean;
+  mapCurrent?: boolean;
 }) {
   return (
     <header className="top">
-      <Link className="brand" href="/">
+      <Link prefetch={false} className="brand" href="/">
         Founder <em>Directory</em>
       </Link>
       <div className="top-nav">
         <Link
+          prefetch={false}
           className="directory-link"
-          href="/"
+          href="/directory"
           aria-current={directoryCurrent ? "page" : undefined}
         >
           Directory
         </Link>
-        <Link href="/about" aria-current={aboutCurrent ? "page" : undefined}>
+        <Link
+          prefetch={false}
+          href="/"
+          aria-current={mapCurrent ? "page" : undefined}
+        >
+          Map
+        </Link>
+        <Link
+          prefetch={false}
+          href="/about"
+          aria-current={aboutCurrent ? "page" : undefined}
+        >
           About
         </Link>
         <OnlineNow />

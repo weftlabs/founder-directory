@@ -5,11 +5,10 @@ platform architecture specification.
 
 ```text
 app/                  Next.js routes and presentation
-  directory.tsx       browser-side search; live index pages, in-memory preview
+  directory.tsx       page navigation and filters; in-memory synthetic preview
   site-header.tsx     shared product navigation
   analytics.tsx       optional PostHog; $pageview/$pageleave on App Router nav
   online-now.tsx      Neon heartbeat for the online chip (~20s ping, 45s window)
-  api/founders/       public directory pages (filters + keyset cursor); no Weft
   api/cron/discover/  search latest intros; queue leftover handles
   api/cron/hydrate/   enrich queued intros (Pro maxDuration 800s)
   api/cron/scan/      combined/bulk operator path; not on the schedule
@@ -32,11 +31,12 @@ tests/                synthetic unit contracts and browser smoke
 ## Default data flow
 
 A visitor reads stored founders from Neon. The homepage SSRs one page of 48
-and `GET /api/founders` serves further pages and filter refetches. Pagination
+and further pages and filters use document navigation. No public founder JSON API
+is available. Pagination
 is a keyset on `(updated_at DESC, handle DESC)`. Search and location filters
 run in SQL and match the in-memory helpers in `directory-filters.ts`.
-The client prefetches the next page as soon as a cursor exists and appends it
-about 1200px before the list end, so scrolling does not wait on the network.
+The client receives only the current 48 cards, with source text, external links
+and analysis details omitted. There is no next-page data prefetch.
 `/filter-preview` still passes a synthetic `founders` list so Playwright can
 exercise chips without a database. Client filters never call Weft.
 An authenticated discover job searches latest intros and queues unknown
@@ -75,3 +75,9 @@ as part of a branding refactor.
 
 The database currently bootstraps its small schema on access; see the
 [limitations](quality.md) before changing schema or promising migration safety.
+
+## Discovery pages
+
+[Founder map](discovery.md) documents geographic coverage and local previews. `lib/geography.ts` keeps the city
+gazetteer on the server; `lib/discovery.ts` owns pure filtering and pagination.
+`lib/discovery-data.ts` sends only display fields to the client.

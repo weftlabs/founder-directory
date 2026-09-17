@@ -102,7 +102,7 @@ export default async function ProfilePage({
             <LinkRow label="LinkedIn" href={founder.linkedin} />
           </dl>
         </section>
-        <Link className="back" href="/">
+        <Link className="back" href="/directory">
           ← Directory
         </Link>
       </main>

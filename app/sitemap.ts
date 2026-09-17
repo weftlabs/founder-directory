@@ -1,5 +1,4 @@
 import type { MetadataRoute } from "next";
-import { listFounders } from "@/lib/db";
 import { SITE_URL } from "@/lib/site";
 
 export const dynamic = "force-dynamic";
@@ -7,6 +6,12 @@ export const dynamic = "force-dynamic";
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const now = new Date();
   const staticRoutes: MetadataRoute.Sitemap = [
+    ...["/directory"].map((path) => ({
+      url: `${SITE_URL}${path}`,
+      lastModified: now,
+      changeFrequency: "daily" as const,
+      priority: 0.8,
+    })),
     {
       url: SITE_URL,
       lastModified: now,
@@ -21,18 +26,5 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     },
   ];
 
-  try {
-    const founders = await listFounders();
-    return [
-      ...staticRoutes,
-      ...founders.map((founder) => ({
-        url: `${SITE_URL}/u/${founder.handle}`,
-        lastModified: founder.updatedAt ? new Date(founder.updatedAt) : now,
-        changeFrequency: "weekly" as const,
-        priority: 0.8,
-      })),
-    ];
-  } catch {
-    return staticRoutes;
-  }
+  return staticRoutes;
 }
