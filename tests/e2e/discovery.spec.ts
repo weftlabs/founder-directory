@@ -8,11 +8,15 @@ test("zooming loads a bounded viewport page without resetting the map", async ({
     .getByRole("button", { name: "Show Bounded Founder 0 on map", exact: true })
     .click();
   await expect(page).toHaveURL(/bounds=/);
-  await expect(page.locator(".map-avatar-pin")).toBeVisible();
+  await expect(
+    page.locator(".map-avatar-pin[data-spread='false']"),
+  ).toBeVisible();
   await expect(page.locator(".discovery-rows li")).toHaveCount(48);
   await page.locator(".maplibregl-canvas").scrollIntoViewIfNeeded();
   const beforeUrl = page.url();
-  const beforePin = await page.locator(".map-avatar-pin").boundingBox();
+  const beforePin = await page
+    .locator(".map-avatar-pin[data-spread='false']")
+    .boundingBox();
   const canvas = await page.locator(".maplibregl-canvas").boundingBox();
   await page.mouse.move(
     canvas!.x + canvas!.width / 2,
@@ -29,7 +33,8 @@ test("zooming loads a bounded viewport page without resetting the map", async ({
   // Allow the streamed page update and any erroneous camera animation to settle.
   await page.waitForTimeout(1200);
   expect(
-    (await page.locator(".map-avatar-pin").boundingBox())!.x,
+    (await page.locator(".map-avatar-pin[data-spread='false']").boundingBox())!
+      .x,
   ).toBeGreaterThan(beforePin!.x + 25);
   await page.getByRole("link", { name: "Next page" }).click();
   await expect(page.locator(".discovery-rows li").first()).toContainText(
@@ -59,7 +64,9 @@ test("photo pins select founders, fall back to initials, and group only the curr
     }),
   );
   await page.goto("/discovery-preview");
-  await expect(page.locator(".map-avatar-pin")).toHaveCount(8);
+  await expect(
+    page.locator(".map-avatar-pin[data-spread='false']"),
+  ).toHaveCount(8);
   const alex = page.getByRole("button", {
     name: "Meet Alex Example in Berlin",
     exact: true,
@@ -87,13 +94,23 @@ test("photo pins select founders, fall back to initials, and group only the curr
   await page.getByRole("button", { name: "Show Alex Example on map" }).click();
   await expect(alex).toBeVisible();
   await page.getByRole("searchbox").fill("Paris");
-  await expect(page.locator(".map-avatar-pin")).toHaveCount(1);
-  await expect(page.locator(".map-avatar-pin")).toContainText("ME");
+  await expect(
+    page.locator(".map-avatar-pin[data-spread='false']"),
+  ).toHaveCount(1);
+  await expect(
+    page.locator(".map-avatar-pin[data-spread='false']"),
+  ).toContainText("ME");
   await page.route("https://i.pravatar.cc/**", (route) => route.abort());
   await page.goto("/discovery-preview?bounded=1");
-  await expect(page.locator(".map-avatar-pin")).toHaveCount(1);
-  await expect(page.locator(".map-avatar-pin img")).toHaveCount(0);
-  await expect(page.locator(".map-avatar-initials")).toHaveText("BF");
+  await expect(
+    page.locator(".map-avatar-pin[data-spread='false']"),
+  ).toHaveCount(1);
+  await expect(
+    page.locator(".map-avatar-pin[data-spread='false'] img"),
+  ).toHaveCount(0);
+  await expect(
+    page.locator(".map-avatar-pin[data-spread='false'] .map-avatar-initials"),
+  ).toHaveText("BF");
   await expect(page.locator(".map-avatar-count")).toHaveText("48");
   await page
     .getByRole("button", { name: "Explore 48 founders on this page in Berlin" })
@@ -198,4 +215,31 @@ test("bounded pages do not embed the hidden index and require page navigation", 
       "Bounded Founder 119",
     );
   }
+});
+
+test("co-located founders spread into separate selectable pins at close zoom", async ({
+  page,
+}) => {
+  await page.goto(
+    "/discovery-preview?bounded=1&bounds=13.395,52.515,13.415,52.525",
+  );
+  const pins = page.locator(".map-avatar-pin[data-spread='true']");
+  await expect(pins).toHaveCount(48);
+  await expect(pins.first()).toBeVisible();
+  await expect(page.locator(".map-avatar-count")).toBeHidden();
+  const first = await pins.nth(0).boundingBox();
+  const second = await pins.nth(1).boundingBox();
+  expect(
+    Math.hypot(first!.x - second!.x, first!.y - second!.y),
+  ).toBeGreaterThan(50);
+  await pins.first().click();
+  await expect(page.locator(".map-profile")).toContainText("Bounded Founder 0");
+  await expect(page.locator(".map-group")).toHaveCount(0);
+  await expect(pins.first()).toHaveAttribute("data-selected", "true");
+  await page.getByRole("button", { name: "Close founder card" }).click();
+  await pins.nth(1).click();
+  await expect(page.locator(".map-profile")).toContainText("Bounded Founder 1");
+  await page.getByRole("button", { name: "World view" }).click();
+  await expect(pins.first()).toBeHidden();
+  await expect(page.locator(".map-avatar-count")).toBeVisible();
 });

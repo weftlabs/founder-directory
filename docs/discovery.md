@@ -13,7 +13,9 @@ visible area using the normal map page route. The camera stays in place. Mapped
 founders take priority, with one representative per city before additional people
 at the same location. At most 48 profiles are returned; no bulk API is added.
 A shared city pin shows the number of founders on that page and
-opens their chooser. City aggregates still cover the full filtered map without
+opens their chooser at wider zoom. At zoom 10 and closer, those profiles spread
+into separate photo pins around the city center. Each pin selects one founder;
+the visual offsets do not change the stored city coordinates. City aggregates still cover the full filtered map without
 exposing additional identities. Pin counts are not ranks.
 
 The map matches normalized city and country against a bundled

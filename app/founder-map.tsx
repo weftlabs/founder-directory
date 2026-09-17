@@ -273,12 +273,41 @@ export default function FounderMap({
       const key = founder.coordinates.join(",");
       groups.set(key, [...(groups.get(key) ?? []), founder]);
     }
-    const markers = [...groups.values()].map((group) => {
+    const entries = [...groups.values()].flatMap((group) => [
+      { group, spread: false, offset: [0, -12] as [number, number] },
+      ...(group.length > 1
+        ? group.map((founder, index) => {
+            // Concentric rings keep even a full page of co-located pins apart.
+            let ring = 1;
+            let position = index;
+            while (position >= ring * 6) {
+              position -= ring * 6;
+              ring++;
+            }
+            const count = Math.min(
+              ring * 6,
+              group.length - (ring - 1) * ring * 3,
+            );
+            const angle = (position / count) * Math.PI * 2 - Math.PI / 2;
+            const radius = ring * 60;
+            return {
+              group: [founder],
+              spread: true,
+              offset: [Math.cos(angle) * radius, Math.sin(angle) * radius] as [
+                number,
+                number,
+              ],
+            };
+          })
+        : []),
+    ]);
+    const markers = entries.map(({ group, spread, offset }) => {
       const founder =
         group.find((f) => f.handle === selected?.handle) ?? group[0];
       const button = document.createElement("button");
       button.type = "button";
       button.className = "map-avatar-pin";
+      button.dataset.spread = String(spread);
       button.style.display = "none";
       button.dataset.selected = String(
         group.some((f) => f.handle === selected?.handle),
@@ -325,8 +354,8 @@ export default function FounderMap({
       });
       return new maplibregl.Marker({
         element: button,
-        anchor: "bottom",
-        offset: [0, -12],
+        anchor: spread ? "center" : "bottom",
+        offset,
       })
         .setLngLat(founder.coordinates!)
         .addTo(map);
@@ -343,13 +372,17 @@ export default function FounderMap({
           .filter((feature) => feature.geometry.type === "Point")
           .map((feature) => String(feature.properties.pointKey)),
       );
-      for (const marker of markers) {
+      for (const [index, marker] of markers.entries()) {
         const point = marker.getLngLat();
-        marker.getElement().style.display = visible.has(
-          coordinateKey([point.lng, point.lat]),
-        )
-          ? ""
-          : "none";
+        const entry = entries[index];
+        const expanded = map.getZoom() >= 10;
+        const showAtZoom = entry.spread
+          ? expanded
+          : entry.group.length === 1 || !expanded;
+        marker.getElement().style.display =
+          showAtZoom && visible.has(coordinateKey([point.lng, point.lat]))
+            ? ""
+            : "none";
       }
     };
     map.on("render", syncVisibility);
