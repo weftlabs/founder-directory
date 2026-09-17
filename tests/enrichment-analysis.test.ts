@@ -41,7 +41,8 @@ test("description recipes distinguish founder behavior, source attribution and p
       model: { provider: "fixture", model: "fixture", revision: null },
       codeDigest: "test",
     });
-    assert.equal(recipe.promptVersion, "evidence-only-v2");
+    assert.equal(recipe.promptVersion, "evidence-only-v7");
+    assert.deepEqual(recipe.parameters, { temperature: 0, max_tokens: 1800 });
     assert.match(recipe.template, /Write values in English/);
     assert.match(recipe.template, /publisher_statement/);
     if (purpose === "founder_dna")
@@ -51,7 +52,60 @@ test("description recipes distinguish founder behavior, source attribution and p
       );
     if (purpose === "product_descriptions")
       assert.match(recipe.template, /planned or announced/);
+    if (purpose === "product_discovery")
+      assert.match(recipe.template, /Never replace a proper product name/);
+    if (purpose === "founder_dna") {
+      assert.match(recipe.template, /every factual clause/);
+      assert.match(recipe.template, /documenting.*public/i);
+      assert.match(recipe.template, /CEO.*not.*craft/i);
+    }
+    if (purpose === "product_descriptions") {
+      assert.match(recipe.template, /website exists does not establish.*stage/);
+      assert.match(recipe.template, /problem.*synthesis.*inference/);
+    }
   }
+});
+
+test("personal DNA excludes explicitly product-site evidence without discarding it from product analysis", () => {
+  const sources = [
+    {
+      ...evidence,
+      id: "personal",
+      provenance: { sourceKind: "self-reported", observedAt: null },
+    },
+    {
+      ...evidence,
+      id: "product",
+      provenance: {
+        sourceKind: "product-site",
+        observedAt: "2025-03-10T00:00:00Z",
+      },
+    },
+    { ...evidence, id: "unclassified" },
+  ];
+  const base = {
+    entityId: "f",
+    releaseId: "r",
+    generation: 0,
+    evidence: sources,
+    model: { provider: "fixture", model: "fixture", revision: null },
+    codeDigest: "test",
+  };
+  const dna = buildAnalysisInput({ ...base, purpose: "founder_dna" });
+  assert.deepEqual(
+    dna.evidence.map((row) => row.id),
+    ["personal", "unclassified"],
+  );
+  assert.deepEqual(dna.requiredEvidenceIds, ["personal", "unclassified"]);
+  assert.equal(
+    dna.recipe.selectionPolicy,
+    "exclude-product-site-for-personal-dna-v1",
+  );
+  assert.deepEqual(
+    buildAnalysisInput({ ...base, purpose: "product_descriptions" }).evidence,
+    sources,
+  );
+  assert.equal(sources.length, 3);
 });
 
 test("provider response schemas type every scalar enum and constant explicitly", () => {
@@ -214,105 +268,146 @@ test("identical embedding text shares identity across entities only in compatibl
   );
 });
 
-test("the runner saves exact input before dispatch, preserves failed response and reuses success", async () => {
-  const events: string[] = [];
-  const artifacts = new Map<string, Uint8Array>();
-  const runs: Parameters<AnalysisStore["saveAnalysis"]>[0][] = [];
-  const store: AnalysisStore = {
-    async assertAnalysisInputs(value) {
-      assert.equal(value.entityId, input.entityId);
-      assert.deepEqual(value.evidence, [
-        {
-          id: evidence.id,
-          artifactId: evidence.artifactId,
-          contentHash: evidence.contentHash,
-          text: evidence.text,
-          sourceUrl: evidence.sourceUrl,
-          extractorVersion: evidence.extractorVersion,
-        },
-      ]);
-    },
-    async findAnalysis(id) {
-      return runs.find((run) => run.id === id) ?? null;
-    },
-    async putArtifact(value) {
-      events.push("manifest");
-      const id = `a-${artifacts.size}`;
-      artifacts.set(id, value.body);
-      return { id };
-    },
-    async getArtifact(id) {
-      const body = artifacts.get(id);
-      return body ? { id, body } : null;
-    },
-    async findSuccessfulAnalysis(key) {
-      const run = runs.find(
-        (row) =>
-          row.status === "succeeded" &&
-          row.recipeDigest === key.recipeDigest &&
-          row.inputDigest === key.inputDigest,
-      );
-      return run
-        ? {
-            id: run.id,
-            output: run.output,
-            inputArtifactId: run.inputArtifactId,
-            releaseId: run.releaseId,
-            generation: run.generation,
-          }
-        : null;
-    },
-    async saveAnalysis(value) {
-      events.push("validated");
-      runs.push(value);
-      return value.id;
-    },
-  };
-  let raw = "invalid JSON";
-  const execute = async ({ requestBytes }: { requestBytes: Uint8Array }) => {
-    events.push("dispatch");
-    assert.equal(events.at(-2), "manifest");
-    assert.deepEqual(
-      JSON.parse(Buffer.from(requestBytes).toString()),
-      prepareAnalysis(input).request,
-    );
-    const id = `response-${artifacts.size}`;
-    artifacts.set(id, Buffer.from(raw));
-    return {
-      attemptId: "attempt1",
-      rawResponse: raw,
-      responseArtifactId: id,
-      usage: { tokens: 12 },
-      finishReason: "stop",
+const replayBaseInput = input;
+for (const provenance of [
+  undefined,
+  { sourceKind: "founder_bio", observedAt: "2026-01-01T00:00:00Z" },
+])
+  test(`the runner preserves inputs through replay (${provenance ? "with provenance" : "legacy"})`, async () => {
+    const input: AnalysisInput = {
+      ...replayBaseInput,
+      evidence: [{ ...evidence, ...(provenance ? { provenance } : {}) }],
     };
+    input.messages = renderAnalysisMessages(input);
+    const events: string[] = [];
+    const artifacts = new Map<string, Uint8Array>();
+    const runs: Parameters<AnalysisStore["saveAnalysis"]>[0][] = [];
+    const store: AnalysisStore = {
+      async assertAnalysisInputs(value) {
+        assert.equal(value.entityId, input.entityId);
+        assert.deepEqual(value.evidence, [
+          {
+            id: evidence.id,
+            artifactId: evidence.artifactId,
+            contentHash: evidence.contentHash,
+            text: evidence.text,
+            sourceUrl: evidence.sourceUrl,
+            extractorVersion: evidence.extractorVersion,
+            ...(provenance ? { provenance } : {}),
+          },
+        ]);
+      },
+      async findAnalysis(id) {
+        return runs.find((run) => run.id === id) ?? null;
+      },
+      async putArtifact(value) {
+        events.push("manifest");
+        const id = `a-${artifacts.size}`;
+        artifacts.set(id, value.body);
+        return { id };
+      },
+      async getArtifact(id) {
+        const body = artifacts.get(id);
+        return body ? { id, body } : null;
+      },
+      async findSuccessfulAnalysis(key) {
+        const run = runs.find(
+          (row) =>
+            row.status === "succeeded" &&
+            row.recipeDigest === key.recipeDigest &&
+            row.inputDigest === key.inputDigest,
+        );
+        return run
+          ? {
+              id: run.id,
+              output: run.output,
+              inputArtifactId: run.inputArtifactId,
+              releaseId: run.releaseId,
+              generation: run.generation,
+            }
+          : null;
+      },
+      async saveAnalysis(value) {
+        events.push("validated");
+        runs.push(value);
+        return value.id;
+      },
+    };
+    let raw = "invalid JSON";
+    const execute = async ({ requestBytes }: { requestBytes: Uint8Array }) => {
+      events.push("dispatch");
+      assert.equal(events.at(-2), "manifest");
+      assert.deepEqual(
+        JSON.parse(Buffer.from(requestBytes).toString()),
+        prepareAnalysis(input).request,
+      );
+      const id = `response-${artifacts.size}`;
+      artifacts.set(id, Buffer.from(raw));
+      return {
+        attemptId: "attempt1",
+        rawResponse: raw,
+        responseArtifactId: id,
+        usage: { tokens: 12 },
+        finishReason: "stop",
+      };
+    };
+    assert.equal((await runAnalysis(store, input, execute)).status, "failed");
+    assert.equal((await runAnalysis(store, input, execute)).status, "failed");
+    assert.equal(events.filter((event) => event === "dispatch").length, 1);
+    assert.ok(artifacts.has("response-1"));
+    assert.equal(runs[0].output, null);
+    raw =
+      '{"schemaVersion":"1","claims":[{"field":"description","value":"Tools","kind":"self_report","state":"supported","evidenceIds":["e1"]}]}';
+    assert.equal(
+      (await runAnalysis(store, input, execute, { rerunId: "explicit-retry" }))
+        .status,
+      "succeeded",
+    );
+    assert.equal(
+      (
+        await runAnalysis(
+          store,
+          { ...input, releaseId: "next-release" },
+          execute,
+        )
+      ).status,
+      "reused",
+    );
+    assert.equal(events.filter((event) => event === "dispatch").length, 2);
+    assert.notEqual(runs[0].id, runs[1].id);
+    const savedManifest = runs[1].inputArtifactId;
+    assert.deepEqual(
+      JSON.parse(Buffer.from(artifacts.get(savedManifest)!).toString())
+        .evidence,
+      input.evidence,
+    );
+    assert.equal(
+      (await replayAnalysis(store, savedManifest, execute)).status,
+      "reused",
+    );
+    await assert.rejects(
+      replayAnalysis(store, "missing", execute),
+      /missing_input/,
+    );
+  });
+
+test("provenance is part of immutable input identity without changing excerpt hashes", () => {
+  const first = prepareAnalysis(input);
+  const provenance = {
+    sourceKind: "founder_bio",
+    observedAt: "2026-01-01T00:00:00Z",
   };
-  assert.equal((await runAnalysis(store, input, execute)).status, "failed");
-  assert.equal((await runAnalysis(store, input, execute)).status, "failed");
-  assert.equal(events.filter((event) => event === "dispatch").length, 1);
-  assert.ok(artifacts.has("response-1"));
-  assert.equal(runs[0].output, null);
-  raw =
-    '{"schemaVersion":"1","claims":[{"field":"description","value":"Tools","kind":"self_report","state":"supported","evidenceIds":["e1"]}]}';
+  const changed = prepareAnalysis({
+    ...input,
+    evidence: [{ ...evidence, provenance }],
+  });
+  assert.notEqual(changed.inputDigest, first.inputDigest);
+  assert.equal(changed.evidence[0].contentHash, first.evidence[0].contentHash);
+  assert.deepEqual(changed.manifest.evidence[0].provenance, provenance);
+  provenance.sourceKind = "mutated";
   assert.equal(
-    (await runAnalysis(store, input, execute, { rerunId: "explicit-retry" }))
-      .status,
-    "succeeded",
-  );
-  assert.equal(
-    (await runAnalysis(store, { ...input, releaseId: "next-release" }, execute))
-      .status,
-    "reused",
-  );
-  assert.equal(events.filter((event) => event === "dispatch").length, 2);
-  assert.notEqual(runs[0].id, runs[1].id);
-  const savedManifest = runs[1].inputArtifactId;
-  assert.equal(
-    (await replayAnalysis(store, savedManifest, execute)).status,
-    "reused",
-  );
-  await assert.rejects(
-    replayAnalysis(store, "missing", execute),
-    /missing_input/,
+    changed.manifest.evidence[0].provenance?.sourceKind,
+    "founder_bio",
   );
 });
 

@@ -1,7 +1,12 @@
 // Layer: persistence. Owns worker reads and atomic child-target alignment.
 import { createHash } from "node:crypto";
 import type { Database } from "./db";
-import { stableDigest, stableUuid, type EvidenceInput } from "./contracts";
+import {
+  evidenceProvenance,
+  stableDigest,
+  stableUuid,
+  type EvidenceInput,
+} from "./contracts";
 import type { ClaimedStage } from "./pipeline";
 
 export class WorkerStore {
@@ -66,8 +71,12 @@ export class WorkerStore {
     artifactId?: string,
   ): Promise<EvidenceInput[]> {
     const rows = (
-      await this.db.query<Omit<EvidenceInput, "contentHash">>(
-        `SELECT DISTINCT e.id,e.artifact_id AS "artifactId",e.excerpt AS text,e.source_url AS "sourceUrl",e.extractor_version AS "extractorVersion"
+      await this.db.query<
+        Omit<EvidenceInput, "contentHash"> & {
+          metadata: Record<string, unknown>;
+        }
+      >(
+        `SELECT DISTINCT e.id,e.artifact_id AS "artifactId",e.excerpt AS text,e.source_url AS "sourceUrl",e.extractor_version AS "extractorVersion",a.metadata
       FROM enrichment_entity_evidence link JOIN enrichment_evidence e ON e.id=link.evidence_id
       JOIN enrichment_artifacts a ON a.id=e.artifact_id AND a.purged_at IS NULL
       WHERE link.entity_id=$1 AND ($2::uuid IS NULL OR e.artifact_id=$2) AND (a.expires_at IS NULL OR a.expires_at>now())
@@ -75,7 +84,11 @@ export class WorkerStore {
         [entityId, artifactId ?? null],
       )
     ).rows;
-    return rows.map((row) => ({ ...row, contentHash: stableDigest(row.text) }));
+    return rows.map(({ metadata, ...row }) => ({
+      ...row,
+      contentHash: stableDigest(row.text),
+      provenance: evidenceProvenance(metadata),
+    }));
   }
 
   async analysis(

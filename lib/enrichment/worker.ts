@@ -6,7 +6,12 @@ import {
   type JsonValue,
 } from "./contracts";
 import { runAnalysis, type ExecuteGeneration } from "./analysis";
-import { buildAnalysisInput, DEFAULT_STAGES, RECIPE_VERSION } from "./recipes";
+import {
+  buildAnalysisInput,
+  DEFAULT_STAGES,
+  RECIPE_VERSION,
+  selectAnalysisEvidence,
+} from "./recipes";
 import {
   STAGES,
   type ClaimedStage,
@@ -359,7 +364,13 @@ export function createStageHandlers(
         return { status: "succeeded", outputId };
       },
       async founder_dna(work) {
-        const result = await analyze(work, "founder_dna", await evidence(work));
+        const selected = selectAnalysisEvidence(
+          "founder_dna",
+          await evidence(work),
+        );
+        if (!selected.length)
+          return { status: "unavailable", reason: "no_personal_evidence" };
+        const result = await analyze(work, "founder_dna", selected);
         if (result.status === "failed" || result.status === "missing_input")
           return {
             status: "failed",

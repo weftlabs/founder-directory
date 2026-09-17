@@ -8,6 +8,7 @@ import {
   type Sql,
 } from "../lib/enrichment/db";
 import { EnrichmentStore } from "../lib/enrichment/store";
+import { WorkerStore } from "../lib/enrichment/worker-store";
 
 async function fixture() {
   const pg = new PGlite();
@@ -28,6 +29,98 @@ async function fixture() {
   await migrateEnrichment(db);
   return { pg, db, store: new EnrichmentStore(db) };
 }
+test("saved provenance reaches evidence inputs and rejects caller alterations", async () => {
+  const { pg, db, store } = await fixture();
+  try {
+    const provenance = {
+      sourceKind: "founder_bio",
+      observedAt: "2026-01-01T00:00:00Z",
+    };
+    const raw = await store.putArtifact({
+      kind: "legacy_import",
+      body: Buffer.from("Synthetic founder"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      importBatch: "test",
+      metadata: provenance,
+    });
+    const id = await store.addEvidence({
+      artifactId: raw.id,
+      extractorVersion: "v1",
+      locator: "$",
+      payload: {},
+      excerpt: "Synthetic founder",
+    });
+    const entityId = await store.createEntity("founder", "provenance");
+    await store.linkEvidence(entityId, id, "source");
+    const releaseId = await store.createRelease({
+      stages: ["dna"],
+      recipes: { dna: "recipe" },
+    });
+    await store.approveRelease(releaseId, raw.id, {
+      actor: "test",
+      reason: "offline",
+    });
+    await store.promoteRelease("test", releaseId, "initial");
+    await store.intake("test", entityId);
+    const evidence = await new WorkerStore(db).evidence(entityId);
+    assert.deepEqual(evidence[0].provenance, provenance);
+    const trusted = {
+      entityId,
+      releaseId,
+      generation: 0,
+      purpose: "dna",
+      recipeDigest: "recipe",
+      evidence,
+    };
+    await store.assertAnalysisInputs(trusted);
+    for (const forged of [
+      { ...provenance, sourceKind: "verified_fact" },
+      { ...provenance, observedAt: "2030-01-01" },
+      { sourceKind: null, observedAt: null },
+    ]) {
+      await assert.rejects(
+        store.assertAnalysisInputs({
+          ...trusted,
+          evidence: [{ ...evidence[0], provenance: forged }],
+        }),
+        /evidence_provenance_mismatch/,
+      );
+    }
+    // Old immutable manifests have no provenance; replay must not enrich them silently.
+    const { provenance: _provenance, ...legacy } = evidence[0];
+    void _provenance;
+    await store.assertAnalysisInputs({ ...trusted, evidence: [legacy] });
+    const unknown = await store.putArtifact({
+      kind: "legacy_import",
+      body: Buffer.from("Unknown source"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      importBatch: "test",
+      metadata: { sourceKind: { forged: "nested" }, observedAt: 5 },
+    });
+    const unknownId = await store.addEvidence({
+      artifactId: unknown.id,
+      extractorVersion: "v1",
+      locator: "$",
+      payload: {},
+      excerpt: "Unknown source",
+    });
+    await store.linkEvidence(entityId, unknownId, "source");
+    const unknownEvidence = await new WorkerStore(db).evidence(
+      entityId,
+      unknown.id,
+    );
+    assert.deepEqual(unknownEvidence[0].provenance, {
+      sourceKind: null,
+      observedAt: null,
+    });
+    await store.assertAnalysisInputs({ ...trusted, evidence: unknownEvidence });
+  } finally {
+    await pg.close();
+  }
+});
+
 test("scoped stage claims never consume another scope's work", async () => {
   const { pg, db, store } = await fixture();
   try {

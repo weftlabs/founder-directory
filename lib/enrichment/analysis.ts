@@ -7,6 +7,7 @@ import {
   type AnalysisRecipe,
   type AnalysisValidation,
   type EmbeddingInput,
+  type EvidenceInput,
   type JsonValue,
   type PreparedAnalysis,
   type RenderedAnalysisRequest,
@@ -250,14 +251,7 @@ export interface AnalysisStore {
     subjectName?: string;
     releaseId: string;
     generation: number;
-    evidence: {
-      id: string;
-      artifactId: string;
-      contentHash: string;
-      text: string;
-      sourceUrl: string | null;
-      extractorVersion: string;
-    }[];
+    evidence: EvidenceInput[];
   }): Promise<void>;
   findAnalysis(id: string): Promise<{
     id: string;
@@ -366,13 +360,22 @@ export async function runAnalysis(
     releaseId: prepared.releaseId,
     generation: prepared.generation,
     evidence: prepared.evidence.map(
-      ({ id, artifactId, contentHash, text, sourceUrl, extractorVersion }) => ({
+      ({
         id,
         artifactId,
         contentHash,
         text,
         sourceUrl,
         extractorVersion,
+        provenance,
+      }) => ({
+        id,
+        artifactId,
+        contentHash,
+        text,
+        sourceUrl,
+        extractorVersion,
+        ...(provenance !== undefined ? { provenance } : {}),
       }),
     ),
   });

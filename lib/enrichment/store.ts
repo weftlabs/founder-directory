@@ -2,6 +2,11 @@
 import "../assert-server";
 import { createHash, randomUUID } from "node:crypto";
 import type { Database, Sql } from "./db";
+import {
+  evidenceProvenance,
+  stableDigest,
+  type EvidenceInput,
+} from "./contracts";
 
 export type PaymentState = "pending" | "uncertain" | "settled" | "not_charged";
 export type ArtifactKind =
@@ -753,14 +758,7 @@ export class EnrichmentStore {
     purpose: string;
     recipeDigest: string;
     subjectName?: string;
-    evidence: Array<{
-      id: string;
-      artifactId: string;
-      contentHash: string;
-      text: string;
-      sourceUrl: string | null;
-      extractorVersion: string;
-    }>;
+    evidence: EvidenceInput[];
   }): Promise<void> {
     await this.db.transaction(async (tx) => {
       await tx.query("SELECT pg_advisory_xact_lock(73422002)");
@@ -784,9 +782,9 @@ export class EnrichmentStore {
       for (const evidence of input.evidence) {
         if (hash(json(evidence.text)) !== evidence.contentHash)
           throw new Error("evidence text digest mismatch");
-        await one(
+        const saved = await one<{ metadata: Record<string, unknown> }>(
           tx,
-          `SELECT e.id FROM enrichment_evidence e
+          `SELECT a.metadata FROM enrichment_evidence e
           JOIN enrichment_entity_evidence link ON link.evidence_id=e.id AND link.entity_id=$3
           JOIN enrichment_artifacts a ON a.id=e.artifact_id AND a.purged_at IS NULL
           WHERE e.id=$1 AND e.artifact_id=$2 AND e.excerpt=$4 AND e.source_url IS NOT DISTINCT FROM $5 AND e.extractor_version=$6 AND (a.expires_at IS NULL OR a.expires_at>now())
@@ -800,6 +798,12 @@ export class EnrichmentStore {
             evidence.extractorVersion,
           ],
         );
+        if (
+          evidence.provenance !== undefined &&
+          stableDigest(evidence.provenance) !==
+            stableDigest(evidenceProvenance(saved.metadata))
+        )
+          throw new Error("evidence_provenance_mismatch");
       }
     });
   }

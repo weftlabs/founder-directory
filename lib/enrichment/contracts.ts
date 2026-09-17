@@ -66,6 +66,19 @@ export interface EvidenceInput {
   text: string;
   sourceUrl: string | null;
   extractorVersion: string;
+  /** Saved source labels are untrusted data, not a verification of their claims. */
+  provenance?: { sourceKind: string | null; observedAt: string | null };
+}
+
+export function evidenceProvenance(
+  metadata: Record<string, unknown>,
+): NonNullable<EvidenceInput["provenance"]> {
+  return {
+    sourceKind:
+      typeof metadata.sourceKind === "string" ? metadata.sourceKind : null,
+    observedAt:
+      typeof metadata.observedAt === "string" ? metadata.observedAt : null,
+  };
 }
 
 export interface AnalysisRecipe {

@@ -188,6 +188,19 @@ habits. Planned releases and offers remain labeled as plans. Missing evidence
 stays unknown; JSON validation alone does not prove factual accuracy. Review
 candidate claims against the saved sources before approving a release.
 
+Evidence inputs can carry the source kind and observation time stored with their
+artifact. These labels are descriptive, not a verification of the claims. Supplied
+labels must match saved metadata before reuse or dispatch. Older manifests without
+these optional labels remain unchanged on replay. Observation time is not a
+publication date or proof that an announced event happened.
+
+Personal DNA excludes evidence explicitly labeled `product-site`; product analysis
+still uses it. Unknown source labels remain eligible, so this rule does not prove
+complete source classification. The exact selected evidence and selection version
+are retained in each manifest. No eligible personal evidence leaves the DNA stage
+unavailable rather than inventing personal traits. Descriptions are bounded to
+1,800 output tokens; a truncated response fails validation and is not published.
+
 Product context retains cited evidence and other saved excerpts at the exact
 product-page URL (ignoring fragments and trailing slashes). It does not retrieve
 new pages or expand to every page on a domain. The selected evidence is retained

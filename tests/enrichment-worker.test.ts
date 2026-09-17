@@ -18,6 +18,47 @@ import {
 import { runPendingStages } from "../lib/enrichment/pipeline";
 import type { EvidenceInput } from "../lib/enrichment/contracts";
 
+test("product-only evidence makes personal DNA unavailable without generation", async () => {
+  const worker = {
+    async assertConfiguration() {},
+    async stageOutput() {
+      return "product-artifact";
+    },
+    async evidence(): Promise<EvidenceInput[]> {
+      return [
+        {
+          id: "product",
+          artifactId: "product-artifact",
+          contentHash: "unused",
+          text: "Synthetic product offer",
+          sourceUrl: "https://product.example",
+          extractorVersion: "test",
+          provenance: { sourceKind: "product-site", observedAt: null },
+        },
+      ];
+    },
+  } as unknown as WorkerStore;
+  const handlers = createStageHandlers({} as EnrichmentStore, worker, {
+    mode: "rederive",
+    codeDigest: "test",
+    model: { provider: "fixture", model: "fixture", revision: null },
+    async executeGeneration() {
+      throw new Error("unexpected model dispatch");
+    },
+  });
+  assert.deepEqual(
+    await handlers.founder_dna({
+      id: "work",
+      leaseToken: "lease",
+      entityId: "founder",
+      releaseId: "release",
+      generation: 0,
+      stage: "founder_dna",
+    }),
+    { status: "unavailable", reason: "no_personal_evidence" },
+  );
+});
+
 test("product context retains uncited excerpts from the exact product page only", () => {
   const evidence: EvidenceInput[] = [
     ["ownership", "https://social.example/founder"],
