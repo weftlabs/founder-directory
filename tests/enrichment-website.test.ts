@@ -96,6 +96,9 @@ test("website captures exact response, then extracts capped source text; replay 
   assert.equal(result.status, "captured");
   if (result.status !== "captured") return;
   assert.equal(Buffer.from(result.artifact.body).toString(), f.raw);
+  assert.equal(result.artifact.metadata.sourceKind, "product-site");
+  assert.equal(typeof result.artifact.metadata.observedAt, "string");
+  assert.equal(result.artifact.metadata.requestedUrl, url);
   assert.equal(result.text, "Useful product sourc");
   assert.equal(result.provenance.truncated, true);
   assert.equal(result.provenance.publishedDate, "2026-01-01");

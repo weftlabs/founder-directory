@@ -83,6 +83,7 @@ export async function collectWebsite(
   client: WeftTransport,
   input: WebsiteInput,
   enabled: () => boolean,
+  now: () => Date = () => new Date(),
 ): Promise<WebsiteResult> {
   const requestedUrl = publicWebsiteUrl(input.websiteUrl);
   if (!requestedUrl || !input.sourceProfileArtifactId?.trim())
@@ -91,7 +92,24 @@ export async function collectWebsite(
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100000)
     throw new Error("invalid_website_excerpt_limit");
   const artifact = await collectWeft(
-    store,
+    {
+      planCollection: (value) => store.planCollection(value),
+      getReusableArtifact: (id) => store.getReusableArtifact(id),
+      reserveAttempt: (value) => store.reserveAttempt(value),
+      markDispatched: (id) => store.markDispatched(id),
+      markUncertain: (id, reason) => store.markUncertain(id, reason),
+      captureResponse: (value) =>
+        store.captureResponse({
+          ...value,
+          metadata: {
+            ...value.metadata,
+            sourceKind: "product-site",
+            observedAt: now().toISOString(),
+            requestedUrl,
+            sourceProfileArtifactId: input.sourceProfileArtifactId,
+          },
+        }),
+    },
     client,
     {
       scope: input.scope,
