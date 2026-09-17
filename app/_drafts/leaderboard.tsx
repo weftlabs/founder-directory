@@ -18,7 +18,7 @@ export default async function LeaderboardPage({
   const data = await loadDiscovery(query, "leaderboard");
   return (
     <>
-      <SiteHeader leaderboardCurrent />
+      <SiteHeader />
       <DiscoveryBrowser
         key={JSON.stringify(query)}
         {...data}

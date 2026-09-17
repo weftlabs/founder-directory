@@ -124,12 +124,10 @@ export default async function DiscoveryPreview({
     : founders;
   return (
     <>
-      <SiteHeader
-        mapCurrent={mode === "map"}
-        leaderboardCurrent={mode === "leaderboard"}
-      />
+      <SiteHeader mapCurrent={mode === "map"} />
       <p className="preview-banner">
-        Design preview · fictional sample profiles and counts
+        {mode === "leaderboard" ? "Leaderboard draft" : "Design preview"} ·
+        fictional sample profiles and counts
       </p>
       <DiscoveryBrowser
         key={JSON.stringify(params)}

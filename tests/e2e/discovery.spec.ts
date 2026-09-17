@@ -75,22 +75,21 @@ test("leaderboard changes order with metric and excludes unmeasured founders", a
   ).toBe(true);
 });
 
-test("public pages are reachable and never invent rankings", async ({
+test("map stays public while leaderboard remains a draft", async ({
   page,
+  request,
 }) => {
   await page.goto("/map");
   await expect(page.locator("header a[href='/map']")).toHaveAttribute(
     "aria-current",
     "page",
   );
-  await page.locator("header a[href='/leaderboard']").click();
-  await expect(
-    page.getByRole("heading", { name: "The spotlight is waiting." }),
-  ).toBeVisible();
+  await expect(page.locator("a[href='/leaderboard']")).toHaveCount(0);
   await expect(page.locator(".podium-card")).toHaveCount(0);
-  await expect(page.locator("header a[href='/leaderboard']")).toHaveAttribute(
-    "aria-current",
-    "page",
+  expect((await request.get("/leaderboard")).status()).toBe(404);
+  expect((await request.get("/_drafts/leaderboard")).status()).toBe(404);
+  expect(await (await request.get("/sitemap.xml")).text()).not.toContain(
+    "/leaderboard",
   );
 });
 

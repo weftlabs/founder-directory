@@ -173,9 +173,9 @@ export function DiscoveryBrowser({
             <b>{countries.length}</b>
             <span>countries listed</span>
           </div>
-          <Link href={mode === "map" ? "/leaderboard" : "/map"}>
+          <Link href={mode === "map" ? "/" : "/map"}>
             {mode === "map"
-              ? "Explore the leaderboard ↗"
+              ? "Browse the directory ↗"
               : "Meet them on the map ↗"}
           </Link>
         </div>
