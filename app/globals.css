@@ -767,7 +767,7 @@ main.about code {
   padding: 0 6px;
 }
 
-/* Founder map and discovery controls. */
+/* Map and leaderboard share the same founder discovery controls. */
 .discovery {
   width: 100%;
   padding: 44px 36px 64px;
@@ -927,6 +927,25 @@ main.about code {
   border-color: #d8ff3e;
   color: #15180b;
 }
+.metric-tabs {
+  padding: 4px;
+  border: 1px solid #303329;
+  background: #171914;
+  border-radius: 9px;
+  display: flex;
+}
+.metric-tabs button {
+  border: 0;
+  background: none;
+  color: #a7aa98;
+  padding: 9px 16px;
+  font-size: 12px;
+  border-radius: 5px;
+}
+.metric-tabs button[aria-pressed="true"] {
+  color: #d8ff3e;
+  background: #2b3020;
+}
 .discovery-body {
   border-top: 1px solid #303329;
 }
@@ -988,7 +1007,7 @@ main.about code {
   background: #d8ff3e0c;
   box-shadow: inset 3px 0 #d8ff3e;
 }
-.row-location {
+.row-rank {
   font-size: 13px;
   color: #73796a;
   min-width: 18px;
@@ -1071,6 +1090,30 @@ main.about code {
   border: 1px solid #303329;
   padding: 3px 6px;
   border-radius: 4px;
+}
+.row-metrics {
+  text-align: right;
+  min-width: 54px;
+  flex-shrink: 0;
+}
+.row-metrics b {
+  font-size: 18px;
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+}
+.row-metrics > span,
+.row-metrics small {
+  display: block;
+  color: #8b9280;
+  font-size: 9px;
+  margin-top: 2px;
+}
+.row-metrics a {
+  display: block;
+  margin-top: 5px;
+  font-size: 10px;
+  color: #d8ff3e;
+  text-decoration: none;
 }
 .map-panel {
   min-height: 640px;
@@ -1274,6 +1317,77 @@ main.about code {
   color: #d8ff3e;
   font-size: 12px !important;
 }
+.leaderboard {
+  max-width: 1180px;
+}
+.ranking-explanation {
+  color: #a7aa98;
+  font-size: 12px;
+  line-height: 1.6;
+  margin: -6px 0 26px;
+}
+.podium {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 30px;
+}
+.podium-card {
+  padding: 22px;
+  text-decoration: none;
+  background: linear-gradient(135deg, #22291a, #12160f);
+  border: 1px solid #343c29;
+  border-radius: 12px;
+}
+.podium-card:first-child {
+  border-color: #829e3a;
+  background:
+    radial-gradient(ellipse at top right, #d8ff3e22, transparent 70%), #171e10;
+}
+.podium-card:hover {
+  border-color: #d8ff3e;
+}
+.podium-rank {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 26px;
+  color: #d8ff3e;
+  font-weight: 400;
+  margin-bottom: 24px;
+}
+.podium-rank > span {
+  font-size: 9px;
+  color: #a7aa98;
+  letter-spacing: 0.14em;
+}
+.podium-card > .discovery-avatar {
+  width: 58px;
+  height: 58px;
+  margin-bottom: 16px;
+  font-size: 20px;
+}
+.podium-card h2 {
+  font-size: 20px;
+  letter-spacing: -0.03em;
+}
+.podium-card p {
+  color: #a7aa98;
+  font-size: 11px;
+  margin: 6px 0 24px;
+  line-height: 1.5;
+}
+.podium-card > strong {
+  font-size: 36px;
+  font-weight: 450;
+  letter-spacing: -0.04em;
+}
+.podium-card small {
+  color: #a7aa98;
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
 .discovery-notice {
   padding: 16px;
   border: 1px solid #75683f;
@@ -1408,7 +1522,7 @@ main.about code {
     padding: 16px 12px;
     gap: 8px;
   }
-  .row-location {
+  .row-rank {
     min-width: 12px;
     font-size: 11px;
   }
@@ -1419,8 +1533,40 @@ main.about code {
   .row-person > a > span {
     display: none;
   }
+  .row-metrics b {
+    font-size: 15px;
+  }
   .row-category {
     display: none;
+  }
+  .podium {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  .podium-card {
+    position: relative;
+    padding: 18px 18px 18px 80px;
+  }
+  .podium-rank {
+    font-size: 18px;
+    margin-bottom: 12px;
+  }
+  .podium-card > .discovery-avatar {
+    position: absolute;
+    left: 18px;
+    top: 58px;
+    width: 44px;
+    height: 44px;
+    font-size: 15px;
+  }
+  .podium-card h2 {
+    font-size: 19px;
+  }
+  .podium-card p {
+    margin-bottom: 14px;
+  }
+  .podium-card > strong {
+    font-size: 28px;
   }
 }
 

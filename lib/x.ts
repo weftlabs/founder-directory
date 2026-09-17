@@ -1,3 +1,4 @@
+import { readIntroMetrics, type IntroMetrics } from "./discovery";
 import { WeftError, type FetchResponse } from "@weft-labs/sdk";
 import { defaultWeftDependencies, type WeftDependencies } from "./weft";
 import { emptyPlace } from "./place";
@@ -66,6 +67,7 @@ function asNumber(value: unknown): number | null {
 }
 
 export type TrendHit = {
+  introMetrics?: IntroMetrics;
   handle: string;
   name: string;
   text: string;
@@ -212,7 +214,14 @@ function parseHits(payload: Record<string, unknown>): TrendHit[] {
     }
     if (!/^[0-9]{1,25}$/.test(rawTweetId)) continue;
     if (!isIntro(text)) continue;
-    out.push({ handle, name, text, tweetId: rawTweetId });
+    const introMetrics = readIntroMetrics(row);
+    out.push({
+      handle,
+      name,
+      text,
+      tweetId: rawTweetId,
+      ...(introMetrics ? { introMetrics } : {}),
+    });
   }
   return out;
 }

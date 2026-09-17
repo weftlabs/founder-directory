@@ -1,13 +1,69 @@
 import type { Founder } from "./model";
 import { canonicalCountry } from "./place-names";
 
+export type IntroMetrics = {
+  likes: number | null;
+  views: number | null;
+  observedAt: string;
+};
+export type Metric = "likes" | "views";
 export type DiscoveryFounder = Pick<
   Founder,
-  "handle" | "name" | "bio" | "city" | "country" | "category" | "avatarUrl"
+  | "handle"
+  | "name"
+  | "bio"
+  | "city"
+  | "country"
+  | "category"
+  | "avatarUrl"
+  | "introUrl"
 > & {
   coordinates: [number, number] | null;
+  introMetrics: IntroMetrics | null;
 };
 
+function count(value: unknown): number | null {
+  if (typeof value === "string" && /^\d+$/.test(value)) value = Number(value);
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : null;
+}
+export function readIntroMetrics(
+  row: Record<string, unknown>,
+  observedAt = new Date().toISOString(),
+): IntroMetrics | null {
+  const publicMetrics =
+    row.public_metrics && typeof row.public_metrics === "object"
+      ? (row.public_metrics as Record<string, unknown>)
+      : {};
+  const views =
+    row.views && typeof row.views === "object"
+      ? (row.views as Record<string, unknown>).count
+      : row.views;
+  const likes = count(
+    row.favorite_count ?? row.like_count ?? publicMetrics.like_count,
+  );
+  const viewCount = count(
+    row.view_count ?? views ?? publicMetrics.impression_count,
+  );
+  return likes !== null || viewCount !== null
+    ? { likes, views: viewCount, observedAt }
+    : null;
+}
+export function rankFounders<
+  T extends {
+    handle: string;
+    introMetrics?: { likes: number | null; views: number | null } | null;
+  },
+>(founders: T[], metric: Metric): T[] {
+  return founders
+    .filter((f) => f.introMetrics?.[metric] != null)
+    .sort(
+      (a, b) =>
+        b.introMetrics![metric]! - a.introMetrics![metric]! ||
+        a.handle.localeCompare(b.handle),
+    );
+}
 export function filterDiscovery(
   founders: DiscoveryFounder[],
   q: string,
@@ -39,6 +95,7 @@ export type DiscoveryQuery = {
   category: string;
   country: string;
   city: string;
+  metric: Metric;
   page: number;
   bounds?: string;
 };
@@ -46,6 +103,7 @@ export type DiscoveryPageInfo = {
   query: DiscoveryQuery;
   total: number;
   globalTotal: number;
+  rankedTotal: number;
   mappedTotal: number;
   countries: string[];
   categories: string[];
@@ -86,6 +144,7 @@ export function discoveryQuery(
     category: get("category"),
     country: get("country"),
     city: get("city"),
+    metric: get("metric") === "views" ? "views" : "likes",
     ...(mapBounds(get("bounds")) ? { bounds: get("bounds") } : {}),
     page: Number.isSafeInteger(page) && page > 0 ? Math.min(page, 10000) : 1,
   };
@@ -93,6 +152,7 @@ export function discoveryQuery(
 export function discoveryPage(
   founders: DiscoveryFounder[],
   query: DiscoveryQuery,
+  mode: "map" | "leaderboard" = "map",
 ) {
   const candidates = filterDiscovery(
     founders,
@@ -111,7 +171,7 @@ export function discoveryPage(
       f.city === query.city ||
       (f.coordinates && selectedPlaces.has(JSON.stringify(f.coordinates))),
   );
-  const bounds = mapBounds(query.bounds);
+  const bounds = mode === "map" ? mapBounds(query.bounds) : null;
   const inView = bounds
     ? filtered.filter((f) => {
         if (!f.coordinates) return false;
@@ -143,7 +203,9 @@ export function discoveryPage(
       representatives.push(founder);
     }
   }
-  const rows = [...representatives, ...remaining, ...unmapped];
+  const ranked = rankFounders(inView, query.metric);
+  const rows =
+    mode === "map" ? [...representatives, ...remaining, ...unmapped] : ranked;
   const places = new Map<string, MapPlace>();
   for (const f of filtered) {
     if (!f.coordinates || !f.city || !f.country) continue;
@@ -163,6 +225,7 @@ export function discoveryPage(
     query,
     total: inView.length,
     globalTotal: founders.length,
+    rankedTotal: ranked.length,
     mappedTotal: inView.filter((f) => f.coordinates).length,
     countries: [
       ...new Set(
@@ -170,7 +233,7 @@ export function discoveryPage(
       ),
     ].sort(),
     categories: [...new Set(founders.map((f) => f.category))].sort(),
-    places: [...places.values()],
+    places: mode === "map" ? [...places.values()] : [],
     hasMore: rows.length > offset + DISCOVERY_PAGE_SIZE,
   };
   return {

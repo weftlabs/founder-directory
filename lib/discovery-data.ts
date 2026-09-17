@@ -3,9 +3,12 @@ import { listFounders } from "./db";
 import { locateFounder } from "./geography";
 import { discoveryPage, type DiscoveryQuery } from "./discovery";
 
-export async function loadDiscovery(query: DiscoveryQuery) {
+export async function loadDiscovery(
+  query: DiscoveryQuery,
+  mode: "map" | "leaderboard",
+) {
   if (!process.env.DATABASE_URL)
-    return { ...discoveryPage([], query), unavailable: false };
+    return { ...discoveryPage([], query, mode), unavailable: false };
   try {
     const rows = await listFounders();
     const founders = rows.map((f) => ({
@@ -16,10 +19,12 @@ export async function loadDiscovery(query: DiscoveryQuery) {
       country: f.country,
       category: f.category,
       avatarUrl: f.avatarUrl,
+      introUrl: f.introUrl,
+      introMetrics: f.introMetrics ?? null,
       coordinates: locateFounder(f),
     }));
-    return { ...discoveryPage(founders, query), unavailable: false };
+    return { ...discoveryPage(founders, query, mode), unavailable: false };
   } catch {
-    return { ...discoveryPage([], query), unavailable: true };
+    return { ...discoveryPage([], query, mode), unavailable: true };
   }
 }

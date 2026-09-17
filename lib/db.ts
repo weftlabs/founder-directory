@@ -1,4 +1,6 @@
 import "./assert-server";
+import type { TrendHit } from "./x";
+import type { IntroMetrics } from "./discovery";
 import { neon } from "@neondatabase/serverless";
 import type { DirectoryFilters, LocationOption } from "./directory-filters";
 import {
@@ -41,6 +43,7 @@ export async function ensureSchema() {
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`;
   await db`ALTER TABLE founders ADD COLUMN IF NOT EXISTS intro_url TEXT`;
+  await db`ALTER TABLE founders ADD COLUMN IF NOT EXISTS intro_metrics JSONB`;
   await db`CREATE UNIQUE INDEX IF NOT EXISTS founders_handle_lower_idx ON founders (lower(handle))`;
   await db`CREATE TABLE IF NOT EXISTS scan_meta (
     id INTEGER PRIMARY KEY DEFAULT 1,
@@ -58,6 +61,7 @@ export async function ensureSchema() {
 }
 
 type Row = {
+  intro_metrics?: IntroMetrics | null;
   handle: string;
   name: string;
   bio: string | null;
@@ -83,6 +87,7 @@ function toFounder(row: Row): Founder {
       ? (JSON.parse(row.vibe_signals) as VibeCheck["signals"])
       : row.vibe_signals;
   return {
+    introMetrics: row.intro_metrics ?? null,
     handle: row.handle,
     name: row.name,
     bio: row.bio,
@@ -314,6 +319,7 @@ export async function upsertFounder(founder: Founder) {
       vibe_score = excluded.vibe_score,
       vibe_signals = excluded.vibe_signals,
       intro_text = COALESCE(excluded.intro_text, founders.intro_text),
+      intro_metrics = CASE WHEN excluded.intro_url IS NOT NULL AND excluded.intro_url IS DISTINCT FROM founders.intro_url THEN NULL ELSE founders.intro_metrics END,
       intro_url = COALESCE(excluded.intro_url, founders.intro_url),
       updated_at = now()
   `;
@@ -415,4 +421,25 @@ export async function lastScanAt(): Promise<string | null> {
   const value = rows[0]?.last_scan_at;
   if (!value) return null;
   return value instanceof Date ? value.toISOString() : value;
+}
+
+// Only update the same introduction. A newer post is not the displayed source.
+export async function saveIntroMetrics(
+  hits: Pick<TrendHit, "handle" | "tweetId" | "introMetrics">[],
+) {
+  const snapshots = hits
+    .filter((hit) => hit.tweetId && hit.introMetrics)
+    .map((hit) => ({
+      url: `https://x.com/${hit.handle}/status/${hit.tweetId}`,
+      metrics: hit.introMetrics,
+    }));
+  if (!snapshots.length) return;
+  await ensureSchema();
+  await sql()`WITH incoming AS (
+    SELECT DISTINCT ON (lower(value->>'url')) lower(value->>'url') AS url, value->'metrics' AS metrics
+    FROM jsonb_array_elements(${JSON.stringify(snapshots)}::jsonb)
+    ORDER BY lower(value->>'url'), value->'metrics'->>'observedAt' DESC
+  ) UPDATE founders SET intro_metrics = incoming.metrics
+    FROM incoming WHERE lower(founders.intro_url) = incoming.url
+    AND (founders.intro_metrics IS NULL OR founders.intro_metrics->>'observedAt' <= incoming.metrics->>'observedAt')`;
 }

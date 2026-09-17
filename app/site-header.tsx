@@ -7,10 +7,12 @@ export function SiteHeader({
   directoryCurrent = false,
   aboutCurrent = false,
   mapCurrent = false,
+  leaderboardCurrent = false,
 }: {
   directoryCurrent?: boolean;
   aboutCurrent?: boolean;
   mapCurrent?: boolean;
+  leaderboardCurrent?: boolean;
 }) {
   return (
     <header className="top">
@@ -32,6 +34,13 @@ export function SiteHeader({
           aria-current={mapCurrent ? "page" : undefined}
         >
           Map
+        </Link>
+        <Link
+          prefetch={false}
+          href="/leaderboard"
+          aria-current={leaderboardCurrent ? "page" : undefined}
+        >
+          Leaderboard
         </Link>
         <Link
           prefetch={false}
