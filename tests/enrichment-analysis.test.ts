@@ -26,6 +26,34 @@ const evidence = {
   extractorVersion: "1",
 };
 
+test("description recipes distinguish founder behavior, source attribution and planned product claims", () => {
+  for (const purpose of [
+    "founder_dna",
+    "product_discovery",
+    "product_descriptions",
+  ] as const) {
+    const { recipe } = buildAnalysisInput({
+      entityId: "f",
+      releaseId: "r",
+      generation: 0,
+      purpose,
+      evidence: [evidence],
+      model: { provider: "fixture", model: "fixture", revision: null },
+      codeDigest: "test",
+    });
+    assert.equal(recipe.promptVersion, "evidence-only-v2");
+    assert.match(recipe.template, /Write values in English/);
+    assert.match(recipe.template, /publisher_statement/);
+    if (purpose === "founder_dna")
+      assert.match(
+        recipe.template,
+        /Product capabilities are not founder skills or habits/,
+      );
+    if (purpose === "product_descriptions")
+      assert.match(recipe.template, /planned or announced/);
+  }
+});
+
 test("provider response schemas type every scalar enum and constant explicitly", () => {
   for (const purpose of [
     "founder_dna",

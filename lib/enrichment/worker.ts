@@ -6,7 +6,7 @@ import {
   type JsonValue,
 } from "./contracts";
 import { runAnalysis, type ExecuteGeneration } from "./analysis";
-import { buildAnalysisInput, DEFAULT_STAGES } from "./recipes";
+import { buildAnalysisInput, DEFAULT_STAGES, RECIPE_VERSION } from "./recipes";
 import {
   STAGES,
   type ClaimedStage,
@@ -53,7 +53,7 @@ export function buildWorkerManifest(configuration: WorkerConfiguration) {
     codeDigest: configuration.codeDigest,
     model: configuration.model,
     embedding: configuration.embedding ?? null,
-    recipeVersion: "evidence-only-v1",
+    recipeVersion: RECIPE_VERSION,
     extractorVersion: "atlas-profile-v1",
   };
   const recipes = Object.fromEntries(
@@ -101,6 +101,33 @@ interface Product {
   name: string;
   website: string | null;
   evidenceIds: string[];
+}
+
+function canonicalProductUrl(value: string | null): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    url.hash = "";
+    url.pathname = url.pathname.replace(/\/+$/, "");
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+/** Preserve ownership citations and all saved excerpts from the exact product page. */
+export function selectProductEvidence(
+  product: Pick<Product, "website" | "evidenceIds">,
+  evidence: EvidenceInput[],
+): EvidenceInput[] {
+  const cited = new Set(product.evidenceIds);
+  const website = canonicalProductUrl(product.website);
+  return evidence.filter(
+    (row) =>
+      cited.has(row.id) ||
+      (website !== null && canonicalProductUrl(row.sourceUrl) === website),
+  );
 }
 
 /** Parses the enabled Atlas profile contract only. Unknown contracts fail visibly. */
@@ -187,14 +214,18 @@ export function createStageHandlers(
     const products = found.value as unknown as Product[];
     if (!Array.isArray(products) || products.length > 8)
       throw new Error("products_invalid");
+    const selected = await evidence(work);
     const result = [];
     for (const product of products) {
+      const evidenceIds = selectProductEvidence(product, selected).map(
+        (row) => row.id,
+      );
       const id = await workerStore.ensureProduct(
         work,
         product.name,
-        product.evidenceIds,
+        evidenceIds,
       );
-      result.push({ id, name: product.name, evidenceIds: product.evidenceIds });
+      result.push({ id, name: product.name, evidenceIds });
     }
     return result;
   }

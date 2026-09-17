@@ -12,9 +12,64 @@ import { WorkerStore } from "../lib/enrichment/worker-store";
 import {
   createStageHandlers,
   buildWorkerManifest,
+  selectProductEvidence,
   type WorkerDependencies,
 } from "../lib/enrichment/worker";
 import { runPendingStages } from "../lib/enrichment/pipeline";
+import type { EvidenceInput } from "../lib/enrichment/contracts";
+
+test("product context retains uncited excerpts from the exact product page only", () => {
+  const evidence: EvidenceInput[] = [
+    ["ownership", "https://social.example/founder"],
+    ["description", "https://product.example/tool"],
+    ["roadmap", "https://product.example/tool/#roadmap"],
+    ["sibling", "https://product.example/other"],
+    ["query", "https://product.example/tool?product=other"],
+    ["other-host", "https://other.example/tool"],
+    ["no-source", null],
+  ].map(([id, sourceUrl]) => ({
+    id: id!,
+    artifactId: `artifact-${id}`,
+    contentHash: `hash-${id}`,
+    text: `Synthetic ${id}`,
+    sourceUrl,
+    extractorVersion: "test-v1",
+  }));
+  const product = {
+    website: "https://product.example/tool/",
+    evidenceIds: ["ownership", "description"],
+  };
+  const before = structuredClone({ evidence, product });
+  assert.deepEqual(
+    selectProductEvidence(product, evidence).map((row) => row.id),
+    ["ownership", "description", "roadmap"],
+  );
+  assert.deepEqual({ evidence, product }, before);
+});
+
+test("product context does not expand null, malformed, or non-HTTP websites", () => {
+  for (const website of [
+    null,
+    "not a URL",
+    "file:///product",
+    "javascript:alert(1)",
+  ]) {
+    const evidence: EvidenceInput[] = ["cited", "uncited"].map((id) => ({
+      id,
+      artifactId: `artifact-${id}`,
+      contentHash: `hash-${id}`,
+      text: "Synthetic evidence",
+      sourceUrl: website,
+      extractorVersion: "test-v1",
+    }));
+    assert.deepEqual(
+      selectProductEvidence({ website, evidenceIds: ["cited"] }, evidence).map(
+        (row) => row.id,
+      ),
+      ["cited"],
+    );
+  }
+});
 
 async function fixture(
   options: { products?: "absent" | "unknown"; protected?: boolean } = {},

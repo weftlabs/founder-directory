@@ -182,6 +182,20 @@ An unchanged successful input reuses its result; a changed recipe creates a new
 derived result without source recollection. Model calls can still cost money.
 Saving a request does not guarantee identical output from a later model call.
 
+The description recipes distinguish explicit founder statements, product-site
+statements and inferences. Product capabilities are not personal skills or work
+habits. Planned releases and offers remain labeled as plans. Missing evidence
+stays unknown; JSON validation alone does not prove factual accuracy. Review
+candidate claims against the saved sources before approving a release.
+
+Product context retains cited evidence and other saved excerpts at the exact
+product-page URL (ignoring fragments and trailing slashes). It does not retrieve
+new pages or expand to every page on a domain. The selected evidence is retained
+in the analysis manifest for comparison and replay.
+The current acquisition worker supplies its profile-extraction artifact only;
+this selection rule does not add website collection. An analysis pilot using
+separately imported excerpts does not prove the full acquisition worker path.
+
 `publish --id ANALYSIS_UUID --confirm-write` updates the projection only when
 the release, evidence generation and current intake revision permit it. Failed
 or stale candidates do not overwrite the last eligible result. Publication is
