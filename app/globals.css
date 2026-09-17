@@ -1826,9 +1826,6 @@ main.about code {
     gap: 15px;
     flex-wrap: wrap;
   }
-  .top-nav .online {
-    display: none;
-  }
   .products-page {
     padding: 20px 18px 50px;
   }
