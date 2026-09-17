@@ -5,7 +5,171 @@ import type {
   CapturedArtifact,
 } from "../lib/enrichment/collection";
 import type { WeftTransport } from "../lib/weft";
-import { collectWebsite } from "../lib/enrichment/website";
+import {
+  collectWebsite,
+  parseWebsiteArtifact,
+} from "../lib/enrichment/website";
+import { collectWeft } from "../lib/enrichment/weft-transport";
+import { workerAdapters } from "../lib/enrichment/worker-runtime";
+
+test("Jina archives free JSON before parsing and replays without dispatch", async () => {
+  const raw = {
+    code: 200,
+    data: {
+      url,
+      content: "Public product page source text",
+      publishedTime: "2026-09-01",
+    },
+  };
+  const f = fixture(raw);
+  const planned: unknown[] = [];
+  f.store.planCollection = async (value) => {
+    planned.push(value.args);
+    return { id: "request" };
+  };
+  let calls = 0;
+  const client: WeftTransport = {
+    fetch: async (request) => {
+      calls++;
+      assert.equal(request.url, `https://r.jina.ai/${url}`);
+      assert.equal(request.method, "GET");
+      assert.equal(request.operationId, "local-reviewed-jina-reader");
+      assert.equal(request.maxCostUsd, "0");
+      assert.deepEqual(request.headers, {
+        Accept: "application/json",
+        "X-No-Cache": "true",
+        "X-Robots-Txt": "FounderDirectory",
+        DNT: "true",
+      });
+      // Runtime free response value is newer than the pinned SDK payment enum.
+      return {
+        status: 200,
+        headers: {},
+        bodyBase64: Buffer.from(JSON.stringify(raw)).toString("base64"),
+        paidUsd: "0",
+        heldUsd: "0",
+        paymentStatus: "not_required",
+        txHash: null,
+        artifactId: null,
+        merchant: null,
+      } as unknown as Awaited<ReturnType<WeftTransport["fetch"]>>;
+    },
+  };
+  const input = {
+    ...f.input,
+    provider: "jina" as const,
+    maxCostUsd: "0",
+    policy: { ...f.input.policy, operation: "local-reviewed-jina-reader" },
+  };
+  const result = await collectWebsite(f.store, client, input, () => true);
+  assert.equal(result.status, "captured");
+  if (result.status !== "captured") return;
+  assert.equal(result.artifact.metadata.websiteProvider, "jina");
+  assert.equal(result.provenance.extractorVersion, "jina-text-v1");
+  assert.equal(result.provenance.truncated, true);
+  assert.equal(result.provenance.publishedDate, "2026-09-01");
+  assert.deepEqual(
+    JSON.parse(Buffer.from(result.artifact.body).toString()),
+    raw,
+  );
+  await collectWebsite(
+    f.store,
+    client,
+    { ...input, mode: "replay" },
+    () => false,
+  );
+  assert.equal(calls, 1);
+  const adapters = workerAdapters(
+    f.store,
+    client,
+    {
+      scope: "test",
+      budgetId: "budget",
+      generation: 0,
+      policies: { "local-reviewed-jina-reader": input.policy },
+      websiteMaxCostUsd: "0",
+      sourceMaxCostUsd: "0.001",
+      modelMaxCostUsd: "0.001",
+    },
+    () => true,
+  );
+  assert.equal(
+    (
+      await adapters.collectWebsite({
+        entityId: "founder",
+        generation: 0,
+        provider: "jina",
+        websiteUrl: url,
+        sourceProfileArtifactId: "profile-artifact",
+      })
+    ).status,
+    "captured",
+  );
+  assert.deepEqual((planned[0] as { headers: unknown }).headers, {
+    accept: "application/json",
+    "x-no-cache": "true",
+    "x-robots-txt": "FounderDirectory",
+    dnt: "true",
+  });
+  for (const payload of [
+    { code: 500, data: raw.data },
+    { code: 200, data: { url, summary: "not source" } },
+    { code: 200, data: { url: "https://other.example/", content: "wrong" } },
+    null,
+  ]) {
+    assert.equal(
+      parseWebsiteArtifact(
+        { ...result.artifact, body: Buffer.from(JSON.stringify(payload)) },
+        input,
+      ).status,
+      "unavailable",
+    );
+  }
+  assert.equal(
+    parseWebsiteArtifact(result.artifact, { ...input, provider: "exa" }).status,
+    "unavailable",
+  );
+  await assert.rejects(
+    collectWebsite(
+      f.store,
+      client,
+      { ...input, maxCostUsd: "0.001" },
+      () => true,
+    ),
+    /jina_requires_zero_cap/,
+  );
+  const invalidHeaders: Record<string, string>[] = [
+    { DNT: "false" },
+    { "X-No-Cache": "false" },
+    { "X-Robots-Txt": "OtherBot" },
+    { Authorization: "secret" },
+  ];
+  for (const headers of invalidHeaders) {
+    await assert.rejects(
+      collectWeft(
+        f.store,
+        client,
+        {
+          scope: "test",
+          budgetId: "budget",
+          generation: 0,
+          mode: "acquire",
+          policy: input.policy,
+          operation: "local-reviewed-jina-reader",
+        },
+        {
+          url: `https://r.jina.ai/${url}`,
+          headers,
+          maxCostUsd: "0",
+          operationId: "local-reviewed-jina-reader",
+        },
+        () => true,
+      ),
+      /unsupported_collection_header/,
+    );
+  }
+  assert.equal(calls, 1);
+});
 
 const url = "https://product.example/about";
 function fixture(payload: unknown, status = 200) {

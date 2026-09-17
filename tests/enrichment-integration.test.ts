@@ -21,6 +21,59 @@ import { weftGeneration } from "../lib/enrichment/generation";
 import { fetchProfile, searchIntroPage } from "../lib/x";
 import { response } from "./fixtures";
 
+test("zero-cap free capture is durable and closes as not charged; ambiguous money stays pending", async () => {
+  const { pg, db, store } = await fixture();
+  try {
+    const budgetId = randomUUID();
+    await store.createBudget({
+      id: budgetId,
+      scope: "test",
+      currency: "USD",
+      capMicros: "0",
+    });
+    for (const [generation, heldUsd] of ["0", "0.001"].entries()) {
+      await collectResponse(
+        store,
+        {
+          scope: "test",
+          budgetId,
+          generation,
+          mode: "acquire",
+          operation: "free-fixture",
+          args: {},
+          capMicros: "0",
+          policy: {
+            id: "fixture",
+            scope: "test",
+            operation: "free-fixture",
+            storageVerified: true,
+            retentionApproved: true,
+          },
+        },
+        async () => ({
+          body: Buffer.from("source"),
+          status: 200,
+          contentType: "text/plain",
+          paymentStatus: "not_required",
+          paidUsd: "0",
+          heldUsd,
+        }),
+      );
+    }
+    const rows = (
+      await db.query<{ payment_state: string }>(
+        "SELECT payment_state FROM enrichment_collection_attempts",
+      )
+    ).rows;
+    assert.deepEqual(rows.map((row) => row.payment_state).sort(), [
+      "not_charged",
+      "pending",
+    ]);
+  } finally {
+    await pg.close();
+  }
+});
+
 test("model HTTP failures remain archived and cannot enter output validation", async () => {
   const { pg, db, store } = await fixture();
   try {

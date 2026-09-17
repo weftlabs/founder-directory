@@ -96,7 +96,7 @@ async function workerFile(
   if (
     configuration.website !== undefined &&
     (!record(configuration.website) ||
-      configuration.website.provider !== "exa" ||
+      !["exa", "jina"].includes(String(configuration.website.provider)) ||
       (configuration.website.maxExcerptChars !== undefined &&
         (!Number.isSafeInteger(configuration.website.maxExcerptChars) ||
           Number(configuration.website.maxExcerptChars) < 1 ||
@@ -130,6 +130,12 @@ async function workerFile(
       !nonempty(transport.websiteMaxCostUsd)
     )
       throw new Error("invalid_website_cap_configuration");
+    if (
+      record(configuration.website) &&
+      configuration.website.provider === "jina" &&
+      transport.websiteMaxCostUsd !== "0"
+    )
+      throw new Error("jina_requires_zero_cap");
     if (
       transport.embeddingEndpoint !== undefined &&
       (!record(transport.embeddingEndpoint) ||

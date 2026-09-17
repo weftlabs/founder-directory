@@ -135,6 +135,7 @@ async function fixture(
     products?: "absent" | "unknown";
     protected?: boolean;
     website?: boolean;
+    websiteProvider?: "exa" | "jina";
     websiteFailure?: boolean;
     mismatchedProfile?: boolean;
   } = {},
@@ -166,7 +167,9 @@ async function fixture(
     codeDigest: "synthetic-v1",
     model: { provider: "synthetic", model: "fixture", revision: "v1" },
     embedding: { model: "fixture", modelVersion: "v1", dimensions: 2 },
-    ...(options.website ? { website: { provider: "exa" as const } } : {}),
+    ...(options.website
+      ? { website: { provider: options.websiteProvider ?? ("exa" as const) } }
+      : {}),
   };
   const releaseId = await store.createRelease(
     buildWorkerManifest(configuration),
@@ -231,7 +234,9 @@ async function fixture(
     codeDigest: "synthetic-v1",
     model: { provider: "synthetic", model: "fixture", revision: "v1" },
     embedding: { model: "fixture", modelVersion: "v1", dimensions: 2 },
-    ...(options.website ? { website: { provider: "exa" as const } } : {}),
+    ...(options.website
+      ? { website: { provider: options.websiteProvider ?? ("exa" as const) } }
+      : {}),
     async collectProfile(input) {
       collections++;
       const { artifact } = await capture(
@@ -271,15 +276,25 @@ async function fixture(
       assert.ok(await store.getArtifact(input.sourceProfileArtifactId));
       const { artifact } = await capture(
         "website",
-        JSON.stringify({
-          statuses: [{ id: input.websiteUrl, status: "success" }],
-          results: [
-            {
-              url: input.websiteUrl,
-              text: "Synthetic Product helps test teams check fixtures.",
-            },
-          ],
-        }),
+        JSON.stringify(
+          input.provider === "jina"
+            ? {
+                code: 200,
+                data: {
+                  url: input.websiteUrl,
+                  content: "Synthetic Product helps test teams check fixtures.",
+                },
+              }
+            : {
+                statuses: [{ id: input.websiteUrl, status: "success" }],
+                results: [
+                  {
+                    url: input.websiteUrl,
+                    text: "Synthetic Product helps test teams check fixtures.",
+                  },
+                ],
+              },
+        ),
         "source_response",
         `website:${input.entityId}`,
       );
@@ -371,109 +386,125 @@ async function fixture(
   };
 }
 
-test("existing founders and new intake use durable source-to-DNA/product/vector stages; rederive does not recollect", async () => {
-  const f = await fixture({ website: true });
-  try {
-    const founder = await f.store.createEntity("founder", "synthetic_one");
-    const unrelated = await f.store.putArtifact({
-      kind: "legacy_import",
-      body: Buffer.from("UNRELATED_GENERATION"),
-      contentType: "text/plain",
-      redactionVersion: "none",
-      importBatch: "old",
-    });
-    const unrelatedEvidence = await f.store.addEvidence({
-      artifactId: unrelated.id,
-      extractorVersion: "old",
-      locator: "old",
-      payload: {},
-      excerpt: "UNRELATED_GENERATION",
-    });
-    await f.store.linkEvidence(founder, unrelatedEvidence, "old");
-    await f.store.intake("test", founder);
-    await f.store.reconcileTargets("test");
-    const handlers = createStageHandlers(
-      f.store,
-      new WorkerStore(f.db),
-      f.dependencies,
-    );
-    assert.equal(
-      (
-        await runPendingStages(f.store, handlers, {
-          limit: 20,
-          leaseSeconds: 60,
-        })
-      ).processed,
-      6,
-    );
-    const statuses = (
-      await f.db.query<{ status: string }>(
-        "SELECT status FROM enrichment_stage_work WHERE entity_id=$1",
-        [founder],
-      )
-    ).rows;
-    assert.ok(statuses.every((row) => row.status === "succeeded"));
-    assert.equal(
-      (
-        await f.db.query(
-          "SELECT * FROM enrichment_founder_products WHERE founder_id=$1",
+for (const websiteProvider of ["exa", "jina"] as const)
+  test(`${websiteProvider}: existing founders and new intake use durable source-to-DNA/product/vector stages; rederive does not recollect`, async () => {
+    const f = await fixture({ website: true, websiteProvider });
+    try {
+      const founder = await f.store.createEntity("founder", "synthetic_one");
+      const unrelated = await f.store.putArtifact({
+        kind: "legacy_import",
+        body: Buffer.from("UNRELATED_GENERATION"),
+        contentType: "text/plain",
+        redactionVersion: "none",
+        importBatch: "old",
+      });
+      const unrelatedEvidence = await f.store.addEvidence({
+        artifactId: unrelated.id,
+        extractorVersion: "old",
+        locator: "old",
+        payload: {},
+        excerpt: "UNRELATED_GENERATION",
+      });
+      await f.store.linkEvidence(founder, unrelatedEvidence, "old");
+      await f.store.intake("test", founder);
+      await f.store.reconcileTargets("test");
+      const handlers = createStageHandlers(
+        f.store,
+        new WorkerStore(f.db),
+        f.dependencies,
+      );
+      assert.equal(
+        (
+          await runPendingStages(f.store, handlers, {
+            limit: 20,
+            leaseSeconds: 60,
+          })
+        ).processed,
+        6,
+      );
+      const statuses = (
+        await f.db.query<{ status: string }>(
+          "SELECT status FROM enrichment_stage_work WHERE entity_id=$1",
           [founder],
         )
-      ).rows.length,
-      2,
-    );
-    assert.equal(
-      (await f.db.query("SELECT * FROM enrichment_profiles")).rows.length,
-      2,
-    );
-    assert.equal(f.counters().collections, 1);
-    assert.equal(f.websiteCalls(), 1);
-    const second = await f.store.createEntity("founder", "synthetic_two");
-    await f.store.intake("test", second);
-    await f.store.reconcileTargets("test");
-    await runPendingStages(f.store, handlers, { limit: 20, leaseSeconds: 60 });
-    assert.equal(f.counters().collections, 2);
-    const evaluation = await f.store.putArtifact({
-      kind: "legacy_import",
-      body: Buffer.from("new evaluation"),
-      contentType: "text/plain",
-      redactionVersion: "none",
-      importBatch: "test2",
-    });
-    const nextRelease = await f.store.createRelease(
-      buildWorkerManifest(f.dependencies),
-    );
-    await f.store.approveRelease(nextRelease, evaluation.id, {
-      actor: "test",
-      reason: "synthetic",
-    });
-    await f.store.promoteRelease("test", nextRelease, "rederive test");
-    await f.store.reconcileTargets("test");
-    const rederive = createStageHandlers(f.store, new WorkerStore(f.db), {
-      ...f.dependencies,
-      mode: "rederive",
-      collectProfile: async () => {
-        throw new Error("source must not run");
-      },
-      collectWebsite: async () => {
-        throw new Error("website must not run");
-      },
-    });
-    await runPendingStages(f.store, rederive, { limit: 50, leaseSeconds: 60 });
-    assert.equal(f.counters().collections, 2);
-    assert.equal(f.websiteCalls(), 2);
-    const latest = (
-      await f.db.query<{ status: string }>(
-        "SELECT status FROM enrichment_stage_work WHERE release_id=$1 AND entity_id IN ($2,$3)",
-        [nextRelease, founder, second],
-      )
-    ).rows;
-    assert.equal(latest.length, 12);
-    assert.ok(latest.every((row) => row.status === "succeeded"));
-  } finally {
-    await f.pg.close();
-  }
-});
+      ).rows;
+      assert.ok(statuses.every((row) => row.status === "succeeded"));
+      assert.equal(
+        (
+          await f.db.query(
+            "SELECT * FROM enrichment_founder_products WHERE founder_id=$1",
+            [founder],
+          )
+        ).rows.length,
+        2,
+      );
+      assert.equal(
+        (await f.db.query("SELECT * FROM enrichment_profiles")).rows.length,
+        2,
+      );
+      assert.equal(f.counters().collections, 1);
+      assert.equal(f.websiteCalls(), 1);
+      const second = await f.store.createEntity("founder", "synthetic_two");
+      await f.store.intake("test", second);
+      await f.store.reconcileTargets("test");
+      await runPendingStages(f.store, handlers, {
+        limit: 20,
+        leaseSeconds: 60,
+      });
+      assert.equal(f.counters().collections, 2);
+      const evaluation = await f.store.putArtifact({
+        kind: "legacy_import",
+        body: Buffer.from("new evaluation"),
+        contentType: "text/plain",
+        redactionVersion: "none",
+        importBatch: "test2",
+      });
+      const replayConfiguration = {
+        ...f.dependencies,
+        website: {
+          provider:
+            websiteProvider === "jina" ? ("exa" as const) : ("jina" as const),
+        },
+      };
+      const nextRelease = await f.store.createRelease(
+        buildWorkerManifest(replayConfiguration),
+      );
+      await f.store.approveRelease(nextRelease, evaluation.id, {
+        actor: "test",
+        reason: "synthetic",
+      });
+      await f.store.promoteRelease("test", nextRelease, "rederive test");
+      await f.store.reconcileTargets("test");
+      const rederive = createStageHandlers(f.store, new WorkerStore(f.db), {
+        ...replayConfiguration,
+        // Saved bundle provider must win over a changed current preference.
+        website: { provider: websiteProvider === "jina" ? "exa" : "jina" },
+        mode: "rederive",
+        collectProfile: async () => {
+          throw new Error("source must not run");
+        },
+        collectWebsite: async () => {
+          throw new Error("website must not run");
+        },
+      });
+      await runPendingStages(f.store, rederive, {
+        limit: 50,
+        leaseSeconds: 60,
+      });
+      assert.equal(f.counters().collections, 2);
+      assert.equal(f.websiteCalls(), 2);
+      const latest = (
+        await f.db.query<{ status: string }>(
+          "SELECT status FROM enrichment_stage_work WHERE release_id=$1 AND entity_id IN ($2,$3)",
+          [nextRelease, founder, second],
+        )
+      ).rows;
+      assert.equal(latest.length, 12);
+      assert.ok(latest.every((row) => row.status === "succeeded"));
+    } finally {
+      await f.pg.close();
+    }
+  });
 
 test("explicit no-product evidence completes with N/A; unknown and protected profiles stay partial", async () => {
   for (const options of [

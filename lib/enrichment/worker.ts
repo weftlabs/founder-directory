@@ -25,6 +25,7 @@ import { parseWebsiteArtifact, publicWebsiteUrl } from "./website";
 const SOURCE_BUNDLE_VERSION = "profile-website-bundle-v1";
 const EXTRACTION_VERSION = "profile-website-evidence-v1";
 type WebsiteCoverage = {
+  provider?: "exa" | "jina";
   status: "captured" | "unavailable" | "disabled";
   reason?: string;
   artifactId?: string;
@@ -40,7 +41,7 @@ export interface WorkerConfiguration {
   codeDigest: string;
   model: { provider: string; model: string; revision: string | null };
   embedding?: { model: string; modelVersion: string; dimensions: number };
-  website?: { provider: "exa"; maxExcerptChars?: number };
+  website?: { provider: "exa" | "jina"; maxExcerptChars?: number };
 }
 export interface WorkerDependencies extends WorkerConfiguration {
   mode: "acquire" | "rederive";
@@ -54,6 +55,7 @@ export interface WorkerDependencies extends WorkerConfiguration {
   >;
   executeGeneration: ExecuteGeneration;
   collectWebsite?: (input: {
+    provider?: "exa" | "jina";
     entityId: string;
     generation: number;
     websiteUrl: string;
@@ -372,6 +374,7 @@ export function createStageHandlers(
           else {
             await store.assertStageLease(work.id, work.leaseToken);
             const collected = await dependencies.collectWebsite({
+              provider: dependencies.website.provider,
               entityId: work.entityId,
               generation: work.generation,
               websiteUrl: url,
@@ -387,7 +390,11 @@ export function createStageHandlers(
               )
                 throw new Error("website_capture_missing");
             }
-            website = { ...collected, url };
+            website = {
+              ...collected,
+              url,
+              provider: dependencies.website.provider,
+            };
           }
         }
         const bundle = await store.putArtifact({
@@ -474,6 +481,7 @@ export function createStageHandlers(
             throw new Error("missing_saved_website");
           artifactIds.push(raw.id);
           const parsed = parseWebsiteArtifact(raw, {
+            provider: website.provider ?? "exa",
             websiteUrl: website.url,
             sourceProfileArtifactId: artifact.id,
             maxExcerptChars: dependencies.website.maxExcerptChars,

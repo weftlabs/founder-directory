@@ -11,12 +11,16 @@ import type {
 import { collectWeft } from "./weft-transport";
 
 export const WEBSITE_OPERATION = "exa-contents";
+// Manually reviewed official free endpoint, not a discovered catalog operation.
+export const JINA_WEBSITE_OPERATION = "local-reviewed-jina-reader";
+export type WebsiteProvider = "exa" | "jina";
 export type WebsiteInput = Omit<
   CollectionInput,
   "args" | "capMicros" | "operation"
 > & {
   /** Caller must take this URL from the saved X profile, never model output. */
   websiteUrl: string;
+  provider?: WebsiteProvider;
   sourceProfileArtifactId: string;
   maxCostUsd: string;
   maxExcerptChars?: number;
@@ -33,7 +37,7 @@ export type WebsiteResult =
         returnedUrl: string;
         publishedDate: string | null;
         crawlDate: string | null;
-        extractorVersion: "exa-text-v1";
+        extractorVersion: "exa-text-v1" | "jina-text-v1";
         originalChars: number;
         truncated: boolean;
       };
@@ -86,6 +90,11 @@ export async function collectWebsite(
   now: () => Date = () => new Date(),
 ): Promise<WebsiteResult> {
   const requestedUrl = publicWebsiteUrl(input.websiteUrl);
+  const provider = input.provider ?? "exa";
+  if (!["exa", "jina"].includes(provider))
+    throw new Error("invalid_website_provider");
+  if (provider === "jina" && input.maxCostUsd !== "0")
+    throw new Error("jina_requires_zero_cap");
   if (!requestedUrl || !input.sourceProfileArtifactId?.trim())
     return { status: "unavailable", reason: "missing_public_profile_website" };
   const limit = input.maxExcerptChars ?? 24000;
@@ -104,6 +113,7 @@ export async function collectWebsite(
           metadata: {
             ...value.metadata,
             sourceKind: "product-site",
+            websiteProvider: provider,
             observedAt: now().toISOString(),
             requestedUrl,
             sourceProfileArtifactId: input.sourceProfileArtifactId,
@@ -117,17 +127,32 @@ export async function collectWebsite(
       generation: input.generation,
       mode: input.mode,
       policy: input.policy,
-      operation: WEBSITE_OPERATION,
+      operation:
+        provider === "jina" ? JINA_WEBSITE_OPERATION : WEBSITE_OPERATION,
     },
-    {
-      url: "https://api.exa.ai/contents",
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ urls: [requestedUrl], text: true }),
-      operationId: WEBSITE_OPERATION,
-      accessMethodId: "exa-contents-x402-base",
-      maxCostUsd: input.maxCostUsd,
-    },
+    provider === "jina"
+      ? {
+          url: `https://r.jina.ai/${requestedUrl}`,
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+            "X-No-Cache": "true",
+            "X-Robots-Txt": "FounderDirectory",
+            DNT: "true",
+          },
+          operationId: JINA_WEBSITE_OPERATION,
+          accessMethodId: "local-reviewed-jina-reader-documented-free",
+          maxCostUsd: "0",
+        }
+      : {
+          url: "https://api.exa.ai/contents",
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ urls: [requestedUrl], text: true }),
+          operationId: WEBSITE_OPERATION,
+          accessMethodId: "exa-contents-x402-base",
+          maxCostUsd: input.maxCostUsd,
+        },
     enabled,
   );
   return parseWebsiteArtifact(artifact, input);
@@ -138,7 +163,7 @@ export function parseWebsiteArtifact(
   artifact: CapturedArtifact,
   input: Pick<
     WebsiteInput,
-    "websiteUrl" | "sourceProfileArtifactId" | "maxExcerptChars"
+    "websiteUrl" | "sourceProfileArtifactId" | "maxExcerptChars" | "provider"
   >,
 ): WebsiteResult {
   const requestedUrl = publicWebsiteUrl(input.websiteUrl);
@@ -156,6 +181,13 @@ export function parseWebsiteArtifact(
     reason,
     artifact,
   });
+  const provider = input.provider ?? "exa";
+  if (
+    !["exa", "jina"].includes(provider) ||
+    (artifact.metadata.websiteProvider !== undefined &&
+      artifact.metadata.websiteProvider !== provider)
+  )
+    return unavailable("website_provider_mismatch");
   if (
     typeof artifact.metadata.status !== "number" ||
     artifact.metadata.status < 200 ||
@@ -167,6 +199,36 @@ export function parseWebsiteArtifact(
     payload = object(JSON.parse(Buffer.from(artifact.body).toString("utf8")));
   } catch {
     return unavailable("malformed_website_response");
+  }
+  if (provider === "jina") {
+    const data = object(payload?.data);
+    if (payload?.code !== 200) return unavailable("website_url_failed");
+    if (
+      !data ||
+      typeof data.url !== "string" ||
+      publicWebsiteUrl(data.url) !== requestedUrl
+    )
+      return unavailable("website_url_mismatch");
+    if (typeof data.content !== "string" || !data.content.trim())
+      return unavailable("missing_website_text");
+    const text = data.content.trim();
+    return {
+      status: "captured",
+      artifact,
+      text: text.slice(0, limit),
+      provenance: {
+        sourceKind: "product-site",
+        sourceProfileArtifactId: input.sourceProfileArtifactId,
+        requestedUrl,
+        returnedUrl: data.url,
+        publishedDate:
+          typeof data.publishedTime === "string" ? data.publishedTime : null,
+        crawlDate: typeof data.timestamp === "string" ? data.timestamp : null,
+        extractorVersion: "jina-text-v1",
+        originalChars: text.length,
+        truncated: text.length > limit,
+      },
+    };
   }
   if (
     !payload ||

@@ -105,6 +105,12 @@ function payment(response: ReceivedResponse) {
   const held = response.heldUsd == null ? "0" : micros(response.heldUsd);
   if (settledMicros === null || held === null)
     return { paymentState: "uncertain" as const };
+  if (
+    response.paymentStatus === "not_required" &&
+    held === "0" &&
+    settledMicros === "0"
+  )
+    return { paymentState: "not_charged" as const, settledMicros };
   if (response.paymentStatus === "settled" && held === "0")
     return { paymentState: "settled" as const, settledMicros };
   if (
@@ -142,8 +148,7 @@ export async function collectResponse(
     policy.operation !== input.operation
   )
     throw new Error("collection_policy_not_approved");
-  if (!/^\d+$/.test(input.capMicros) || BigInt(input.capMicros) <= BigInt(0))
-    throw new Error("invalid_collection_cap");
+  if (!/^\d+$/.test(input.capMicros)) throw new Error("invalid_collection_cap");
   const fingerprint = createHash("sha256")
     .update(canonical({ operation: input.operation, args: input.args }))
     .digest("hex");

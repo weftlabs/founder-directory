@@ -5,7 +5,11 @@ import type { CollectionStore } from "./collection";
 import type { CaptureConfig } from "./runtime";
 import { collectWeft } from "./weft-transport";
 import { weftGeneration, generationRoute } from "./generation";
-import { collectWebsite as captureWebsite, WEBSITE_OPERATION } from "./website";
+import {
+  collectWebsite as captureWebsite,
+  WEBSITE_OPERATION,
+  JINA_WEBSITE_OPERATION,
+} from "./website";
 
 export type WorkerTransportConfig = CaptureConfig & {
   sourceMaxCostUsd: string;
@@ -97,13 +101,17 @@ export function workerAdapters(
     return { status: "captured" as const, artifactId: artifact.id };
   };
   const collectWebsite = async (input: {
+    provider?: "exa" | "jina";
     entityId: string;
     generation: number;
     websiteUrl: string;
     sourceProfileArtifactId: string;
     maxExcerptChars?: number;
   }) => {
-    const policy = config.policies[WEBSITE_OPERATION];
+    const policy =
+      config.policies[
+        input.provider === "jina" ? JINA_WEBSITE_OPERATION : WEBSITE_OPERATION
+      ];
     if (!policy || !config.websiteMaxCostUsd)
       return {
         status: "unavailable" as const,
@@ -119,6 +127,7 @@ export function workerAdapters(
         mode: "acquire",
         policy,
         maxCostUsd: config.websiteMaxCostUsd,
+        provider: input.provider,
         websiteUrl: input.websiteUrl,
         sourceProfileArtifactId: input.sourceProfileArtifactId,
         maxExcerptChars: input.maxExcerptChars,
