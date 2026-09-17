@@ -57,9 +57,7 @@ export function weftGeneration(
         json_schema: {
           name: "founder_analysis",
           strict: true,
-          schema:
-            (request as typeof request & { responseSchema?: JsonValue })
-              .responseSchema ?? request.recipe.responseSchema,
+          schema: request.responseSchema ?? request.recipe.responseSchema,
         },
       },
     };
