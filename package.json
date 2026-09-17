@@ -22,12 +22,15 @@
     "@x402/core": "2.20.0",
     "maplibre-gl": "^5.24.0",
     "next": "16.3.2",
+    "pg": "8.16.3",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.3.10",
     "@playwright/test": "1.63.0",
     "@types/node": "^26.2.0",
+    "@types/pg": "8.23.1",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "eslint": "^9.39.5",
