@@ -21,14 +21,14 @@ export function SiteHeader({
         <Link
           prefetch={false}
           className="directory-link"
-          href="/"
+          href="/directory"
           aria-current={directoryCurrent ? "page" : undefined}
         >
           Directory
         </Link>
         <Link
           prefetch={false}
-          href="/map"
+          href="/"
           aria-current={mapCurrent ? "page" : undefined}
         >
           Map

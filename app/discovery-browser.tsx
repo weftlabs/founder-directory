@@ -92,7 +92,7 @@ export function DiscoveryBrowser({
       page: 1,
       ...changes,
     };
-    const [pathname, search] = (navigationBase ?? "/map").split("?");
+    const [pathname, search] = (navigationBase ?? "/").split("?");
     const params = new URLSearchParams(search);
     for (const [key, value] of Object.entries(values))
       if (value) params.set(key, String(value));
@@ -103,7 +103,7 @@ export function DiscoveryBrowser({
   }
   function clear() {
     if (serverPage) {
-      router.push(navigationBase ?? "/map");
+      router.push(navigationBase ?? "/");
       return;
     }
     setQ("");
@@ -144,7 +144,7 @@ export function DiscoveryBrowser({
             <b>{countries.length}</b>
             <span>countries listed</span>
           </div>
-          <Link href="/">Browse the directory ↗</Link>
+          <Link href="/directory">Browse the directory ↗</Link>
         </div>
       </div>
       {unavailable ? (
@@ -262,7 +262,7 @@ export function DiscoveryBrowser({
               {q || category || country ? (
                 <button onClick={clear}>Clear filters</button>
               ) : (
-                <Link href="/">Explore the directory ↗</Link>
+                <Link href="/directory">Explore the directory ↗</Link>
               )}
             </div>
           ) : null}

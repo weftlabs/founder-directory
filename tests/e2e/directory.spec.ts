@@ -5,7 +5,7 @@ test("directory works without credentials on desktop and mobile", async ({
 }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  const response = await page.goto("/");
+  const response = await page.goto("/directory");
   expect(response?.status()).toBe(200);
   await expect(page).toHaveTitle("Founder Directory");
   await expect(
@@ -75,7 +75,7 @@ test("presence is public and the header shows an online count without a database
   ).toHaveAttribute("href", "https://github.com/weftlabs/founder-directory");
   await expect(page.locator("header a.directory-link")).toHaveAttribute(
     "href",
-    "/",
+    "/directory",
   );
 });
 
@@ -136,6 +136,7 @@ test("About navigation, attribution, and SEO survive the branding change", async
   await expect(
     page.locator("footer").getByRole("link", { name: "Weft Labs" }),
   ).toHaveAttribute("href", "https://weftlabs.com");
+  await expect(page.locator('link[rel="canonical"]')).toHaveCount(1);
   await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
     "href",
     "https://foundersdirectory.app/about",
@@ -189,7 +190,7 @@ test("unknown profiles return 404 rather than inventing a founder", async ({
 test("a new directory search resets the previous page cursor", async ({
   page,
 }) => {
-  await page.goto("/?cursor=stale-page");
+  await page.goto("/directory?cursor=stale-page");
   await page
     .getByRole("searchbox", { name: "Search founders", exact: true })
     .fill("Berlin");

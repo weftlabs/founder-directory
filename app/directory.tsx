@@ -279,7 +279,7 @@ export function Directory({
       {!preview && live.nextCursor ? (
         <nav className="page-navigation" aria-label="Directory pages">
           <a
-            href={`/?${writeFilters("", filters)}&cursor=${encodeURIComponent(live.nextCursor)}`}
+            href={`/directory?${writeFilters("", filters)}&cursor=${encodeURIComponent(live.nextCursor)}`}
           >
             Next page →
           </a>

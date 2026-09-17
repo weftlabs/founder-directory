@@ -1,6 +1,7 @@
 # Founder map
 
-The header links to `/map`. Visitor requests never call paid providers.
+The home page `/` opens the map. `/map` remains a compatible alias with `/` as
+its canonical URL. The directory list is at `/directory`. Visitor requests never call paid providers.
 MapLibre loads only on the map page.
 [OpenFreeMap](https://openfreemap.org/quick_start/) supplies map tiles. A map
 failure leaves the searchable founder list usable.
@@ -49,3 +50,6 @@ This removes convenient bulk extraction; it is not scrape prevention. Public HTM
 and Next.js page responses remain readable by automated clients one page at a time.
 No header checks, hidden endpoint names or robots.txt rules are treated as access
 control. Strict scraping limits need edge-level request controls or authentication.
+
+Metadata streaming is disabled so navigation from the map does not leave duplicate
+canonical tags. Browser checks assert one canonical URL after switching pages.

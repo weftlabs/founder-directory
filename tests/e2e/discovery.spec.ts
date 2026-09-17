@@ -168,7 +168,12 @@ test("map search, selection, category and country filters agree", async ({
 
 test("map stays public without leaderboard code", async ({ page, request }) => {
   await page.goto("/map");
-  await expect(page.locator("header a[href='/map']")).toHaveAttribute(
+  await expect(page.locator('link[rel="canonical"]')).toHaveCount(1);
+  await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
+    "href",
+    "https://foundersdirectory.app",
+  );
+  await expect(page.locator("header a[href='/']:not(.brand)")).toHaveAttribute(
     "aria-current",
     "page",
   );
@@ -242,4 +247,41 @@ test("co-located founders spread into separate selectable pins at close zoom", a
   await page.getByRole("button", { name: "World view" }).click();
   await expect(pins.first()).toBeHidden();
   await expect(page.locator(".map-avatar-count")).toBeVisible();
+});
+
+test("home opens the map and keeps the directory accessible", async ({
+  page,
+  request,
+}) => {
+  await page.goto("/?q=Switzerland");
+  await expect(
+    page.getByRole("heading", { name: "Big ideas. Everywhere." }),
+  ).toBeVisible();
+  await expect(page.locator('link[rel="canonical"]')).toHaveCount(1);
+  await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
+    "href",
+    "https://foundersdirectory.app",
+  );
+  await expect(page.getByRole("searchbox")).toHaveValue("Switzerland");
+  await page.getByRole("button", { name: "Clear filters" }).first().click();
+  await expect(page).toHaveURL(/\/$/);
+  await page.getByRole("link", { name: "Browse the directory" }).click();
+  await expect(page).toHaveURL(/\/directory$/);
+  await expect(
+    page.getByRole("heading", { name: "Find the people building." }),
+  ).toBeVisible();
+  await expect(page.locator('link[rel="canonical"]')).toHaveCount(1);
+  await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
+    "href",
+    "https://foundersdirectory.app/directory",
+  );
+  await page
+    .getByRole("link", { name: "Founder Directory", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Big ideas. Everywhere." }),
+  ).toBeVisible();
+  const sitemap = await (await request.get("/sitemap.xml")).text();
+  expect(sitemap).toContain("https://foundersdirectory.app/directory");
+  expect(sitemap).not.toContain("https://foundersdirectory.app/map");
 });
