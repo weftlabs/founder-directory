@@ -76,6 +76,12 @@ budget use instead of discarding evidence.
 
 ## Run the full worker
 
+The `worker` and `analyze` commands allow up to 150 seconds per Weft exchange,
+including model generation and payment overhead. Ordinary directory scans retain
+their 25-second limit. Timeout cancellation does not prove payment cancellation:
+the attempt stays uncertain and is never automatically retried. Upstream caller
+cancellation remains effective even when the longer worker timeout is selected.
+
 The worker configuration has two parts. `configuration` determines the approved
 analysis and embedding versions. `transport` selects the reviewed paid operations
 and an existing aggregate budget. Keep this file private and outside Git.

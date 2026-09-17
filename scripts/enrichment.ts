@@ -10,7 +10,10 @@ import {
 } from "../lib/enrichment/legacy";
 import { runAnalysis } from "../lib/enrichment/analysis";
 import { weftGeneration, generationRoute } from "../lib/enrichment/generation";
-import { boundedWeftClient } from "../lib/enrichment/runtime";
+import {
+  boundedWeftClient,
+  WORKER_WEFT_TIMEOUT_MS,
+} from "../lib/enrichment/runtime";
 import type { AnalysisInput } from "../lib/enrichment/contracts";
 import type { CollectionInput } from "../lib/enrichment/collection";
 import {
@@ -331,7 +334,7 @@ export async function main(args = process.argv.slice(2)) {
         );
         const execute = weftGeneration(
           store,
-          boundedWeftClient(process.env.WEFT_API_KEY),
+          boundedWeftClient(process.env.WEFT_API_KEY, WORKER_WEFT_TIMEOUT_MS),
           {
             scope: policy.scope,
             budgetId: argument(args, "--budget"),
@@ -352,7 +355,7 @@ export async function main(args = process.argv.slice(2)) {
         // Intake also reconciles targets. Repeating the worker after a crash resumes that durable intent.
         const adapters = workerAdapters(
           store,
-          boundedWeftClient(process.env.WEFT_API_KEY!),
+          boundedWeftClient(process.env.WEFT_API_KEY!, WORKER_WEFT_TIMEOUT_MS),
           worker.file.transport,
           () => process.env.ENRICHMENT_ALLOW_PAID === "1",
           worker.file.configuration.model.provider,

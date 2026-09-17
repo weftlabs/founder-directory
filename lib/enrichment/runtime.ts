@@ -15,15 +15,24 @@ export type CaptureConfig = {
   policies: Record<string, CollectionInput["policy"]>;
 };
 
-export function boundedWeftClient(apiKey: string) {
+// Long-running analysis uses a larger bound than interactive directory scans.
+export const WORKER_WEFT_TIMEOUT_MS = 150000;
+
+export function boundedWeftClient(apiKey: string, timeoutMs = 25000) {
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs < 1 ||
+    timeoutMs > WORKER_WEFT_TIMEOUT_MS
+  )
+    throw new Error("invalid_weft_timeout");
   return new WeftClient({
     apiKey,
     fetchApi: (input, init) =>
       fetch(input, {
         ...init,
         signal: init?.signal
-          ? AbortSignal.any([init.signal, AbortSignal.timeout(25000)])
-          : AbortSignal.timeout(25000),
+          ? AbortSignal.any([init.signal, AbortSignal.timeout(timeoutMs)])
+          : AbortSignal.timeout(timeoutMs),
       }),
   });
 }
