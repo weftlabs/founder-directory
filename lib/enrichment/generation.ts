@@ -6,6 +6,26 @@ import type { WeftTransport } from "../weft";
 import { canonicalJson, type JsonValue } from "./contracts";
 import { collectWeft } from "./weft-transport";
 
+/** Route identity is explicit; changing providers requires a matching reviewed policy. */
+export function generationRoute(provider: string) {
+  switch (provider) {
+    case "weft/openrouter":
+      return {
+        url: "https://openrouter.mpp.tempo.xyz/v1/chat/completions",
+        operationId: "openrouter-chat-completions",
+        accessMethodId: "mpp-access-23-0-0",
+      };
+    case "weft/blockrun":
+      return {
+        url: "https://blockrun.ai/api/v1/chat/completions",
+        operationId: "blockrun-chat-completions",
+        accessMethodId: "blockrun-chat-x402-base",
+      };
+    default:
+      throw new Error("unsupported_model_provider");
+  }
+}
+
 export function weftGeneration(
   store: CollectionStore,
   client: WeftTransport,
@@ -20,8 +40,7 @@ export function weftGeneration(
   return async ({ runId, request }) => {
     if (request.recipe.toolDefinitions.length)
       throw new Error("tool_execution_not_enabled");
-    if (request.recipe.provider !== "weft/openrouter")
-      throw new Error("unsupported_model_provider");
+    const route = generationRoute(request.recipe.provider);
     const parameters = request.recipe.parameters;
     if (
       !parameters ||
@@ -38,7 +57,9 @@ export function weftGeneration(
         json_schema: {
           name: "founder_analysis",
           strict: true,
-          schema: request.recipe.responseSchema,
+          schema:
+            (request as typeof request & { responseSchema?: JsonValue })
+              .responseSchema ?? request.recipe.responseSchema,
         },
       },
     };
@@ -49,15 +70,13 @@ export function weftGeneration(
         scope: config.scope,
         budgetId: config.budgetId,
         generation: 0,
-        operation: "openrouter-chat-completions",
+        operation: route.operationId,
         policy: config.policy,
         mode: "acquire",
         requestIdentity: runId,
       },
       {
-        url: "https://openrouter.mpp.tempo.xyz/v1/chat/completions",
-        operationId: "openrouter-chat-completions",
-        accessMethodId: "mpp-access-23-0-0",
+        ...route,
         method: "POST",
         headers: { "content-type": "application/json" },
         body: canonicalJson(body),
