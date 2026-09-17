@@ -33,7 +33,10 @@ function collection(founders: DiscoveryFounder[], places?: MapPlace[]) {
     features: points.map(({ coordinates, ...properties }) => ({
       type: "Feature" as const,
       geometry: { type: "Point" as const, coordinates },
-      properties,
+      properties: {
+        ...properties,
+        pointKey: coordinates.map((value) => value.toFixed(5)).join(","),
+      },
     })),
   };
 }
@@ -95,7 +98,7 @@ export default function FounderMap({
         data: data.current,
         cluster: true,
         clusterProperties: { founderCount: ["+", ["get", "count"]] },
-        clusterRadius: 42,
+        clusterRadius: 54,
         clusterMaxZoom: 12,
       });
       map.addLayer({
@@ -228,6 +231,7 @@ export default function FounderMap({
       const button = document.createElement("button");
       button.type = "button";
       button.className = "map-avatar-pin";
+      button.style.display = "none";
       button.dataset.selected = String(
         group.some((f) => f.handle === selected?.handle),
       );
@@ -279,7 +283,33 @@ export default function FounderMap({
         .setLngLat(founder.coordinates!)
         .addTo(map);
     });
-    return () => markers.forEach((marker) => marker.remove());
+    // Only replace visible, unclustered points with portraits. Clustered founders
+    // are represented by the map's count layer until the user zooms in.
+    const coordinateKey = (coordinates: number[]) =>
+      coordinates.map((value) => value.toFixed(5)).join(",");
+    const syncVisibility = () => {
+      if (!map.getLayer("founder-pins")) return;
+      const visible = new Set(
+        map
+          .queryRenderedFeatures({ layers: ["founder-pins"] })
+          .filter((feature) => feature.geometry.type === "Point")
+          .map((feature) => String(feature.properties.pointKey)),
+      );
+      for (const marker of markers) {
+        const point = marker.getLngLat();
+        marker.getElement().style.display = visible.has(
+          coordinateKey([point.lng, point.lat]),
+        )
+          ? ""
+          : "none";
+      }
+    };
+    map.on("render", syncVisibility);
+    syncVisibility();
+    return () => {
+      map.off("render", syncVisibility);
+      markers.forEach((marker) => marker.remove());
+    };
   }, [founders, selected]);
   useEffect(() => {
     const source = instance.current?.getSource("founders") as

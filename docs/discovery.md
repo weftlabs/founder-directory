@@ -6,7 +6,9 @@ MapLibre loads only on the map page.
 failure leaves the searchable founder list usable.
 
 Photo pins use only the founders on the current page; missing or failed images
-show initials. A shared city pin shows the number of founders on that page and
+show initials. At wider zoom levels nearby points become numbered clusters;
+portraits appear automatically when their points separate, without selection.
+A shared city pin shows the number of founders on that page and
 opens their chooser. City aggregates still cover the full filtered map without
 exposing additional identities. Pin counts are not ranks.
 

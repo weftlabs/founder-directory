@@ -15,6 +15,10 @@ test("photo pins select founders, fall back to initials, and group only the curr
     name: "Meet Alex Example in Berlin",
     exact: true,
   });
+  await expect(page.locator(".maplibregl-canvas")).toBeVisible();
+  await expect(alex).toBeHidden();
+  // Filtering to an isolated point shows its portrait without selecting it.
+  await page.getByRole("searchbox").fill("Berlin");
   await expect(alex.locator("img")).toBeVisible();
   await expect
     .poll(() =>
@@ -27,6 +31,12 @@ test("photo pins select founders, fall back to initials, and group only the curr
   await page.keyboard.press("Enter");
   await expect(page.locator(".map-profile")).toContainText("Alex Example");
   await expect(alex).toHaveAttribute("data-selected", "true");
+  await page.getByRole("button", { name: "Clear filters" }).first().click();
+  await page.getByRole("button", { name: "World view" }).click();
+  await expect(alex).toBeHidden();
+  // Zooming to a founder expands the cluster back into photo pins.
+  await page.getByRole("button", { name: "Show Alex Example on map" }).click();
+  await expect(alex).toBeVisible();
   await page.getByRole("searchbox").fill("Paris");
   await expect(page.locator(".map-avatar-pin")).toHaveCount(1);
   await expect(page.locator(".map-avatar-pin")).toContainText("ME");
