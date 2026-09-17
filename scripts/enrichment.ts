@@ -9,7 +9,7 @@ import {
   importLegacyIntake,
 } from "../lib/enrichment/legacy";
 import { runAnalysis } from "../lib/enrichment/analysis";
-import { weftGeneration } from "../lib/enrichment/generation";
+import { weftGeneration, generationRoute } from "../lib/enrichment/generation";
 import { boundedWeftClient } from "../lib/enrichment/runtime";
 import type { AnalysisInput } from "../lib/enrichment/contracts";
 import type { CollectionInput } from "../lib/enrichment/collection";
@@ -92,6 +92,17 @@ async function workerFile(
     )
   )
     throw new Error("invalid_worker_model_configuration");
+  generationRoute(configuration.model.provider);
+  if (
+    configuration.website !== undefined &&
+    (!record(configuration.website) ||
+      configuration.website.provider !== "exa" ||
+      (configuration.website.maxExcerptChars !== undefined &&
+        (!Number.isSafeInteger(configuration.website.maxExcerptChars) ||
+          Number(configuration.website.maxExcerptChars) < 1 ||
+          Number(configuration.website.maxExcerptChars) > 100000)))
+  )
+    throw new Error("invalid_worker_website_configuration");
   if (
     configuration.embedding !== undefined &&
     (!record(configuration.embedding) ||
@@ -114,6 +125,11 @@ async function workerFile(
       !nonempty(transport.modelMaxCostUsd)
     )
       throw new Error("invalid_worker_transport_configuration");
+    if (
+      configuration.website !== undefined &&
+      !nonempty(transport.websiteMaxCostUsd)
+    )
+      throw new Error("invalid_website_cap_configuration");
     if (
       transport.embeddingEndpoint !== undefined &&
       (!record(transport.embeddingEndpoint) ||
@@ -333,6 +349,7 @@ export async function main(args = process.argv.slice(2)) {
           boundedWeftClient(process.env.WEFT_API_KEY!),
           worker.file.transport,
           () => process.env.ENRICHMENT_ALLOW_PAID === "1",
+          worker.file.configuration.model.provider,
         );
         const handlers = createStageHandlers(store, new WorkerStore(db), {
           ...worker.file.configuration,

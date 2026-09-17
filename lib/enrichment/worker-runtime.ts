@@ -4,11 +4,13 @@ import type { WeftTransport } from "../weft";
 import type { CollectionStore } from "./collection";
 import type { CaptureConfig } from "./runtime";
 import { collectWeft } from "./weft-transport";
-import { weftGeneration } from "./generation";
+import { weftGeneration, generationRoute } from "./generation";
+import { collectWebsite as captureWebsite, WEBSITE_OPERATION } from "./website";
 
 export type WorkerTransportConfig = CaptureConfig & {
   sourceMaxCostUsd: string;
   modelMaxCostUsd: string;
+  websiteMaxCostUsd?: string;
   embeddingEndpoint?: {
     url: string;
     operationId: string;
@@ -23,12 +25,14 @@ export function workerAdapters(
   client: WeftTransport,
   config: WorkerTransportConfig,
   enabled: () => boolean,
+  modelProvider = "weft/openrouter",
 ) {
+  const route = generationRoute(modelProvider);
   const executeGeneration = weftGeneration(store, client, {
     scope: config.scope,
     budgetId: config.budgetId,
     maxCostUsd: config.modelMaxCostUsd,
-    policy: config.policies["openrouter-chat-completions"],
+    policy: config.policies[route.operationId],
     enabled,
   });
   const collectProfile = async (input: {
@@ -48,7 +52,22 @@ export function workerAdapters(
         reason: "source_policy_not_configured",
       };
     const artifact = await collectWeft(
-      store,
+      {
+        planCollection: (value) => store.planCollection(value),
+        getReusableArtifact: (id) => store.getReusableArtifact(id),
+        reserveAttempt: (value) => store.reserveAttempt(value),
+        markDispatched: (id) => store.markDispatched(id),
+        markUncertain: (id, reason) => store.markUncertain(id, reason),
+        captureResponse: (value) =>
+          store.captureResponse({
+            ...value,
+            metadata: {
+              ...value.metadata,
+              sourceKind: "self-reported",
+              observedAt: new Date().toISOString(),
+            },
+          }),
+      },
       client,
       {
         scope: config.scope,
@@ -76,6 +95,43 @@ export function workerAdapters(
         artifactId: artifact.id,
       };
     return { status: "captured" as const, artifactId: artifact.id };
+  };
+  const collectWebsite = async (input: {
+    entityId: string;
+    generation: number;
+    websiteUrl: string;
+    sourceProfileArtifactId: string;
+    maxExcerptChars?: number;
+  }) => {
+    const policy = config.policies[WEBSITE_OPERATION];
+    if (!policy || !config.websiteMaxCostUsd)
+      return {
+        status: "unavailable" as const,
+        reason: "website_policy_not_configured",
+      };
+    const result = await captureWebsite(
+      store,
+      client,
+      {
+        scope: config.scope,
+        budgetId: config.budgetId,
+        generation: input.generation,
+        mode: "acquire",
+        policy,
+        maxCostUsd: config.websiteMaxCostUsd,
+        websiteUrl: input.websiteUrl,
+        sourceProfileArtifactId: input.sourceProfileArtifactId,
+        maxExcerptChars: input.maxExcerptChars,
+      },
+      enabled,
+    );
+    return result.status === "captured"
+      ? { status: "captured" as const, artifactId: result.artifact.id }
+      : {
+          status: "unavailable" as const,
+          reason: result.reason,
+          ...(result.artifact ? { artifactId: result.artifact.id } : {}),
+        };
   };
   const embed = config.embeddingEndpoint
     ? async (input: {
@@ -143,5 +199,5 @@ export function workerAdapters(
         };
       }
     : undefined;
-  return { executeGeneration, collectProfile, embed };
+  return { executeGeneration, collectProfile, collectWebsite, embed };
 }

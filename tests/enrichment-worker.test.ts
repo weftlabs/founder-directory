@@ -24,7 +24,7 @@ test("product-only evidence makes personal DNA unavailable without generation", 
     async stageOutput() {
       return "product-artifact";
     },
-    async evidence(): Promise<EvidenceInput[]> {
+    async evidenceByIds(): Promise<EvidenceInput[]> {
       return [
         {
           id: "product",
@@ -38,14 +38,32 @@ test("product-only evidence makes personal DNA unavailable without generation", 
       ];
     },
   } as unknown as WorkerStore;
-  const handlers = createStageHandlers({} as EnrichmentStore, worker, {
-    mode: "rederive",
-    codeDigest: "test",
-    model: { provider: "fixture", model: "fixture", revision: null },
-    async executeGeneration() {
-      throw new Error("unexpected model dispatch");
+  const handlers = createStageHandlers(
+    {
+      async getArtifact() {
+        return {
+          kind: "manifest",
+          body: Buffer.from(
+            JSON.stringify({
+              version: "profile-website-evidence-v1",
+              evidenceIds: ["product"],
+              artifactIds: [],
+              website: { status: "captured" },
+            }),
+          ),
+        };
+      },
+    } as unknown as EnrichmentStore,
+    worker,
+    {
+      mode: "rederive",
+      codeDigest: "test",
+      model: { provider: "fixture", model: "fixture", revision: null },
+      async executeGeneration() {
+        throw new Error("unexpected model dispatch");
+      },
     },
-  });
+  );
   assert.deepEqual(
     await handlers.founder_dna({
       id: "work",
@@ -113,7 +131,13 @@ test("product context does not expand null, malformed, or non-HTTP websites", ()
 });
 
 async function fixture(
-  options: { products?: "absent" | "unknown"; protected?: boolean } = {},
+  options: {
+    products?: "absent" | "unknown";
+    protected?: boolean;
+    website?: boolean;
+    websiteFailure?: boolean;
+    mismatchedProfile?: boolean;
+  } = {},
 ) {
   const pg = new PGlite();
   const adapt = (client: Pick<PGlite, "query" | "exec">): Sql => ({
@@ -142,6 +166,7 @@ async function fixture(
     codeDigest: "synthetic-v1",
     model: { provider: "synthetic", model: "fixture", revision: "v1" },
     embedding: { model: "fixture", modelVersion: "v1", dimensions: 2 },
+    ...(options.website ? { website: { provider: "exa" as const } } : {}),
   };
   const releaseId = await store.createRelease(
     buildWorkerManifest(configuration),
@@ -159,6 +184,7 @@ async function fixture(
     capMicros: "1000",
   });
   let collections = 0,
+    websites = 0,
     generations = 0,
     embeddings = 0;
   async function capture(
@@ -189,6 +215,14 @@ async function fixture(
       paymentState: "settled",
       settledMicros: "1",
       kind,
+      metadata:
+        operation === "website"
+          ? {
+              sourceKind: "product-site",
+              status: 200,
+              requestedUrl: "https://synthetic.example/",
+            }
+          : {},
     });
     return { artifact, attempt };
   }
@@ -197,6 +231,7 @@ async function fixture(
     codeDigest: "synthetic-v1",
     model: { provider: "synthetic", model: "fixture", revision: "v1" },
     embedding: { model: "fixture", modelVersion: "v1", dimensions: 2 },
+    ...(options.website ? { website: { provider: "exa" as const } } : {}),
     async collectProfile(input) {
       collections++;
       const { artifact } = await capture(
@@ -204,7 +239,15 @@ async function fixture(
         JSON.stringify({
           data: {
             privacy: { protected: options.protected ?? false },
-            core: { name: "Synthetic Founder", screen_name: input.legacyKey },
+            core: {
+              name: "Synthetic Founder",
+              screen_name: options.mismatchedProfile
+                ? "someone_else"
+                : input.legacyKey,
+            },
+            ...(options.website
+              ? { website: { url: "https://synthetic.example" } }
+              : {}),
             profile_bio: {
               description:
                 options.products === "absent"
@@ -220,9 +263,45 @@ async function fixture(
       );
       return { status: "captured", artifactId: artifact.id };
     },
+    async collectWebsite(input) {
+      websites++;
+      if (options.websiteFailure)
+        return { status: "unavailable", reason: "website_url_failed" };
+      assert.equal(input.websiteUrl, "https://synthetic.example/");
+      assert.ok(await store.getArtifact(input.sourceProfileArtifactId));
+      const { artifact } = await capture(
+        "website",
+        JSON.stringify({
+          statuses: [{ id: input.websiteUrl, status: "success" }],
+          results: [
+            {
+              url: input.websiteUrl,
+              text: "Synthetic Product helps test teams check fixtures.",
+            },
+          ],
+        }),
+        "source_response",
+        `website:${input.entityId}`,
+      );
+      return { status: "captured", artifactId: artifact.id };
+    },
     async executeGeneration(input) {
       generations++;
       const ids = input.request.evidence.map((e) => e.id);
+      assert.ok(
+        input.request.evidence.every(
+          (e) => !e.text.includes("UNRELATED_GENERATION"),
+        ),
+      );
+      if (options.website) {
+        assert.equal(
+          input.request.evidence.some(
+            (e) => e.provenance?.sourceKind === "product-site",
+          ),
+          !options.websiteFailure &&
+            input.request.recipe.purpose !== "founder_dna",
+        );
+      }
       const claims = input.request.recipe.claimFields!.map((field) => ({
         field: field.name,
         value:
@@ -234,7 +313,9 @@ async function fixture(
                 ? [
                     {
                       name: "Synthetic Product",
-                      website: null,
+                      website: options.website
+                        ? "https://synthetic.example"
+                        : null,
                       evidenceIds: ids,
                     },
                   ]
@@ -286,13 +367,29 @@ async function fixture(
     releaseId,
     dependencies,
     counters: () => ({ collections, generations, embeddings }),
+    websiteCalls: () => websites,
   };
 }
 
 test("existing founders and new intake use durable source-to-DNA/product/vector stages; rederive does not recollect", async () => {
-  const f = await fixture();
+  const f = await fixture({ website: true });
   try {
     const founder = await f.store.createEntity("founder", "synthetic_one");
+    const unrelated = await f.store.putArtifact({
+      kind: "legacy_import",
+      body: Buffer.from("UNRELATED_GENERATION"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      importBatch: "old",
+    });
+    const unrelatedEvidence = await f.store.addEvidence({
+      artifactId: unrelated.id,
+      extractorVersion: "old",
+      locator: "old",
+      payload: {},
+      excerpt: "UNRELATED_GENERATION",
+    });
+    await f.store.linkEvidence(founder, unrelatedEvidence, "old");
     await f.store.intake("test", founder);
     await f.store.reconcileTargets("test");
     const handlers = createStageHandlers(
@@ -323,13 +420,14 @@ test("existing founders and new intake use durable source-to-DNA/product/vector 
           [founder],
         )
       ).rows.length,
-      1,
+      2,
     );
     assert.equal(
       (await f.db.query("SELECT * FROM enrichment_profiles")).rows.length,
       2,
     );
     assert.equal(f.counters().collections, 1);
+    assert.equal(f.websiteCalls(), 1);
     const second = await f.store.createEntity("founder", "synthetic_two");
     await f.store.intake("test", second);
     await f.store.reconcileTargets("test");
@@ -357,9 +455,13 @@ test("existing founders and new intake use durable source-to-DNA/product/vector 
       collectProfile: async () => {
         throw new Error("source must not run");
       },
+      collectWebsite: async () => {
+        throw new Error("website must not run");
+      },
     });
     await runPendingStages(f.store, rederive, { limit: 50, leaseSeconds: 60 });
     assert.equal(f.counters().collections, 2);
+    assert.equal(f.websiteCalls(), 2);
     const latest = (
       await f.db.query<{ status: string }>(
         "SELECT status FROM enrichment_stage_work WHERE release_id=$1 AND entity_id IN ($2,$3)",
@@ -479,6 +581,56 @@ test("expired stage lease cannot start a paid source call", async () => {
       generations: 0,
       embeddings: 0,
     });
+  } finally {
+    await f.pg.close();
+  }
+});
+
+test("website failure preserves personal DNA but marks descriptions unavailable", async () => {
+  const f = await fixture({ website: true, websiteFailure: true });
+  try {
+    const founder = await f.store.createEntity("founder", "synthetic_failure");
+    await f.store.intake("test", founder);
+    await f.store.reconcileTargets("test");
+    await runPendingStages(
+      f.store,
+      createStageHandlers(f.store, new WorkerStore(f.db), f.dependencies),
+      { limit: 20, leaseSeconds: 60 },
+    );
+    const rows = (
+      await f.db.query<{ stage: string; status: string }>(
+        "SELECT stage,status FROM enrichment_stage_work WHERE entity_id=$1",
+        [founder],
+      )
+    ).rows;
+    assert.equal(
+      rows.find((r) => r.stage === "founder_dna")?.status,
+      "succeeded",
+    );
+    assert.equal(
+      rows.find((r) => r.stage === "product_descriptions")?.status,
+      "unavailable",
+    );
+    assert.equal(f.websiteCalls(), 1);
+  } finally {
+    await f.pg.close();
+  }
+});
+
+test("profile identity mismatch blocks website purchase", async () => {
+  const f = await fixture({ website: true, mismatchedProfile: true });
+  try {
+    const founder = await f.store.createEntity("founder", "synthetic_target");
+    await f.store.intake("test", founder);
+    await f.store.reconcileTargets("test");
+    const result = await runPendingStages(
+      f.store,
+      createStageHandlers(f.store, new WorkerStore(f.db), f.dependencies),
+      { limit: 20, leaseSeconds: 60 },
+    );
+    assert.deepEqual(result, { processed: 1, counts: { blocked: 1 } });
+    assert.equal(f.websiteCalls(), 0);
+    assert.equal(f.counters().generations, 0);
   } finally {
     await f.pg.close();
   }

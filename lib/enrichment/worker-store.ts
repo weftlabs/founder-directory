@@ -69,6 +69,7 @@ export class WorkerStore {
   async evidence(
     entityId: string,
     artifactId?: string,
+    evidenceIds?: string[],
   ): Promise<EvidenceInput[]> {
     const rows = (
       await this.db.query<
@@ -80,8 +81,9 @@ export class WorkerStore {
       FROM enrichment_entity_evidence link JOIN enrichment_evidence e ON e.id=link.evidence_id
       JOIN enrichment_artifacts a ON a.id=e.artifact_id AND a.purged_at IS NULL
       WHERE link.entity_id=$1 AND ($2::uuid IS NULL OR e.artifact_id=$2) AND (a.expires_at IS NULL OR a.expires_at>now())
+      AND ($3::uuid[] IS NULL OR e.id=ANY($3::uuid[]))
       AND NOT EXISTS(SELECT 1 FROM enrichment_artifact_withdrawals x WHERE x.artifact_id=a.id) ORDER BY e.id`,
-        [entityId, artifactId ?? null],
+        [entityId, artifactId ?? null, evidenceIds ?? null],
       )
     ).rows;
     return rows.map(({ metadata, ...row }) => ({
@@ -89,6 +91,15 @@ export class WorkerStore {
       contentHash: stableDigest(row.text),
       provenance: evidenceProvenance(metadata),
     }));
+  }
+
+  /** Select only the current extraction manifest, never old linked generations. */
+  async evidenceByIds(
+    entityId: string,
+    ids: string[],
+  ): Promise<EvidenceInput[]> {
+    if (!ids.length) return [];
+    return this.evidence(entityId, undefined, ids);
   }
 
   async analysis(
