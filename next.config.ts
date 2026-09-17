@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  outputFileTracingExcludes: {
+    "/*": [".local/**/*"],
+  },
   images: {
     remotePatterns: [
       { protocol: "https", hostname: "pbs.twimg.com" },

@@ -10,14 +10,12 @@ production profiles or receipts into fixtures.
 The broad local gate is:
 
 ```sh
-pnpm check
-pnpm build
 pnpm exec playwright install chromium
-pnpm test:e2e
+pnpm verify
 ```
 
-`pnpm check` runs format checks, ESLint, TypeScript, unit tests and repository
-checks. Playwright starts the production server on port 3100 with blank database,
+`pnpm verify` runs format checks, ESLint, TypeScript, unit tests, repository and
+build-trace checks, then both browser suites. Playwright starts the production server on port 3100 with blank database,
 Weft and cron credentials. It refuses to reuse an existing server. Its desktop
 and mobile tests exercise branding, empty-state search, chip controls, missing
 profiles and unauthorized cron requests. These smoke tests do **not** prove a

@@ -11,7 +11,7 @@ change to paid behavior. Keep one PR focused on one user-visible outcome.
 3. Run `pnpm dev`. With no credentials, the directory is empty and cron is unauthorized.
 4. Write the smallest regression test. Use synthetic profiles, never real profile dumps.
 5. Change the owning code. Keep Next.js routes thin and Weft calls on the server.
-6. Run `pnpm check`, then `pnpm build && pnpm test:e2e`.
+6. Run `pnpm verify`.
    Install Chromium once with `pnpm exec playwright install chromium`.
 7. Open a PR with the behavior change, test output, risks, and untested paths.
 

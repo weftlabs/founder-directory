@@ -9,3 +9,4 @@ playwright-report/
 test-results/
 coverage/
 scripts/quotes-cache.json
+.local/

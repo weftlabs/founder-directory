@@ -269,6 +269,13 @@ export async function listDirectoryPage(
 
 export async function getFounder(handle: string): Promise<Founder | null> {
   await ensureSchema();
+  return getFounderReadOnly(handle);
+}
+
+/** Read-only lookup for public crawler routes; never initializes or migrates schema. */
+export async function getFounderReadOnly(
+  handle: string,
+): Promise<Founder | null> {
   const rows = (await sql()`
     SELECT * FROM founders WHERE lower(handle) = ${handle.toLowerCase()} LIMIT 1
   `) as Row[];

@@ -33,9 +33,12 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
+      - run: mkdir -p .local && cp tests/fixtures/builder-dna.json .local/builder-dna-examples.json
       - run: pnpm build
+      - run: pnpm check:build-traces
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e
+      - run: pnpm test:e2e:builder-dna
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:

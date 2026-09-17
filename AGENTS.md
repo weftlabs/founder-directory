@@ -34,7 +34,7 @@ Use Node 22 and the pinned pnpm version in `package.json`.
 - `pnpm dev` (no keys needed for an empty directory)
 - `pnpm test` for the inner loop
 - `pnpm check` for formatting, lint, types, tests and repository checks
-- `pnpm build && pnpm test:e2e` for production-mode browser smoke
+- `pnpm verify` for the complete build, trace-hygiene and browser gate
 
 ## Repo-local skills
 

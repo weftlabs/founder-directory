@@ -2,8 +2,12 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { SiteHeader } from "../../site-header";
 import { notFound } from "next/navigation";
-import { getFounder } from "@/lib/db";
 import { displayLink, safeHttpUrl } from "@/lib/model";
+import { getBuilderDnaExample } from "@/lib/builder-dna-local";
+import { BuilderDnaProfile } from "../../builder-dna-profile";
+import { SITE_URL } from "@/lib/site";
+import { shareImageMetadata } from "@/lib/founder-share";
+import { getProfileFounder } from "@/lib/profile-founder";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +17,32 @@ export async function generateMetadata({
   params: Promise<{ handle: string }>;
 }): Promise<Metadata> {
   const { handle } = await params;
-  const founder = await getFounder(handle).catch(() => null);
+  const example = await getBuilderDnaExample(handle);
+  if (example) {
+    const title = `${example.name} (@${example.handle}) · ${example.product}`;
+    const description = example.summary;
+    return {
+      title,
+      description,
+      alternates: { canonical: `/u/${example.handle}` },
+      openGraph: {
+        title,
+        description,
+        url: `/u/${example.handle}`,
+        type: "profile",
+        images: shareImageMetadata(example.handle, example.name),
+      },
+      twitter: {
+        card: "summary_large_image",
+        title,
+        description,
+        images: shareImageMetadata(example.handle, example.name),
+      },
+      // Local research is not ready for indexing. Production profiles retain their existing policy.
+      robots: { index: false, follow: false },
+    };
+  }
+  const founder = await getProfileFounder(handle).catch(() => null);
   if (!founder) return { title: "Not found" };
   const description = `${founder.name} (@${founder.handle}) is listed in Founder Directory${
     founder.city ? ` in ${founder.city}` : ""
@@ -27,9 +56,11 @@ export async function generateMetadata({
       description,
       url: `/u/${founder.handle}`,
       type: "profile",
+      images: shareImageMetadata(founder.handle, founder.name),
     },
     twitter: {
-      card: "summary",
+      card: "summary_large_image",
+      images: shareImageMetadata(founder.handle, founder.name),
       title: `${founder.name} (@${founder.handle})`,
       description,
     },
@@ -42,7 +73,41 @@ export default async function ProfilePage({
   params: Promise<{ handle: string }>;
 }) {
   const { handle } = await params;
-  const founder = await getFounder(handle).catch(() => null);
+  const example = await getBuilderDnaExample(handle);
+  if (example) {
+    const canonical = `${SITE_URL}/u/${example.handle}`;
+    const structuredData = {
+      "@context": "https://schema.org",
+      "@type": "ProfilePage",
+      url: canonical,
+      name: `${example.name} · ${example.product}`,
+      description: example.summary,
+      mainEntity: {
+        "@type": "Person",
+        "@id": `${canonical}#person`,
+        name: example.name,
+        alternateName: `@${example.handle}`,
+        url: canonical,
+        sameAs: [`https://x.com/${example.handle}`],
+      },
+    };
+    return (
+      <>
+        <SiteHeader />
+        <main className="profile">
+          <p className="fresh">Local research preview · saved public sources</p>
+          <script
+            type="application/ld+json"
+            dangerouslySetInnerHTML={{
+              __html: JSON.stringify(structuredData).replace(/</g, "\\u003c"),
+            }}
+          />
+          <BuilderDnaProfile example={example} />
+        </main>
+      </>
+    );
+  }
+  const founder = await getProfileFounder(handle).catch(() => null);
   if (!founder) notFound();
   const place = [founder.city, founder.country].filter(Boolean).join(", ");
   const introUrl = safeHttpUrl(founder.introUrl);

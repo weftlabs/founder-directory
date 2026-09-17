@@ -192,3 +192,19 @@ test("unknown profiles return 404 rather than inventing a founder", async ({
   const response = await request.get("/u/fixture_missing");
   expect(response.status()).toBe(404);
 });
+
+test("ordinary founder profiles advertise and serve their social card", async ({
+  page,
+  request,
+}) => {
+  const response = await page.goto("/u/fixture_founder");
+  expect(response?.status()).toBe(200);
+  await expect(page).toHaveTitle(/示例 Founder/);
+  await expect(page.locator('meta[property="og:image"]')).toHaveAttribute(
+    "content",
+    /\/u\/fixture_founder\/share-image$/,
+  );
+  const image = await request.get("/u/fixture_founder/share-image");
+  expect(image.status()).toBe(200);
+  expect(image.headers()["content-type"]).toContain("image/png");
+});
