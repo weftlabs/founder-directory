@@ -19,6 +19,7 @@ import {
   scanDeadlineMs,
   scanLimits,
   unknownHits,
+  UPSTREAM_FAIL_STOP,
   type ScanStore,
 } from "../lib/scan";
 import {
@@ -60,6 +61,7 @@ function memoryStore(init?: {
   pending?: TrendHit[];
   cursors?: Record<string, string | null>;
   handles?: string[];
+  incomplete?: TrendHit[];
 }) {
   const founders = new Set(
     (init?.handles ?? []).map((value) => value.toLowerCase()),
@@ -69,10 +71,14 @@ function memoryStore(init?: {
     cursors: { ...(init?.cursors ?? {}) },
     pending: [...(init?.pending ?? [])],
     added: [] as string[],
+    incomplete: [...(init?.incomplete ?? [])],
   };
   const store: ScanStore = {
     async existingHandles() {
       return new Set(founders);
+    },
+    async incompleteHits() {
+      return [...record.incomplete];
     },
     async upsertFounder(founder) {
       founders.add(founder.handle.toLowerCase());
@@ -331,7 +337,7 @@ test("unhydrated intros survive to the next runScan and are hydrated first", asy
   assert.equal(record.touches, 2);
 });
 
-test("valid intros are stored as basic records when profile hydration is unavailable", async () => {
+test("a 502 profile fetch keeps the intro queued instead of storing a stub", async () => {
   const intro = { ...hit("alice"), name: "Alice Smith" };
   const { record, store } = memoryStore({ pending: [intro] });
   const result = await runScan({
@@ -351,54 +357,16 @@ test("valid intros are stored as basic records when profile hydration is unavail
     },
   });
 
-  assert.equal(result.added, 1);
+  assert.equal(result.added, 0);
   assert.equal(result.failed, 1);
-  assert.deepEqual(record.pending, []);
-  assert.deepEqual(record.added, ["alice"]);
+  assert.equal(result.pending, 1);
+  assert.deepEqual(record.pending, [intro]);
+  assert.deepEqual(record.added, []);
 });
 
-test("an operator materializes only sourced queued intros without a paid call", async () => {
-  const { record, store } = memoryStore({
-    pending: [hit("alice"), hit("bob"), { ...hit("carol"), tweetId: null }],
-  });
-
-  const result = await materializePendingIntros(store);
-
-  assert.deepEqual(result, { added: 2, skipped: 1 });
-  assert.deepEqual(record.added, ["alice", "bob"]);
-  assert.deepEqual(record.pending, [
-    hit("alice"),
-    hit("bob"),
-    { ...hit("carol"), tweetId: null },
-  ]);
-  assert.equal(record.touches, 1);
-});
-
-test("a stored basic record prevents paid replay after later work fails", async () => {
+test("hydrate retries a 502 on the next tick", async () => {
   const { record, store } = memoryStore({ pending: [hit("alice")] });
   let hydrateCalls = 0;
-  await assert.rejects(
-    runScan({
-      store,
-      maxSearches: 0,
-      maxHydrations: 1,
-      maxPages: 5,
-      now: () => 0,
-      async searchIntroPage() {
-        return { hits: [], cursor: null };
-      },
-      async fetchProfile() {
-        hydrateCalls += 1;
-        throw new ProfileUnavailableError(502);
-      },
-      async normalizePlaces() {
-        throw new Error("database maintenance unavailable");
-      },
-    }),
-    /database maintenance unavailable/,
-  );
-  assert.deepEqual(record.added, ["alice"]);
-
   await runScan({
     store,
     maxSearches: 0,
@@ -416,7 +384,116 @@ test("a stored basic record prevents paid replay after later work fails", async 
       return new Map();
     },
   });
-  assert.equal(hydrateCalls, 1);
+  assert.deepEqual(record.added, []);
+  assert.deepEqual(
+    record.pending.map((row) => row.handle),
+    ["alice"],
+  );
+
+  await runScan({
+    store,
+    maxSearches: 0,
+    maxHydrations: 1,
+    maxPages: 5,
+    now: () => 0,
+    async searchIntroPage() {
+      return { hits: [], cursor: null };
+    },
+    async fetchProfile() {
+      hydrateCalls += 1;
+      return { ...founderFor("alice"), avatarUrl: "https://img.test/a.jpg" };
+    },
+    async normalizePlaces() {
+      return new Map();
+    },
+  });
+  assert.equal(hydrateCalls, 2);
+  assert.deepEqual(record.added, ["alice"]);
+  assert.deepEqual(record.pending, []);
+});
+
+test("hydrate re-fetches stored rows that have no avatar", async () => {
+  const { record, store } = memoryStore({
+    handles: ["alice"],
+    incomplete: [hit("alice")],
+  });
+  const hydrated: string[] = [];
+  const result = await runScan({
+    store,
+    maxSearches: 0,
+    maxHydrations: 1,
+    maxPages: 5,
+    now: () => 0,
+    async searchIntroPage() {
+      return { hits: [], cursor: null };
+    },
+    async fetchProfile(handle) {
+      hydrated.push(handle);
+      return { ...founderFor(handle), avatarUrl: "https://img.test/a.jpg" };
+    },
+    async normalizePlaces() {
+      return new Map();
+    },
+  });
+  assert.deepEqual(hydrated, ["alice"]);
+  assert.equal(result.added, 1);
+  assert.deepEqual(record.added, ["alice"]);
+  assert.deepEqual(record.pending, []);
+});
+
+test("a cluster of 502s stops the tick and leaves the rest queued", async () => {
+  const pending = [
+    "alice",
+    "bob",
+    "carol",
+    "dave",
+    "erin",
+    "frank",
+    "gina",
+    "hank",
+    "ivy",
+    "jade",
+  ].map(hit);
+  const { record, store } = memoryStore({ pending });
+  const hydrated: string[] = [];
+  const result = await runScan({
+    store,
+    maxSearches: 0,
+    maxHydrations: 50,
+    maxPages: 5,
+    now: () => 0,
+    async searchIntroPage() {
+      return { hits: [], cursor: null };
+    },
+    async fetchProfile(handle) {
+      hydrated.push(handle);
+      throw new ProfileUnavailableError(502);
+    },
+    async normalizePlaces() {
+      return new Map();
+    },
+  });
+  assert.equal(hydrated.length, UPSTREAM_FAIL_STOP);
+  assert.equal(result.stopped, "upstream");
+  assert.equal(result.added, 0);
+  assert.equal(record.pending.length, pending.length);
+});
+
+test("an operator materializes only sourced queued intros without a paid call", async () => {
+  const { record, store } = memoryStore({
+    pending: [hit("alice"), hit("bob"), { ...hit("carol"), tweetId: null }],
+  });
+
+  const result = await materializePendingIntros(store);
+
+  assert.deepEqual(result, { added: 2, skipped: 1 });
+  assert.deepEqual(record.added, ["alice", "bob"]);
+  assert.deepEqual(record.pending, [
+    hit("alice"),
+    hit("bob"),
+    { ...hit("carol"), tweetId: null },
+  ]);
+  assert.equal(record.touches, 1);
 });
 
 test("discover does not call fetchProfile; hydrate does not search", async () => {
