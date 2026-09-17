@@ -364,17 +364,19 @@ export default function FounderMap({
       GeoJSONSource | undefined;
     source?.setData(collection(founders, places));
   }, [founders, places]);
+  const selectedLng = selected?.coordinates?.[0];
+  const selectedLat = selected?.coordinates?.[1];
   useEffect(() => {
     const map = instance.current;
-    if (!map || !selected?.coordinates) return;
+    if (!map || selectedLng == null || selectedLat == null) return;
     map.easeTo({
-      center: selected.coordinates,
+      center: [selectedLng, selectedLat],
       zoom: Math.max(map.getZoom(), 5),
       duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches
         ? 0
         : 800,
     });
-  }, [selected]);
+  }, [selected?.handle, selectedLng, selectedLat]);
   return (
     <>
       <div

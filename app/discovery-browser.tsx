@@ -156,7 +156,7 @@ export function DiscoveryBrowser({
         className="discovery-toolbar"
         onSubmit={(e) => {
           e.preventDefault();
-          navigate({ q });
+          navigate({ q, bounds: "" });
         }}
       >
         <label className="discovery-search">
@@ -184,7 +184,7 @@ export function DiscoveryBrowser({
             value={country}
             onChange={(e) => {
               setCountry(e.target.value);
-              navigate({ country: e.target.value, city: "" });
+              navigate({ country: e.target.value, city: "", bounds: "" });
               setLimit(48);
             }}
           >
@@ -212,7 +212,7 @@ export function DiscoveryBrowser({
             aria-pressed={!category}
             onClick={() => {
               setCategory("");
-              navigate({ category: "" });
+              navigate({ category: "", bounds: "" });
               setLimit(48);
             }}
           >
@@ -224,7 +224,7 @@ export function DiscoveryBrowser({
               aria-pressed={category === c}
               onClick={() => {
                 setCategory(c);
-                navigate({ category: c });
+                navigate({ category: c, bounds: "" });
                 setLimit(48);
               }}
             >

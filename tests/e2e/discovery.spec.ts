@@ -10,12 +10,42 @@ test("zooming loads a bounded viewport page without resetting the map", async ({
   await expect(page).toHaveURL(/bounds=/);
   await expect(page.locator(".map-avatar-pin")).toBeVisible();
   await expect(page.locator(".discovery-rows li")).toHaveCount(48);
+  await page.locator(".maplibregl-canvas").scrollIntoViewIfNeeded();
+  const beforeUrl = page.url();
+  const beforePin = await page.locator(".map-avatar-pin").boundingBox();
+  const canvas = await page.locator(".maplibregl-canvas").boundingBox();
+  await page.mouse.move(
+    canvas!.x + canvas!.width / 2,
+    canvas!.y + canvas!.height / 4,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    canvas!.x + canvas!.width / 2 + 45,
+    canvas!.y + canvas!.height / 4,
+    { steps: 8 },
+  );
+  await page.mouse.up();
+  await expect(page).not.toHaveURL(beforeUrl);
+  // Allow the streamed page update and any erroneous camera animation to settle.
+  await page.waitForTimeout(1200);
+  expect(
+    (await page.locator(".map-avatar-pin").boundingBox())!.x,
+  ).toBeGreaterThan(beforePin!.x + 25);
   await page.getByRole("link", { name: "Next page" }).click();
   await expect(page.locator(".discovery-rows li").first()).toContainText(
     "Bounded Founder 48",
   );
   await expect(page).toHaveURL(/page=2/);
   await page.getByRole("button", { name: "World view" }).click();
+  await expect(page).not.toHaveURL(/bounds=/);
+  await page
+    .getByRole("button", { name: "Show Bounded Founder 0 on map", exact: true })
+    .click();
+  await expect(page).toHaveURL(/bounds=/);
+  await page
+    .getByRole("combobox", { name: "Country", exact: true })
+    .selectOption("Germany");
+  await expect(page).toHaveURL(/country=Germany/);
   await expect(page).not.toHaveURL(/bounds=/);
 });
 
