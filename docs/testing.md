@@ -20,7 +20,8 @@ pnpm test:e2e
 checks. Playwright starts the production server on port 3100 with blank database,
 Weft and cron credentials. It refuses to reuse an existing server. Its desktop
 and mobile tests exercise branding, empty-state search, chip controls, missing
-profiles and unauthorized cron requests. These smoke tests do **not** prove a
+profiles and unauthorized cron requests. Products smoke tests also cover a populated, explicitly fictional fixture with
+category/search combinations, bounded pagination and history. These smoke tests do **not** prove a
 funded provider or populated Neon path.
 
 ## Regression standard

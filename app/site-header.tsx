@@ -7,10 +7,12 @@ export function SiteHeader({
   directoryCurrent = false,
   aboutCurrent = false,
   mapCurrent = false,
+  productsCurrent = false,
 }: {
   directoryCurrent?: boolean;
   aboutCurrent?: boolean;
   mapCurrent?: boolean;
+  productsCurrent?: boolean;
 }) {
   return (
     <header className="top">
@@ -18,6 +20,13 @@ export function SiteHeader({
         Founder <em>Directory</em>
       </Link>
       <div className="top-nav">
+        <Link
+          prefetch={false}
+          href="/products"
+          aria-current={productsCurrent ? "page" : undefined}
+        >
+          Products
+        </Link>
         <Link
           prefetch={false}
           className="directory-link"
