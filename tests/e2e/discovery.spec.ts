@@ -1,5 +1,50 @@
 import { expect, test } from "@playwright/test";
 
+test("photo pins select founders, fall back to initials, and group only the current page", async ({
+  page,
+}) => {
+  await page.route("https://i.pravatar.cc/**", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><rect width="48" height="48" fill="teal"/></svg>',
+    }),
+  );
+  await page.goto("/discovery-preview");
+  await expect(page.locator(".map-avatar-pin")).toHaveCount(8);
+  const alex = page.getByRole("button", {
+    name: "Meet Alex Example in Berlin",
+    exact: true,
+  });
+  await expect(alex.locator("img")).toBeVisible();
+  await expect
+    .poll(() =>
+      alex
+        .locator("img")
+        .evaluate((image: HTMLImageElement) => image.naturalWidth),
+    )
+    .toBeGreaterThan(0);
+  await alex.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".map-profile")).toContainText("Alex Example");
+  await expect(alex).toHaveAttribute("data-selected", "true");
+  await page.getByRole("searchbox").fill("Paris");
+  await expect(page.locator(".map-avatar-pin")).toHaveCount(1);
+  await expect(page.locator(".map-avatar-pin")).toContainText("ME");
+  await page.route("https://i.pravatar.cc/**", (route) => route.abort());
+  await page.goto("/discovery-preview?bounded=1");
+  await expect(page.locator(".map-avatar-pin")).toHaveCount(1);
+  await expect(page.locator(".map-avatar-pin img")).toHaveCount(0);
+  await expect(page.locator(".map-avatar-initials")).toHaveText("BF");
+  await expect(page.locator(".map-avatar-count")).toHaveText("48");
+  await page
+    .getByRole("button", { name: "Explore 48 founders on this page in Berlin" })
+    .click();
+  await expect(page.locator(".map-group")).toContainText("48 founders");
+  await expect(page.locator(".map-group")).not.toContainText(
+    "Bounded Founder 48",
+  );
+});
+
 test("map search, selection, category and country filters agree", async ({
   page,
 }) => {

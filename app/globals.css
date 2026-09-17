@@ -1111,6 +1111,52 @@ main.about code {
   font-size: 11px !important;
   padding: 9px 12px;
 }
+.map-avatar-pin {
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: 3px solid #d8ff3e;
+  border-radius: 50%;
+  background: #263020;
+  color: #eaf2d8;
+  cursor: pointer;
+  box-shadow: 0 4px 14px #0008;
+}
+.map-avatar-pin img,
+.map-avatar-initials {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.map-avatar-initials {
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  font-weight: 600;
+}
+.map-avatar-pin:hover,
+.map-avatar-pin:focus-visible,
+.map-avatar-pin[data-selected="true"] {
+  border-color: #fff;
+  outline: 3px solid #d8ff3e80;
+  outline-offset: 3px;
+  z-index: 2;
+}
+.map-avatar-count {
+  position: absolute;
+  bottom: -9px;
+  right: -8px;
+  padding: 2px 5px;
+  border: 1px solid #d8ff3e;
+  border-radius: 12px;
+  background: #12180e;
+  color: #d8ff3e;
+  font-size: 11px;
+  line-height: 16px;
+}
 .map-credit {
   position: absolute;
   left: 10px;

@@ -6,6 +6,7 @@ import maplibregl, {
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { DiscoveryFounder, MapPlace } from "@/lib/discovery";
+import { safeHttpUrl } from "@/lib/model";
 
 function collection(founders: DiscoveryFounder[], places?: MapPlace[]) {
   const points = places
@@ -213,6 +214,74 @@ export default function FounderMap({
     };
   }, []);
   useEffect(() => {
+    const map = instance.current;
+    if (!map) return;
+    const groups = new Map<string, DiscoveryFounder[]>();
+    for (const founder of founders) {
+      if (!founder.coordinates) continue;
+      const key = founder.coordinates.join(",");
+      groups.set(key, [...(groups.get(key) ?? []), founder]);
+    }
+    const markers = [...groups.values()].map((group) => {
+      const founder =
+        group.find((f) => f.handle === selected?.handle) ?? group[0];
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "map-avatar-pin";
+      button.dataset.selected = String(
+        group.some((f) => f.handle === selected?.handle),
+      );
+      button.setAttribute(
+        "aria-label",
+        group.length > 1
+          ? `Explore ${group.length} founders on this page in ${founder.city}`
+          : `Meet ${founder.name} in ${founder.city}`,
+      );
+      button.title =
+        group.length > 1
+          ? `${founder.city} · ${group.length} on this page`
+          : founder.name;
+      const initials = document.createElement("span");
+      initials.className = "map-avatar-initials";
+      initials.textContent = founder.name
+        .split(" ")
+        .map((part) => part[0])
+        .slice(0, 2)
+        .join("");
+      button.append(initials);
+      const url = safeHttpUrl(founder.avatarUrl);
+      if (url) {
+        const img = document.createElement("img");
+        img.alt = "";
+        img.width = 44;
+        img.height = 44;
+        img.referrerPolicy = "no-referrer";
+        img.addEventListener("error", () => img.remove(), { once: true });
+        img.src = url;
+        button.append(img);
+      }
+      if (group.length > 1) {
+        const badge = document.createElement("span");
+        badge.className = "map-avatar-count";
+        badge.textContent = String(group.length);
+        button.append(badge);
+      }
+      button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (group.length > 1) selectGroup.current(group.map((f) => f.handle));
+        else select.current(founder.handle);
+      });
+      return new maplibregl.Marker({
+        element: button,
+        anchor: "bottom",
+        offset: [0, -12],
+      })
+        .setLngLat(founder.coordinates!)
+        .addTo(map);
+    });
+    return () => markers.forEach((marker) => marker.remove());
+  }, [founders, selected]);
+  useEffect(() => {
     const source = instance.current?.getSource("founders") as
       GeoJSONSource | undefined;
     source?.setData(collection(founders, places));
@@ -227,12 +296,6 @@ export default function FounderMap({
         ? 0
         : 800,
     });
-    const marker = new maplibregl.Marker({ color: "#f4f1e8" })
-      .setLngLat(selected.coordinates)
-      .addTo(map);
-    return () => {
-      marker.remove();
-    };
   }, [selected]);
   return (
     <>

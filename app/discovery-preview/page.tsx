@@ -93,7 +93,7 @@ export default async function DiscoveryPreview({
       category,
       bio,
       handle: `example_${i}`,
-      avatarUrl: null,
+      avatarUrl: i < 3 ? `https://i.pravatar.cc/96?img=${i + 1}` : null,
       coordinates: locateFounder({ city, country }),
     }),
   );
