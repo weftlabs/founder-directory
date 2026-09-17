@@ -1,5 +1,6 @@
 import {
   existingHandles,
+  incompleteHydrationHits,
   insertFounderIfAbsent,
   loadScanProgress,
   saveScanProgress,
@@ -125,6 +126,7 @@ export const BULK_MAX_SEARCHES = 16;
 export const SCHEDULED_MAX_HYDRATIONS = 15;
 export const BULK_MAX_HYDRATIONS = 30;
 export const HYDRATE_MAX_HYDRATIONS = 50;
+export const UPSTREAM_FAIL_STOP = 8;
 
 export type ScanLimits = {
   maxPages: number;
@@ -171,6 +173,7 @@ export function scanDeadlineMs(kind: ScanKind = "scheduled"): number {
 
 export type ScanStore = {
   existingHandles(): Promise<Set<string>>;
+  incompleteHits(): Promise<TrendHit[]>;
   insertFounderIfAbsent(founder: Founder): Promise<boolean>;
   upsertFounder(founder: Founder): Promise<void>;
   touchScan(): Promise<void>;
@@ -199,6 +202,7 @@ export type ScanDependencies = {
 
 const defaultStore: ScanStore = {
   existingHandles,
+  incompleteHits: incompleteHydrationHits,
   insertFounderIfAbsent,
   upsertFounder,
   touchScan,
@@ -246,7 +250,8 @@ export type ScanResult = {
   searches: number;
   hydrations: number;
   pending: number;
-  stopped: "deadline" | "search-cap" | "hydration-cap" | "complete";
+  stopped:
+    "deadline" | "search-cap" | "hydration-cap" | "upstream" | "complete";
 };
 
 export async function runScan(
@@ -275,12 +280,25 @@ export async function runScan(
   let searches = 0;
   let stopped: ScanResult["stopped"] = "complete";
 
-  const queued = unknownHits(progress.pending, known);
+  const incomplete =
+    limits.maxHydrations > 0 ? await store.incompleteHits() : [];
+  const incompleteKeys = new Set(
+    incomplete.map((hit) => hit.handle.toLowerCase()),
+  );
+  const knownComplete = new Set(
+    [...known].filter((handle) => !incompleteKeys.has(handle)),
+  );
+  const queued = unknownHits(
+    [...incomplete, ...progress.pending],
+    knownComplete,
+  );
   const hydratedFounders: Founder[] = [];
+  const retryLater: TrendHit[] = [];
   let hydrations = 0;
   let failed = 0;
   let added = 0;
   let queueIndex = 0;
+  let consecutiveUpstream = 0;
 
   async function hydrateNext(hit: TrendHit) {
     hydrations += 1;
@@ -290,15 +308,11 @@ export async function runScan(
     } catch (error) {
       if (!(error instanceof ProfileUnavailableError)) throw error;
       failed += 1;
-      if (!hit.tweetId || !/^[0-9]{1,25}$/.test(hit.tweetId)) return;
-      // The search result is the public source of truth for this basic row.
-      // Persist it before any later fallible work so this paid lookup is never replayed.
-      founder = founderFromIntro(hit);
-      const inserted = await store.insertFounderIfAbsent(founder);
-      known.add(hit.handle.toLowerCase());
-      if (inserted) added += 1;
+      consecutiveUpstream += 1;
+      if (!known.has(hit.handle.toLowerCase())) retryLater.push(hit);
       return;
     }
+    consecutiveUpstream = 0;
     if (!founder) {
       failed += 1;
       return;
@@ -307,15 +321,24 @@ export async function runScan(
     known.add(hit.handle.toLowerCase());
   }
 
-  while (queueIndex < queued.length) {
+  function hydrateBlocked(): boolean {
     if (!withinBudget()) {
       stopped = "deadline";
-      break;
+      return true;
     }
     if (hydrations >= limits.maxHydrations) {
       stopped = "hydration-cap";
-      break;
+      return true;
     }
+    if (consecutiveUpstream >= UPSTREAM_FAIL_STOP) {
+      stopped = "upstream";
+      return true;
+    }
+    return false;
+  }
+
+  while (queueIndex < queued.length) {
+    if (hydrateBlocked()) break;
     await hydrateNext(queued[queueIndex]);
     queueIndex += 1;
   }
@@ -359,33 +382,24 @@ export async function runScan(
   const fresh = unknownHits(discovered, known);
   let freshIndex = 0;
   while (freshIndex < fresh.length) {
-    if (!withinBudget()) {
-      stopped = "deadline";
-      break;
-    }
-    if (hydrations >= limits.maxHydrations) {
-      if (stopped === "complete" || stopped === "search-cap") {
-        stopped = "hydration-cap";
-      }
-      break;
-    }
+    if (hydrateBlocked()) break;
     await hydrateNext(fresh[freshIndex]);
     freshIndex += 1;
   }
 
   const leftover = unknownHits(
-    [...queued.slice(queueIndex), ...fresh.slice(freshIndex)],
+    [...retryLater, ...queued.slice(queueIndex), ...fresh.slice(freshIndex)],
     known,
   );
 
   let places = new Map<string, ReturnType<typeof emptyPlace>>();
-  if (withinBudget()) {
+  if (hydratedFounders.length > 0 && withinBudget()) {
     places = await placesOf(
       hydratedFounders
         .map((founder) => founder.location)
         .filter((value): value is string => Boolean(value)),
     );
-  } else {
+  } else if (!withinBudget()) {
     stopped = "deadline";
   }
 

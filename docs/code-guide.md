@@ -48,11 +48,12 @@ plan upgrade. Combined `/api/cron/scan` remains for operator bulk.
 Each tick still returns JSON and records `last_scan_at`. Per-phrase
 cursors and leftover intros live on `scan_meta`. Found intros are not
 dropped to meet the hydration cap — they wait for the next hydrate run.
-If Atlas profile hydration returns HTTP 502 or 504, the scan stores a basic row
-from the already-public intro result before it does more fallible work. This
-prevents loss and a second paid request. Other profile failures are skipped,
-including protected profiles. Uncertain places are empty, not comma-split
-guesses. The original intro links back to its source.
+If Atlas profile hydration returns HTTP 502 or 504, the scan leaves that
+intro queued (or, if a stub row already exists, re-fetches it later). It
+does not write an avatar-less founder row, because `existingHandles`
+would then skip the person forever. After eight consecutive upstream
+failures the tick stops so a 502 cluster does not spend the hydrate cap.
+Other profile failures are skipped, including protected profiles.
 The `scripts/materialize-pending.ts` operator command performs the same basic-row
 write for intros that are already queued. It does not call Weft or replace scan
 progress, so a concurrent scan cannot lose new cursors or queued intros.

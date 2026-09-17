@@ -8,8 +8,9 @@ import {
   encodeDirectoryCursor,
   type DirectoryPage,
 } from "./directory-page";
-import type { Founder, VibeCheck } from "./model";
+import { parseHandle, type Founder, type VibeCheck } from "./model";
 import { isPresenceSessionId } from "./presence";
+import type { TrendHit } from "./x";
 
 function sql() {
   const url = process.env.DATABASE_URL;
@@ -281,6 +282,49 @@ export async function existingHandles(): Promise<Set<string>> {
     handle: string;
   }[];
   return new Set(rows.map((row) => row.handle.toLowerCase()));
+}
+
+function tweetIdFromIntroUrl(introUrl: string | null): string | null {
+  if (!introUrl) return null;
+  const match = introUrl.match(/status\/(\d{1,25})/);
+  return match?.[1] ?? null;
+}
+
+export async function incompleteHydrationHits(): Promise<TrendHit[]> {
+  await ensureSchema();
+  const rows = (await sql()`
+    SELECT handle, name, intro_text, intro_url
+    FROM founders
+    WHERE avatar_url IS NULL OR avatar_url = ''
+    ORDER BY updated_at ASC
+    LIMIT 100
+  `) as {
+    handle: string;
+    name: string;
+    intro_text: string | null;
+    intro_url: string | null;
+  }[];
+  const out: TrendHit[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    let handle: string;
+    try {
+      handle = parseHandle(row.handle);
+    } catch {
+      continue;
+    }
+    const key = handle.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const text = row.intro_text?.trim() || `I'm a founder ${handle}`;
+    out.push({
+      handle,
+      name: row.name?.trim() || handle,
+      text,
+      tweetId: tweetIdFromIntroUrl(row.intro_url),
+    });
+  }
+  return out;
 }
 
 export async function upsertFounder(founder: Founder) {
