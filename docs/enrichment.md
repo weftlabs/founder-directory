@@ -94,7 +94,7 @@ Replace every `REVIEWED_...` value and `BUDGET_UUID` with verified values:
   "configuration": {
     "codeDigest": "REVIEWED_BUILD_DIGEST",
     "model": {
-      "provider": "openrouter",
+      "provider": "weft/openrouter",
       "model": "REVIEWED_MODEL_ID",
       "revision": null
     }
