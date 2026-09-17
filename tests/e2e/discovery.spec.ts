@@ -45,40 +45,7 @@ test("map search, selection, category and country filters agree", async ({
   ).toBe(true);
 });
 
-test("leaderboard changes order with metric and excludes unmeasured founders", async ({
-  page,
-}) => {
-  await page.goto("/discovery-preview?mode=leaderboard");
-  await expect(page.locator(".discovery-rows li")).toHaveCount(9);
-  await expect(page.locator(".discovery-rows li").first()).toContainText(
-    "Alex Example",
-  );
-  await page.getByRole("button", { name: "Most viewed" }).click();
-  await expect(page.locator(".discovery-rows li").first()).toContainText(
-    "Drew Example",
-  );
-  await expect(page.locator(".podium-card").first()).toContainText(
-    "Drew Example",
-  );
-  await expect(page.locator(".ranking-explanation")).toContainText(
-    "1 founders have no recorded views",
-  );
-  await page.getByRole("searchbox").fill("no such person");
-  await expect(page.locator(".podium-card")).toHaveCount(0);
-  await expect(
-    page.getByRole("heading", { name: "No founders match these filters." }),
-  ).toBeVisible();
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth,
-    ),
-  ).toBe(true);
-});
-
-test("map stays public while leaderboard remains a draft", async ({
-  page,
-  request,
-}) => {
+test("map stays public without leaderboard code", async ({ page, request }) => {
   await page.goto("/map");
   await expect(page.locator("header a[href='/map']")).toHaveAttribute(
     "aria-current",
@@ -107,23 +74,19 @@ test("bounded pages do not embed the hidden index and require page navigation", 
   page,
   request,
 }) => {
-  for (const mode of ["map", "leaderboard"]) {
-    const response = await request.get(
-      `/discovery-preview?bounded=1&mode=${mode}`,
-    );
+  {
+    const response = await request.get("/discovery-preview?bounded=1");
     const html = await response.text();
     expect(html).toContain("bounded_47");
     expect(html).not.toContain("bounded_48");
     expect(html).not.toContain("bounded_119");
-    await page.goto(`/discovery-preview?bounded=1&mode=${mode}`);
+    await page.goto("/discovery-preview?bounded=1");
     await expect(page.locator(".discovery-rows li")).toHaveCount(48);
     await page.getByRole("link", { name: "Next page" }).click();
     await expect(page.locator(".discovery-rows li").first()).toContainText(
       "Bounded Founder 48",
     );
     await expect(page.locator(".discovery-rows li")).toHaveCount(48);
-    if (mode === "leaderboard")
-      await expect(page.locator(".row-rank").first()).toHaveText("49");
     await page.getByRole("searchbox").fill("Visible bio 119");
     await page.getByRole("button", { name: "Search", exact: true }).click();
     await expect(page.locator(".discovery-rows li")).toHaveCount(1);

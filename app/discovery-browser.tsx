@@ -1,5 +1,4 @@
 "use client";
-
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -7,14 +6,11 @@ import Image from "next/image";
 import { useMemo, useState } from "react";
 import {
   filterDiscovery,
-  rankFounders,
   type DiscoveryFounder,
-  type Metric,
   type DiscoveryPageInfo,
   type DiscoveryQuery,
 } from "@/lib/discovery";
 import { safeHttpUrl } from "@/lib/model";
-
 const FounderMap = dynamic(() => import("./founder-map"), {
   ssr: false,
   loading: () => <div className="atlas-loading">Opening the world…</div>,
@@ -23,7 +19,6 @@ const number = new Intl.NumberFormat("en", {
   notation: "compact",
   maximumFractionDigits: 1,
 });
-
 export function FounderAvatar({ founder }: { founder: DiscoveryFounder }) {
   const url = safeHttpUrl(founder.avatarUrl);
   return url ? (
@@ -46,16 +41,13 @@ export function FounderAvatar({ founder }: { founder: DiscoveryFounder }) {
     </span>
   );
 }
-
 export function DiscoveryBrowser({
   founders,
-  mode,
   unavailable = false,
   serverPage,
   navigationBase,
 }: {
   founders: DiscoveryFounder[];
-  mode: "map" | "leaderboard";
   unavailable?: boolean;
   serverPage?: DiscoveryPageInfo;
   navigationBase?: string;
@@ -64,9 +56,6 @@ export function DiscoveryBrowser({
   const [q, setQ] = useState(serverPage?.query.q ?? "");
   const [category, setCategory] = useState(serverPage?.query.category ?? "");
   const [country, setCountry] = useState(serverPage?.query.country ?? "");
-  const [metric, setMetric] = useState<Metric>(
-    serverPage?.query.metric ?? "likes",
-  );
   const [selected, setSelected] = useState<string | null>(null);
   const [limit, setLimit] = useState(48);
   const [group, setGroup] = useState<string[]>([]);
@@ -79,11 +68,7 @@ export function DiscoveryBrowser({
     () => filtered.filter((f) => f.coordinates),
     [filtered],
   );
-  const ranked = useMemo(
-    () => rankFounders(filtered, metric),
-    [filtered, metric],
-  );
-  const rows = mode === "map" ? filtered : ranked;
+  const rows = filtered;
   const groupFounders = filtered.filter((f) => group.includes(f.handle));
   const active = filtered.find((f) => f.handle === selected) ?? null;
   const countries =
@@ -96,25 +81,18 @@ export function DiscoveryBrowser({
   const categories =
     serverPage?.categories ??
     [...new Set(founders.map((f) => f.category))].sort();
-  const selectedMetric = mode === "leaderboard" ? metric : "likes";
-  const top =
-    mode === "leaderboard" && (!serverPage || serverPage.query.page === 1)
-      ? ranked.slice(0, 3)
-      : [];
   const total = serverPage?.total ?? filtered.length;
   const mappedTotal = serverPage?.mappedTotal ?? mapped.length;
-  const offset = serverPage ? (serverPage.query.page - 1) * 48 : 0;
   function pageUrl(changes: Partial<DiscoveryQuery> = {}) {
     const values = {
       ...serverPage?.query,
       q,
       category,
       country,
-      metric,
       page: 1,
       ...changes,
     };
-    const [pathname, search] = (navigationBase ?? `/${mode}`).split("?");
+    const [pathname, search] = (navigationBase ?? "/map").split("?");
     const params = new URLSearchParams(search);
     for (const [key, value] of Object.entries(values))
       if (value) params.set(key, String(value));
@@ -123,10 +101,9 @@ export function DiscoveryBrowser({
   function navigate(changes: Partial<DiscoveryQuery>) {
     if (serverPage) router.push(pageUrl(changes));
   }
-
   function clear() {
     if (serverPage) {
-      router.push(navigationBase ?? `/${mode}`);
+      router.push(navigationBase ?? "/map");
       return;
     }
     setQ("");
@@ -137,31 +114,25 @@ export function DiscoveryBrowser({
     setLimit(48);
   }
   return (
-    <main className={`discovery ${mode === "map" ? "atlas" : "leaderboard"}`}>
+    <main className="discovery atlas">
       <div className="discovery-intro">
         <div>
           <p className="eyebrow">
             <span className="live-dot" /> THE PEOPLE BEHIND THE PRODUCTS
           </p>
           <h1>
-            {mode === "map" ? (
+            {
               <>
                 Big ideas.
                 <br />
                 <em>Everywhere.</em>
               </>
-            ) : (
-              <>
-                Small teams.
-                <br />
-                <em>Big attention.</em>
-              </>
-            )}
+            }
           </h1>
           <p className="discovery-lede">
-            {mode === "map"
-              ? "Find your corner of the founder world. Explore a city, discover a builder, start a conversation."
-              : "The introductions people noticed. Explore founders by likes or views on their public X intro."}
+            {
+              "Find your corner of the founder world. Explore a city, discover a builder, start a conversation."
+            }
           </p>
         </div>
         <div className="discovery-stats">
@@ -173,11 +144,7 @@ export function DiscoveryBrowser({
             <b>{countries.length}</b>
             <span>countries listed</span>
           </div>
-          <Link href={mode === "map" ? "/" : "/map"}>
-            {mode === "map"
-              ? "Browse the directory ↗"
-              : "Meet them on the map ↗"}
-          </Link>
+          <Link href="/">Browse the directory ↗</Link>
         </div>
       </div>
       {unavailable ? (
@@ -265,90 +232,21 @@ export function DiscoveryBrowser({
             </button>
           ))}
         </div>
-        {mode === "leaderboard" ? (
-          <div className="metric-tabs" aria-label="Rank by">
-            <button
-              aria-pressed={metric === "likes"}
-              onClick={() => {
-                setMetric("likes");
-                navigate({ metric: "likes" });
-                setLimit(48);
-              }}
-            >
-              ♡ Most liked
-            </button>
-            <button
-              aria-pressed={metric === "views"}
-              onClick={() => {
-                setMetric("views");
-                navigate({ metric: "views" });
-                setLimit(48);
-              }}
-            >
-              ◉ Most viewed
-            </button>
-          </div>
-        ) : null}
       </div>
-      {mode === "leaderboard" ? (
-        <>
-          <p className="ranking-explanation">
-            Ranked by recorded X intro {metric}. These are snapshots, not live
-            counts. {total - (serverPage?.rankedTotal ?? ranked.length)}{" "}
-            founders have no recorded {metric}.
-          </p>
-          {top.length ? (
-            <div className="podium">
-              {top.map((f, i) => (
-                <Link
-                  prefetch={false}
-                  className="podium-card"
-                  key={f.handle}
-                  href={`/u/${f.handle}`}
-                >
-                  <span className="podium-rank">
-                    0{i + 1}
-                    <span>{i === 0 ? "THE SPOTLIGHT" : "ON THE RADAR"}</span>
-                  </span>
-                  <FounderAvatar founder={f} />
-                  <h2>{f.name}</h2>
-                  <p>
-                    @{f.handle} ·{" "}
-                    {[f.city, f.country].filter(Boolean).join(", ") ||
-                      "Location not listed"}
-                  </p>
-                  <strong>
-                    {number.format(f.introMetrics![metric]!)}{" "}
-                    <small>{metric}</small>
-                  </strong>
-                </Link>
-              ))}
-            </div>
-          ) : null}
-        </>
-      ) : null}
       <div className="discovery-body">
-        <section
-          className="founder-list"
-          aria-label={
-            mode === "map" ? "Founders on the map" : "Ranked founders"
-          }
-        >
+        <section className="founder-list" aria-label="Founders on the map">
           <div className="list-heading">
-            <h2>{mode === "map" ? "Find your people" : "The leaderboard"}</h2>
+            <h2>Find your people</h2>
             <span aria-live="polite">
-              {serverPage
-                ? `${rows.length} of ${mode === "map" ? total : serverPage.rankedTotal}`
-                : rows.length}{" "}
-              founders
+              {serverPage ? `${rows.length} of ${total}` : rows.length} founders
             </span>
           </div>
-          {mode === "map" ? (
+          {
             <p className="coverage-note">
               {mappedTotal} mapped · {total - mappedTotal} without a supported
               city. Pins show approximate city centers.
             </p>
-          ) : null}
+          }
           {rows.length === 0 ? (
             <div className="discovery-empty">
               <span aria-hidden="true">◎</span>
@@ -356,14 +254,10 @@ export function DiscoveryBrowser({
                 {(serverPage?.globalTotal ?? founders.length) &&
                 (q || category || country || serverPage?.query.city)
                   ? "No founders match these filters."
-                  : mode === "leaderboard"
-                    ? "The spotlight is waiting."
-                    : "The world is open."}
+                  : "The world is open."}
               </h2>
               <p>
-                {mode === "leaderboard"
-                  ? "Rankings appear when introduction metrics are recorded. Missing counts are never treated as zero."
-                  : "Founders with supported public locations will appear here."}
+                {"Founders with supported public locations will appear here."}
               </p>
               {q || category || country ? (
                 <button onClick={clear}>Clear filters</button>
@@ -373,18 +267,16 @@ export function DiscoveryBrowser({
             </div>
           ) : null}
           <ol className="discovery-rows">
-            {rows.slice(0, limit).map((f, i) => (
+            {rows.slice(0, limit).map((f) => (
               <li key={f.handle} data-selected={active?.handle === f.handle}>
-                <span className="row-rank">
-                  {mode === "leaderboard" ? (
-                    String(offset + i + 1).padStart(2, "0")
-                  ) : (
+                <span className="row-location">
+                  {
                     <span
                       className={
                         f.coordinates ? "located-dot" : "unlocated-dot"
                       }
                     />
-                  )}
+                  }
                 </span>
                 <FounderAvatar founder={f} />
                 <div className="row-person">
@@ -393,7 +285,7 @@ export function DiscoveryBrowser({
                   </Link>
                   <p>{f.bio || "A founder with an introduction to share."}</p>
                   <div className="row-details">
-                    {mode === "map" && f.coordinates ? (
+                    {f.coordinates ? (
                       <button
                         aria-pressed={active?.handle === f.handle}
                         onClick={() => {
@@ -414,32 +306,6 @@ export function DiscoveryBrowser({
                       {f.category === "Unclear" ? "Uncategorized" : f.category}
                     </span>
                   </div>
-                </div>
-                <div className="row-metrics">
-                  <b>
-                    {f.introMetrics?.[selectedMetric] != null
-                      ? number.format(f.introMetrics[selectedMetric]!)
-                      : "—"}
-                  </b>
-                  <span>intro {selectedMetric}</span>
-                  {mode === "leaderboard" && f.introMetrics ? (
-                    <small>
-                      As of{" "}
-                      {new Date(f.introMetrics.observedAt).toLocaleDateString(
-                        "en",
-                        { month: "short", day: "numeric", timeZone: "UTC" },
-                      )}
-                    </small>
-                  ) : null}
-                  {mode === "leaderboard" && safeHttpUrl(f.introUrl) ? (
-                    <a
-                      href={safeHttpUrl(f.introUrl)!}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Source ↗
-                    </a>
-                  ) : null}
                 </div>
               </li>
             ))}
@@ -467,7 +333,7 @@ export function DiscoveryBrowser({
             </button>
           ) : null}
         </section>
-        {mode === "map" ? (
+        {
           <section className="map-panel" aria-label="Interactive founder map">
             <FounderMap
               founders={mapped}
@@ -546,7 +412,7 @@ export function DiscoveryBrowser({
               </a>
             </p>
           </section>
-        ) : null}
+        }
       </div>
     </main>
   );

@@ -14,11 +14,11 @@ export default async function MapPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const query = discoveryQuery(await searchParams);
-  const data = await loadDiscovery(query, "map");
+  const data = await loadDiscovery(query);
   return (
     <>
       <SiteHeader mapCurrent />
-      <DiscoveryBrowser key={JSON.stringify(query)} {...data} mode="map" />
+      <DiscoveryBrowser key={JSON.stringify(query)} {...data} />
     </>
   );
 }

@@ -15,28 +15,22 @@ const founders: DiscoveryFounder[] = Array.from({ length: 120 }, (_, i) => ({
   country: "Germany",
   category: "Tools",
   avatarUrl: null,
-  introUrl: null,
-  introMetrics: {
-    likes: 120 - i,
-    views: i,
-    observedAt: "2026-09-17T00:00:00Z",
-  },
   coordinates: [13.41, 52.52],
 }));
 test("public discovery payload contains only one page of identities", () => {
-  for (const mode of ["map", "leaderboard"] as const) {
-    const result = discoveryPage(founders, discoveryQuery({}), mode);
+  {
+    const result = discoveryPage(founders, discoveryQuery({}));
     assert.equal(result.founders.length, 48);
     assert.equal(result.serverPage.hasMore, true);
     assert.equal(result.serverPage.total, 120);
     assert.equal(JSON.stringify(result).includes("person_48"), false);
     assert.equal(JSON.stringify(result).includes("Bio 119"), false);
-    const second = discoveryPage(founders, discoveryQuery({ page: "2" }), mode);
+    const second = discoveryPage(founders, discoveryQuery({ page: "2" }));
     assert.equal(second.founders[0].handle, "person_48");
   }
 });
 test("map overview has only anonymous city counts", () => {
-  const result = discoveryPage(founders, discoveryQuery({}), "map");
+  const result = discoveryPage(founders, discoveryQuery({}));
   assert.deepEqual(result.serverPage.places, [
     {
       city: "Berlin",
@@ -62,35 +56,25 @@ test("city aliases share one pin and retain all founders when selected", () => {
     },
     founders[2],
   ];
-  const overview = discoveryPage(aliases, discoveryQuery({}), "map");
+  const overview = discoveryPage(aliases, discoveryQuery({}));
   assert.equal(overview.serverPage.places.length, 2);
   assert.equal(overview.serverPage.places[0].count, 2);
   for (const [city, country] of [
     ["NYC", "USA"],
     ["New York", "United States"],
   ]) {
-    const selected = discoveryPage(
-      aliases,
-      discoveryQuery({ city, country }),
-      "map",
-    );
+    const selected = discoveryPage(aliases, discoveryQuery({ city, country }));
     assert.equal(selected.founders.length, 2);
     assert.equal(selected.serverPage.places.length, 1);
     assert.equal(selected.serverPage.places[0].count, 2);
   }
 });
-test("filters and ranking run before pagination with no client-requested size", () => {
-  const query = discoveryQuery({
-    metric: "views",
-    limit: "1000000",
-    page: "1",
-  });
-  const result = discoveryPage(founders, query, "leaderboard");
+test("filters run before fixed-size pagination", () => {
+  const result = discoveryPage(founders, discoveryQuery({ limit: "1000000" }));
   assert.equal(result.founders.length, 48);
-  assert.equal(result.founders[0].handle, "person_119");
   assert.equal(
-    discoveryPage(founders, discoveryQuery({ country: "France" }), "map")
-      .founders.length,
+    discoveryPage(founders, discoveryQuery({ country: "France" })).founders
+      .length,
     0,
   );
   for (const page of ["-1", "1.5", "NaN", "Infinity"])
@@ -104,6 +88,7 @@ test("directory cards strip source content, links and analysis payloads", () => 
     github: "https://github.com/example",
     linkedin: null,
     introText: "SOURCE_TEXT_NOT_FOR_INDEX",
+    introUrl: null,
     vibe: {
       label: "Builder",
       score: 100,

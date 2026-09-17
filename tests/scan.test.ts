@@ -490,36 +490,3 @@ test("retweet-only pages keep the cursor so history walking continues", async ()
   assert.equal(record.cursors[TREND_PHRASES[0]], "after-rts");
   assert.equal(record.touches, 1);
 });
-
-test("scan persists source metrics for known and newly materialized introductions", async () => {
-  const { store, record } = memoryStore({ handles: ["known"] });
-  const snapshots: TrendHit[] = [];
-  store.saveIntroMetrics = async (hits) => {
-    snapshots.push(...hits);
-  };
-  const introMetrics = {
-    likes: 12,
-    views: null,
-    observedAt: "2026-09-17T00:00:00Z",
-  };
-  await runScan({
-    store,
-    maxPages: 1,
-    maxSearches: 1,
-    maxHydrations: 0,
-    searchIntroPage: async () => ({
-      hits: [
-        { ...hit("known"), introMetrics },
-        { ...hit("fresh"), introMetrics },
-      ],
-      cursor: null,
-    }),
-  });
-  assert.equal(snapshots.length, 2);
-  assert.equal(snapshots[0].handle, "known");
-  assert.deepEqual(record.pending[0].introMetrics, introMetrics);
-  snapshots.length = 0;
-  await materializePendingIntros(store);
-  assert.deepEqual(record.added, ["fresh"]);
-  assert.deepEqual(snapshots[0].introMetrics, introMetrics);
-});
