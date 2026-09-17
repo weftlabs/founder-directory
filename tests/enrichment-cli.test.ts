@@ -20,7 +20,11 @@ test("help and release template require no database or paid access", async () =>
       JSON.stringify({
         configuration: {
           codeDigest: "test-build",
-          model: { provider: "weft/blockrun", model: "fixture", revision: "v1" },
+          model: {
+            provider: "weft/blockrun",
+            model: "fixture",
+            revision: "v1",
+          },
         },
       }),
     );
