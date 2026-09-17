@@ -37,13 +37,7 @@ export async function collectWeft(
   const headers: Record<string, string> = {};
   for (const [key, value] of Object.entries(request.headers ?? {})) {
     const normalized = key.toLowerCase();
-    const readerHeader =
-      request.operationId === "local-reviewed-jina-reader" &&
-      url.origin === "https://r.jina.ai" &&
-      ((normalized === "x-no-cache" && value === "true") ||
-        (normalized === "x-robots-txt" && value === "FounderDirectory") ||
-        (normalized === "dnt" && value === "true"));
-    if (!["content-type", "accept"].includes(normalized) && !readerHeader)
+    if (!["content-type", "accept"].includes(normalized))
       throw new Error("unsupported_collection_header");
     headers[key.toLowerCase()] = value;
   }

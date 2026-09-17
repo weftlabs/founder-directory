@@ -212,8 +212,12 @@ product-page URL (ignoring fragments and trailing slashes). It does not retrieve
 new pages or expand to every page on a domain. The selected evidence is retained
 in the analysis manifest for comparison and replay.
 When website collection is configured, the acquisition worker captures the
-profile's public website with Exa or the free Jina Reader route. Atlas short URLs
-use an expanded URL only when exactly one saved URL entity matches the profile
+profile's public website with Exa or the free Jina Reader route.
+Jina uses direct anonymous HTTPS, not the paid Weft gateway. Its zero-cost
+attempt and complete HTTP response are still recorded by the same local ledger.
+The client has a 60-second timeout, sends no credentials, does not follow outer
+HTTP redirects, and does not retry. HTTP error bodies are retained too.
+Atlas short URLs use an expanded URL only when exactly one saved URL entity matches the profile
 website URL. Unsafe or duplicate matches yield no website. Unrelated bio links
 are not used. Full provider responses are saved before source-text extraction;
 the source bundle records the provider for later replay without a new purchase.

@@ -29,31 +29,24 @@ test("Jina archives free JSON before parsing and replays without dispatch", asyn
   };
   let calls = 0;
   const client: WeftTransport = {
-    fetch: async (request) => {
-      calls++;
-      assert.equal(request.url, `https://r.jina.ai/${url}`);
-      assert.equal(request.method, "GET");
-      assert.equal(request.operationId, "local-reviewed-jina-reader");
-      assert.equal(request.maxCostUsd, "0");
-      assert.deepEqual(request.headers, {
-        Accept: "application/json",
-        "X-No-Cache": "true",
-        "X-Robots-Txt": "FounderDirectory",
-        DNT: "true",
-      });
-      // Runtime free response value is newer than the pinned SDK payment enum.
-      return {
-        status: 200,
-        headers: {},
-        bodyBase64: Buffer.from(JSON.stringify(raw)).toString("base64"),
-        paidUsd: "0",
-        heldUsd: "0",
-        paymentStatus: "not_required",
-        txHash: null,
-        artifactId: null,
-        merchant: null,
-      } as unknown as Awaited<ReturnType<WeftTransport["fetch"]>>;
+    fetch: async () => {
+      throw new Error("free Jina must not use paid gateway");
     },
+  };
+  const freeFetch: typeof fetch = async (target, request) => {
+    calls++;
+    assert.equal(target, `https://r.jina.ai/${url}`);
+    assert.equal(request?.method, "GET");
+    assert.equal(request?.redirect, "manual");
+    assert.equal(request?.credentials, "omit");
+    assert.ok(request?.signal instanceof AbortSignal);
+    assert.deepEqual(request?.headers, {
+      Accept: "application/json",
+      "X-No-Cache": "true",
+      "X-Robots-Txt": "FounderDirectory",
+      DNT: "true",
+    });
+    return new Response(JSON.stringify(raw), { status: 200 });
   };
   const input = {
     ...f.input,
@@ -61,7 +54,14 @@ test("Jina archives free JSON before parsing and replays without dispatch", asyn
     maxCostUsd: "0",
     policy: { ...f.input.policy, operation: "local-reviewed-jina-reader" },
   };
-  const result = await collectWebsite(f.store, client, input, () => true);
+  const result = await collectWebsite(
+    f.store,
+    client,
+    input,
+    () => true,
+    undefined,
+    freeFetch,
+  );
   assert.equal(result.status, "captured");
   if (result.status !== "captured") return;
   assert.equal(result.artifact.metadata.websiteProvider, "jina");
@@ -77,6 +77,8 @@ test("Jina archives free JSON before parsing and replays without dispatch", asyn
     client,
     { ...input, mode: "replay" },
     () => false,
+    undefined,
+    freeFetch,
   );
   assert.equal(calls, 1);
   const adapters = workerAdapters(
@@ -106,10 +108,10 @@ test("Jina archives free JSON before parsing and replays without dispatch", asyn
     "captured",
   );
   assert.deepEqual((planned[0] as { headers: unknown }).headers, {
-    accept: "application/json",
-    "x-no-cache": "true",
-    "x-robots-txt": "FounderDirectory",
-    dnt: "true",
+    Accept: "application/json",
+    "X-No-Cache": "true",
+    "X-Robots-Txt": "FounderDirectory",
+    DNT: "true",
   });
   for (const payload of [
     { code: 500, data: raw.data },
@@ -169,6 +171,40 @@ test("Jina archives free JSON before parsing and replays without dispatch", asyn
     );
   }
   assert.equal(calls, 1);
+  for (const status of [302, 403, 500]) {
+    const failure = fixture("upstream error", status);
+    const result = await collectWebsite(
+      failure.store,
+      client,
+      input,
+      () => true,
+      undefined,
+      async () => new Response("upstream error", { status }),
+    );
+    assert.equal(result.status, "unavailable");
+    assert.equal(
+      Buffer.from(failure.saved()!.body).toString(),
+      "upstream error",
+    );
+  }
+  const networkFailure = fixture(null);
+  let attempts = 0;
+  await assert.rejects(
+    collectWebsite(
+      networkFailure.store,
+      client,
+      input,
+      () => true,
+      undefined,
+      async () => {
+        attempts++;
+        throw new Error("network_timeout");
+      },
+    ),
+    /collection_uncertain/,
+  );
+  assert.equal(attempts, 1);
+  assert.equal(networkFailure.saved(), null);
 });
 
 const url = "https://product.example/about";

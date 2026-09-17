@@ -9,6 +9,7 @@ import type {
   CollectionStore,
 } from "./collection";
 import { collectWeft } from "./weft-transport";
+import { collectResponse } from "./collection";
 
 export const WEBSITE_OPERATION = "exa-contents";
 // Manually reviewed official free endpoint, not a discovered catalog operation.
@@ -88,6 +89,7 @@ export async function collectWebsite(
   input: WebsiteInput,
   enabled: () => boolean,
   now: () => Date = () => new Date(),
+  freeFetch: typeof fetch = fetch,
 ): Promise<WebsiteResult> {
   const requestedUrl = publicWebsiteUrl(input.websiteUrl);
   const provider = input.provider ?? "exa";
@@ -100,61 +102,94 @@ export async function collectWebsite(
   const limit = input.maxExcerptChars ?? 24000;
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100000)
     throw new Error("invalid_website_excerpt_limit");
-  const artifact = await collectWeft(
-    {
-      planCollection: (value) => store.planCollection(value),
-      getReusableArtifact: (id) => store.getReusableArtifact(id),
-      reserveAttempt: (value) => store.reserveAttempt(value),
-      markDispatched: (id) => store.markDispatched(id),
-      markUncertain: (id, reason) => store.markUncertain(id, reason),
-      captureResponse: (value) =>
-        store.captureResponse({
-          ...value,
-          metadata: {
-            ...value.metadata,
-            sourceKind: "product-site",
-            websiteProvider: provider,
-            observedAt: now().toISOString(),
-            requestedUrl,
-            sourceProfileArtifactId: input.sourceProfileArtifactId,
-          },
-        }),
-    },
-    client,
-    {
-      scope: input.scope,
-      budgetId: input.budgetId,
-      generation: input.generation,
-      mode: input.mode,
-      policy: input.policy,
-      operation:
-        provider === "jina" ? JINA_WEBSITE_OPERATION : WEBSITE_OPERATION,
-    },
-    provider === "jina"
-      ? {
-          url: `https://r.jina.ai/${requestedUrl}`,
-          method: "GET",
-          headers: {
-            Accept: "application/json",
-            "X-No-Cache": "true",
-            "X-Robots-Txt": "FounderDirectory",
-            DNT: "true",
-          },
-          operationId: JINA_WEBSITE_OPERATION,
-          accessMethodId: "local-reviewed-jina-reader-documented-free",
-          maxCostUsd: "0",
-        }
-      : {
-          url: "https://api.exa.ai/contents",
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ urls: [requestedUrl], text: true }),
-          operationId: WEBSITE_OPERATION,
-          accessMethodId: "exa-contents-x402-base",
-          maxCostUsd: input.maxCostUsd,
+  const captureStore: CollectionStore = {
+    planCollection: (value) => store.planCollection(value),
+    getReusableArtifact: (id) => store.getReusableArtifact(id),
+    reserveAttempt: (value) => store.reserveAttempt(value),
+    markDispatched: (id) => store.markDispatched(id),
+    markUncertain: (id, reason) => store.markUncertain(id, reason),
+    captureResponse: (value) =>
+      store.captureResponse({
+        ...value,
+        metadata: {
+          ...value.metadata,
+          sourceKind: "product-site",
+          websiteProvider: provider,
+          observedAt: now().toISOString(),
+          requestedUrl,
+          sourceProfileArtifactId: input.sourceProfileArtifactId,
         },
-    enabled,
-  );
+      }),
+  };
+  const collection = {
+    scope: input.scope,
+    budgetId: input.budgetId,
+    generation: input.generation,
+    mode: input.mode,
+    policy: input.policy,
+    operation: provider === "jina" ? JINA_WEBSITE_OPERATION : WEBSITE_OPERATION,
+  };
+  const headers = {
+    Accept: "application/json",
+    "X-No-Cache": "true",
+    "X-Robots-Txt": "FounderDirectory",
+    DNT: "true",
+  };
+  const readerUrl = `https://r.jina.ai/${requestedUrl}`;
+  const artifact =
+    provider === "jina"
+      ? await collectResponse(
+          captureStore,
+          {
+            ...collection,
+            capMicros: "0",
+            args: {
+              url: readerUrl,
+              method: "GET",
+              headers,
+              transport: "direct-anonymous-http-v1",
+              redirect: "manual",
+              credentials: "omit",
+            },
+          },
+          async () => {
+            // This free endpoint is not a paid gateway route. Never send account
+            // credentials or follow an outer redirect to a different host.
+            const response = await freeFetch(readerUrl, {
+              method: "GET",
+              headers,
+              redirect: "manual",
+              credentials: "omit",
+              signal: AbortSignal.timeout(60000),
+            });
+            return {
+              body: new Uint8Array(await response.arrayBuffer()),
+              status: response.status,
+              contentType:
+                response.headers.get("content-type") ??
+                "application/octet-stream",
+              paymentStatus: "not_required",
+              paidUsd: "0",
+              heldUsd: "0",
+            };
+          },
+          { enabled },
+        )
+      : await collectWeft(
+          captureStore,
+          client,
+          collection,
+          {
+            url: "https://api.exa.ai/contents",
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ urls: [requestedUrl], text: true }),
+            operationId: WEBSITE_OPERATION,
+            accessMethodId: "exa-contents-x402-base",
+            maxCostUsd: input.maxCostUsd,
+          },
+          enabled,
+        );
   return parseWebsiteArtifact(artifact, input);
 }
 
