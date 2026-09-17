@@ -114,7 +114,14 @@ export function buildAnalysisInput(input: {
     provider: input.model.provider,
     model: input.model.model,
     modelRevision: input.model.revision,
-    parameters: { temperature: 0, max_tokens: 1800 },
+    parameters: {
+      temperature: 0,
+      max_tokens:
+        input.model.provider === "weft/blockrun" &&
+        input.model.model === "deepseek/deepseek-reasoner"
+          ? 8192
+          : 1800,
+    },
     responseSchemaBinding: "selected-evidence-v1",
     responseSchema: {
       type: "object",

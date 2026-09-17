@@ -66,6 +66,26 @@ test("description recipes distinguish founder behavior, source attribution and p
   }
 });
 
+test("reasoning route reserves output room without changing other model recipes", () => {
+  const result = buildAnalysisInput({
+    entityId: "f",
+    releaseId: "r",
+    generation: 0,
+    purpose: "founder_dna",
+    evidence: [evidence],
+    codeDigest: "test",
+    model: {
+      provider: "weft/blockrun",
+      model: "deepseek/deepseek-reasoner",
+      revision: null,
+    },
+  });
+  assert.deepEqual(result.recipe.parameters, {
+    temperature: 0,
+    max_tokens: 8192,
+  });
+});
+
 test("personal DNA excludes explicitly product-site evidence without discarding it from product analysis", () => {
   const sources = [
     {
