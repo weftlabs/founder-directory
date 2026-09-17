@@ -77,6 +77,7 @@ The database currently bootstraps its small schema on access; see the
 
 ## Discovery pages
 
-[Founder map](discovery.md) documents geographic coverage and local previews. `lib/geography.ts` keeps the city
-gazetteer on the server; `lib/discovery.ts` owns pure filtering and pagination.
+[Map and leaderboard](discovery.md) documents geographic coverage, ranking
+snapshots, source replay and local previews. `lib/geography.ts` keeps the city
+gazetteer on the server; `lib/discovery.ts` owns pure ranking and filtering.
 `lib/discovery-data.ts` sends only display fields to the client.

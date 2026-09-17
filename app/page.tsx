@@ -14,7 +14,7 @@ export default async function MapPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const query = discoveryQuery(await searchParams);
-  const data = await loadDiscovery(query);
+  const data = await loadDiscovery(query, "map");
   return (
     <>
       <SiteHeader mapCurrent />
@@ -26,6 +26,7 @@ export default async function MapPage({
           query.city,
         ])}
         {...data}
+        mode="map"
       />
     </>
   );

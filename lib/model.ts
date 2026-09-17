@@ -1,7 +1,9 @@
+import type { IntroMetrics } from "./discovery";
 export type VibeSignal = { id: string; hit: boolean; text: string };
 export type VibeCheck = { score: number; label: string; signals: VibeSignal[] };
 
 export type Founder = {
+  introMetrics?: IntroMetrics | null;
   handle: string;
   name: string;
   bio: string | null;

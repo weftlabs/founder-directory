@@ -85,6 +85,7 @@ export default async function DiscoveryPreview({
 }) {
   if (process.env.DIRECTORY_PREVIEW !== "1") notFound();
   const params = await searchParams;
+  const mode = params.mode === "leaderboard" ? "leaderboard" : "map";
   const founders: DiscoveryFounder[] = examples.map(
     ([name, city, country, category, bio], i) => ({
       name,
@@ -94,7 +95,16 @@ export default async function DiscoveryPreview({
       bio,
       handle: `example_${i}`,
       avatarUrl: i < 3 ? `https://i.pravatar.cc/96?img=${i + 1}` : null,
+      introUrl: null,
       coordinates: locateFounder({ city, country }),
+      introMetrics:
+        i === 9
+          ? null
+          : {
+              likes: (9 - i) * 123,
+              views: (i + 1) * 2500,
+              observedAt: "2026-09-17T00:00:00Z",
+            },
     }),
   );
   const bounded = params.bounded === "1";
@@ -105,13 +115,21 @@ export default async function DiscoveryPreview({
         handle: `bounded_${i}`,
         name: `Bounded Founder ${i}`,
         bio: `Visible bio ${i}`,
+        introMetrics: {
+          likes: 120 - i,
+          views: i,
+          observedAt: "2026-09-17T00:00:00Z",
+        },
       }))
     : founders;
   return (
     <>
-      <SiteHeader mapCurrent />
+      <SiteHeader
+        mapCurrent={mode === "map"}
+        leaderboardCurrent={mode === "leaderboard"}
+      />
       <p className="preview-banner">
-        Design preview · fictional sample profiles
+        Design preview · fictional sample profiles and counts
       </p>
       <DiscoveryBrowser
         key={JSON.stringify([
@@ -120,9 +138,11 @@ export default async function DiscoveryPreview({
           params.category,
           params.city,
           params.bounded,
+          mode,
         ])}
-        {...(bounded ? discoveryPage(dataset, query) : { founders })}
-        navigationBase={"/discovery-preview?bounded=1"}
+        {...(bounded ? discoveryPage(dataset, query, mode) : { founders })}
+        mode={mode}
+        navigationBase={`/discovery-preview?bounded=1&mode=${mode}`}
       />
     </>
   );
