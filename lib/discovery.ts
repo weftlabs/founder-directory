@@ -40,6 +40,7 @@ export type DiscoveryQuery = {
   country: string;
   city: string;
   page: number;
+  bounds?: string;
 };
 export type DiscoveryPageInfo = {
   query: DiscoveryQuery;
@@ -52,6 +53,26 @@ export type DiscoveryPageInfo = {
   hasMore: boolean;
 };
 export const DISCOVERY_PAGE_SIZE = 48;
+export function mapBounds(
+  value: string | undefined,
+): [number, number, number, number] | null {
+  if (!value) return null;
+  const parts = value.split(",");
+  if (parts.length !== 4 || parts.some((part) => !part.trim())) return null;
+  const [west, south, east, north] = parts.map(Number);
+  if (
+    ![west, south, east, north].every(Number.isFinite) ||
+    west < -180 ||
+    west > 180 ||
+    east < -180 ||
+    east > 180 ||
+    south < -90 ||
+    north > 90 ||
+    south >= north
+  )
+    return null;
+  return [west, south, east, north];
+}
 export function discoveryQuery(
   params: Record<string, string | string[] | undefined>,
 ): DiscoveryQuery {
@@ -65,6 +86,7 @@ export function discoveryQuery(
     category: get("category"),
     country: get("country"),
     city: get("city"),
+    ...(mapBounds(get("bounds")) ? { bounds: get("bounds") } : {}),
     page: Number.isSafeInteger(page) && page > 0 ? Math.min(page, 10000) : 1,
   };
 }
@@ -89,7 +111,39 @@ export function discoveryPage(
       f.city === query.city ||
       (f.coordinates && selectedPlaces.has(JSON.stringify(f.coordinates))),
   );
-  const rows = filtered;
+  const bounds = mapBounds(query.bounds);
+  const inView = bounds
+    ? filtered.filter((f) => {
+        if (!f.coordinates) return false;
+        const [lng, lat] = f.coordinates;
+        const [west, south, east, north] = bounds;
+        return (
+          lat >= south &&
+          lat <= north &&
+          (west <= east
+            ? lng >= west && lng <= east
+            : lng >= west || lng <= east)
+        );
+      })
+    : filtered;
+  // Spread the first page across cities, so one city cannot consume every pin.
+  const seen = new Set<string>();
+  const representatives: DiscoveryFounder[] = [];
+  const remaining: DiscoveryFounder[] = [];
+  const unmapped: DiscoveryFounder[] = [];
+  for (const founder of inView) {
+    if (!founder.coordinates) {
+      unmapped.push(founder);
+      continue;
+    }
+    const key = founder.coordinates.join(",");
+    if (seen.has(key)) remaining.push(founder);
+    else {
+      seen.add(key);
+      representatives.push(founder);
+    }
+  }
+  const rows = [...representatives, ...remaining, ...unmapped];
   const places = new Map<string, MapPlace>();
   for (const f of filtered) {
     if (!f.coordinates || !f.city || !f.country) continue;
@@ -107,9 +161,9 @@ export function discoveryPage(
   const offset = (query.page - 1) * DISCOVERY_PAGE_SIZE;
   const serverPage: DiscoveryPageInfo = {
     query,
-    total: filtered.length,
+    total: inView.length,
     globalTotal: founders.length,
-    mappedTotal: [...places.values()].reduce((n, p) => n + p.count, 0),
+    mappedTotal: inView.filter((f) => f.coordinates).length,
     countries: [
       ...new Set(
         founders.map((f) => f.country).filter((c): c is string => Boolean(c)),

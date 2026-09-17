@@ -114,7 +114,13 @@ export default async function DiscoveryPreview({
         Design preview · fictional sample profiles
       </p>
       <DiscoveryBrowser
-        key={JSON.stringify(params)}
+        key={JSON.stringify([
+          params.q,
+          params.country,
+          params.category,
+          params.city,
+          params.bounded,
+        ])}
         {...(bounded ? discoveryPage(dataset, query) : { founders })}
         navigationBase={"/discovery-preview?bounded=1"}
       />

@@ -6,6 +6,7 @@ import maplibregl, {
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { DiscoveryFounder, MapPlace } from "@/lib/discovery";
+import { mapBounds } from "@/lib/discovery";
 import { safeHttpUrl } from "@/lib/model";
 
 function collection(founders: DiscoveryFounder[], places?: MapPlace[]) {
@@ -47,10 +48,14 @@ export default function FounderMap({
   onSelectGroup,
   places,
   onSelectPlace,
+  onViewportChange,
+  initialBounds,
 }: {
   founders: DiscoveryFounder[];
   places?: MapPlace[];
   onSelectPlace?: (city: string, country: string) => void;
+  onViewportChange?: (bounds: string) => void;
+  initialBounds?: string;
   selected: DiscoveryFounder | null;
   onSelect: (handle: string) => void;
   onSelectGroup: (handles: string[]) => void;
@@ -61,13 +66,23 @@ export default function FounderMap({
   const selectPlace = useRef(onSelectPlace);
   const select = useRef(onSelect);
   const selectGroup = useRef(onSelectGroup);
+  const viewportChange = useRef(onViewportChange);
+  const startingBounds = useRef(mapBounds(initialBounds));
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     data.current = collection(founders, places);
     selectPlace.current = onSelectPlace;
     select.current = onSelect;
     selectGroup.current = onSelectGroup;
-  }, [founders, places, onSelect, onSelectGroup, onSelectPlace]);
+    viewportChange.current = onViewportChange;
+  }, [
+    founders,
+    places,
+    onSelect,
+    onSelectGroup,
+    onSelectPlace,
+    onViewportChange,
+  ]);
   useEffect(() => {
     if (!container.current) return;
     let map: MapInstance;
@@ -82,6 +97,16 @@ export default function FounderMap({
         attributionControl: { compact: true },
       });
       instance.current = map;
+      if (startingBounds.current) {
+        const [west, south, east, north] = startingBounds.current;
+        map.fitBounds(
+          [
+            [west, south],
+            [east < west ? east + 360 : east, north],
+          ],
+          { duration: 0, padding: 0 },
+        );
+      }
     } catch {
       queueMicrotask(() => setFailed(true));
       return;
@@ -91,6 +116,28 @@ export default function FounderMap({
       "top-right",
     );
     map.on("error", () => setFailed(true));
+    let viewportTimer: ReturnType<typeof setTimeout>;
+    map.on("moveend", () => {
+      clearTimeout(viewportTimer);
+      viewportTimer = setTimeout(() => {
+        const bounds = map.getBounds();
+        const wrap = (value: number) =>
+          ((((value + 180) % 360) + 360) % 360) - 180;
+        const wholeWorld = bounds.getEast() - bounds.getWest() >= 360;
+        viewportChange.current?.(
+          map.getZoom() < 3
+            ? ""
+            : [
+                wholeWorld ? -180 : wrap(bounds.getWest()),
+                Math.max(-90, bounds.getSouth()),
+                wholeWorld ? 180 : wrap(bounds.getEast()),
+                Math.min(90, bounds.getNorth()),
+              ]
+                .map((value) => value.toFixed(3))
+                .join(","),
+        );
+      }, 250);
+    });
     map.on("load", () => {
       setFailed(false);
       map.addSource("founders", {
@@ -212,6 +259,7 @@ export default function FounderMap({
       }
     });
     return () => {
+      clearTimeout(viewportTimer);
       instance.current = null;
       map.remove();
     };

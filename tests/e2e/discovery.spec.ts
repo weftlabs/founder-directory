@@ -1,5 +1,24 @@
 import { expect, test } from "@playwright/test";
 
+test("zooming loads a bounded viewport page without resetting the map", async ({
+  page,
+}) => {
+  await page.goto("/discovery-preview?bounded=1");
+  await page
+    .getByRole("button", { name: "Show Bounded Founder 0 on map", exact: true })
+    .click();
+  await expect(page).toHaveURL(/bounds=/);
+  await expect(page.locator(".map-avatar-pin")).toBeVisible();
+  await expect(page.locator(".discovery-rows li")).toHaveCount(48);
+  await page.getByRole("link", { name: "Next page" }).click();
+  await expect(page.locator(".discovery-rows li").first()).toContainText(
+    "Bounded Founder 48",
+  );
+  await expect(page).toHaveURL(/page=2/);
+  await page.getByRole("button", { name: "World view" }).click();
+  await expect(page).not.toHaveURL(/bounds=/);
+});
+
 test("photo pins select founders, fall back to initials, and group only the current page", async ({
   page,
 }) => {

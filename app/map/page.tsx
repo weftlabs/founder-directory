@@ -18,7 +18,15 @@ export default async function MapPage({
   return (
     <>
       <SiteHeader mapCurrent />
-      <DiscoveryBrowser key={JSON.stringify(query)} {...data} />
+      <DiscoveryBrowser
+        key={JSON.stringify([
+          query.q,
+          query.country,
+          query.category,
+          query.city,
+        ])}
+        {...data}
+      />
     </>
   );
 }

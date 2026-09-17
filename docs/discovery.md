@@ -8,6 +8,10 @@ failure leaves the searchable founder list usable.
 Photo pins use only the founders on the current page; missing or failed images
 show initials. At wider zoom levels nearby points become numbered clusters;
 portraits appear automatically when their points separate, without selection.
+At city-region zoom levels, panning or zooming requests a new bounded page for the
+visible area using the normal map page route. The camera stays in place. Mapped
+founders take priority, with one representative per city before additional people
+at the same location. At most 48 profiles are returned; no bulk API is added.
 A shared city pin shows the number of founders on that page and
 opens their chooser. City aggregates still cover the full filtered map without
 exposing additional identities. Pin counts are not ranks.

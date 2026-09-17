@@ -338,6 +338,17 @@ export function DiscoveryBrowser({
             <FounderMap
               founders={mapped}
               places={serverPage?.places}
+              initialBounds={serverPage?.query.bounds}
+              onViewportChange={
+                serverPage
+                  ? (bounds) => {
+                      if (bounds !== (serverPage.query.bounds ?? ""))
+                        router.replace(pageUrl({ bounds, page: 1 }), {
+                          scroll: false,
+                        });
+                    }
+                  : undefined
+              }
               onSelectPlace={(city, country) => navigate({ city, country })}
               selected={active}
               onSelect={(handle) => {
