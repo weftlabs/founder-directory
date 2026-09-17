@@ -38,7 +38,7 @@ export type WebsiteResult =
         returnedUrl: string;
         publishedDate: string | null;
         crawlDate: string | null;
-        extractorVersion: "exa-text-v1" | "jina-text-v1";
+        extractorVersion: "exa-text-v1" | "jina-text-v2";
         originalChars: number;
         truncated: boolean;
       };
@@ -246,7 +246,19 @@ export function parseWebsiteArtifact(
       return unavailable("website_url_mismatch");
     if (typeof data.content !== "string" || !data.content.trim())
       return unavailable("missing_website_text");
-    const text = data.content.trim();
+    // These are source page fields, not a generated summary. Keep field labels
+    // so later analysis can distinguish page identity from its body content.
+    const text = [
+      typeof data.title === "string" && data.title.trim()
+        ? `Title: ${data.title.trim()}`
+        : null,
+      typeof data.description === "string" && data.description.trim()
+        ? `Description: ${data.description.trim()}`
+        : null,
+      `Content:\n${data.content.trim()}`,
+    ]
+      .filter((part): part is string => part !== null)
+      .join("\n");
     return {
       status: "captured",
       artifact,
@@ -259,7 +271,7 @@ export function parseWebsiteArtifact(
         publishedDate:
           typeof data.publishedTime === "string" ? data.publishedTime : null,
         crawlDate: typeof data.timestamp === "string" ? data.timestamp : null,
-        extractorVersion: "jina-text-v1",
+        extractorVersion: "jina-text-v2",
         originalChars: text.length,
         truncated: text.length > limit,
       },

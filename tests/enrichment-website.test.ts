@@ -65,7 +65,7 @@ test("Jina archives free JSON before parsing and replays without dispatch", asyn
   assert.equal(result.status, "captured");
   if (result.status !== "captured") return;
   assert.equal(result.artifact.metadata.websiteProvider, "jina");
-  assert.equal(result.provenance.extractorVersion, "jina-text-v1");
+  assert.equal(result.provenance.extractorVersion, "jina-text-v2");
   assert.equal(result.provenance.truncated, true);
   assert.equal(result.provenance.publishedDate, "2026-09-01");
   assert.deepEqual(
@@ -208,6 +208,55 @@ test("Jina archives free JSON before parsing and replays without dispatch", asyn
 });
 
 const url = "https://product.example/about";
+test("Jina includes source title and description but requires page content", () => {
+  const parse = (data: unknown, limit = 1000) =>
+    parseWebsiteArtifact(
+      {
+        id: "saved",
+        body: Buffer.from(JSON.stringify({ code: 200, data })),
+        metadata: { status: 200, websiteProvider: "jina" },
+      },
+      {
+        provider: "jina",
+        websiteUrl: url,
+        sourceProfileArtifactId: "profile",
+        maxExcerptChars: limit,
+      },
+    );
+  const data = {
+    url,
+    title: "Example Product",
+    description: "Tools for small teams",
+    content: "Page source details",
+  };
+  const expected =
+    "Title: Example Product\nDescription: Tools for small teams\nContent:\nPage source details";
+  const result = parse(data);
+  assert.equal(result.status, "captured");
+  if (result.status !== "captured") return;
+  assert.equal(result.text, expected);
+  assert.equal(result.provenance.originalChars, expected.length);
+  assert.equal(result.provenance.truncated, false);
+  const truncated = parse(data, 12);
+  assert.equal(truncated.status, "captured");
+  if (truncated.status === "captured") {
+    assert.equal(truncated.text, expected.slice(0, 12));
+    assert.equal(truncated.provenance.originalChars, expected.length);
+    assert.equal(truncated.provenance.truncated, true);
+  }
+  for (const optional of [
+    {},
+    { title: 42, description: {} },
+    { title: " ", description: null },
+  ]) {
+    const parsed = parse({ url, content: "Page source details", ...optional });
+    assert.equal(parsed.status, "captured");
+    if (parsed.status === "captured")
+      assert.equal(parsed.text, "Content:\nPage source details");
+  }
+  assert.equal(parse({ ...data, content: " " }).status, "unavailable");
+  assert.equal(parse({ ...data, content: null }).status, "unavailable");
+});
 function fixture(payload: unknown, status = 200) {
   let saved: CapturedArtifact | null = null;
   let calls = 0;
