@@ -187,6 +187,21 @@ test("local portraits reject unsafe or ungrounded editorial projections and stay
       JSON.stringify(founder).includes("PRIVATE PROVIDER DATA"),
       false,
     );
+    await save({
+      ...portrait,
+      receipts: [
+        {
+          ...portrait.receipts[0],
+          source: "post",
+          url: "https://example.test/posts/1",
+        },
+      ],
+    });
+    assert.equal(
+      (await loadLocalProductFounder("example", env))?.portrait?.receipts[0]
+        .source,
+      "post",
+    );
     for (const value of [
       {
         ...portrait,

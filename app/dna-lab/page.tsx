@@ -232,11 +232,13 @@ export default async function PortraitLab({
                 <span>
                   {receipt.source === "bio"
                     ? "SAVED BIO"
-                    : "SAVED PRODUCT SUMMARY"}
+                    : receipt.source === "post"
+                      ? "SAVED POST"
+                      : "SAVED PRODUCT SUMMARY"}
                 </span>
                 <h3>{receipt.label}</h3>
                 <blockquote>
-                  {receipt.source === "bio"
+                  {receipt.source !== "product"
                     ? `“${receipt.quote}”`
                     : receipt.quote}
                 </blockquote>

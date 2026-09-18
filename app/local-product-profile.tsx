@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Claim } from "./products-view";
 import { SiteHeader } from "./site-header";
 import { ProductImage } from "./product-image";
+import { CopyPortrait } from "./dna-lab/copy-portrait";
 import { PRODUCT_CATEGORIES } from "@/lib/products";
 import type {
   LocalFounderDna,
@@ -15,9 +16,11 @@ export function LocalProductProfile({
   return (
     <>
       <SiteHeader />
-      <main className="profile">
-        <p className="preview-banner" role="note">
-          Local preview · saved founder profile · not published
+      <main
+        className={founder.portrait ? "profile profile-portrait" : "profile"}
+      >
+        <p className="profile-local-note" role="note">
+          Local preview
         </p>
         <Link className="back" href="/products">
           ← Products
@@ -47,15 +50,43 @@ export function LocalProductProfile({
         </div>
         {founder.bio ? <p className="bio">{founder.bio}</p> : null}
         {founder.portrait ? (
-          <Link
-            className="portrait-profile-link"
-            href={`/dna-lab?founder=${founder.handle}`}
-          >
-            Try DNA portraits{" "}
-            <span>Three ways to see your founder story ↗</span>
-          </Link>
+          <>
+            <section className="profile-dna-hero">
+              <div className="profile-dna-mark" aria-hidden="true">
+                ✳
+              </div>
+              <p className="profile-dna-eyebrow">Founder DNA</p>
+              <h2>{founder.portrait.archetype.title}</h2>
+              <p className="profile-dna-hook">
+                {founder.portrait.archetype.hook}
+              </p>
+              <div className="portrait-tags">
+                {founder.portrait.archetype.tags.map((tag) => (
+                  <span key={tag}>{tag}</span>
+                ))}
+              </div>
+              <p className="profile-dna-summary">
+                {founder.portrait.archetype.summary}
+              </p>
+            </section>
+            <section className="profile-dna-connection">
+              <p className="profile-dna-eyebrow">The connection</p>
+              <h2>{founder.portrait.story.title}</h2>
+              <p>{founder.portrait.story.connection}</p>
+            </section>
+            <section className="profile-dna-roast">
+              <p className="profile-dna-eyebrow">The friendly roast</p>
+              <h2>{founder.portrait.roast.title}</h2>
+              <ul>
+                {founder.portrait.roast.lines.map((line, index) => (
+                  <li key={index}>{line.text}</li>
+                ))}
+              </ul>
+            </section>
+          </>
+        ) : founder.dna ? (
+          <FounderDna dna={founder.dna} />
         ) : null}
-        {founder.dna ? <FounderDna dna={founder.dna} /> : null}
         <section className="panel">
           <h2>Products</h2>
           {founder.products.map((product, index) => (
@@ -82,6 +113,47 @@ export function LocalProductProfile({
             </article>
           ))}
         </section>
+        {founder.portrait ? (
+          <>
+            <details className="profile-why">
+              <summary>
+                Why this fits <span>See the sources behind the portrait</span>
+              </summary>
+              <p className="founder-dna-note">
+                The portrait is an editorial reading of saved public sources.
+                The jokes are interpretations, not new facts. Model
+                classifications are shown separately below.
+              </p>
+              <div className="portrait-receipt-grid">
+                {founder.portrait.receipts.map((receipt) => (
+                  <article key={receipt.label}>
+                    <span>
+                      {receipt.source === "bio"
+                        ? "Saved bio"
+                        : receipt.source === "post"
+                          ? "Saved post"
+                          : "Saved product summary"}
+                    </span>
+                    <h3>{receipt.label}</h3>
+                    <blockquote>
+                      {receipt.source === "product"
+                        ? receipt.quote
+                        : `“${receipt.quote}”`}
+                    </blockquote>
+                    <a href={receipt.url} target="_blank" rel="noreferrer">
+                      View source ↗
+                    </a>
+                  </article>
+                ))}
+              </div>
+              {founder.dna ? <FounderDna dna={founder.dna} /> : null}
+            </details>
+            <section className="profile-share">
+              <h2>Share your Founder DNA</h2>
+              <CopyPortrait text={founder.portrait.shareText} />
+            </section>
+          </>
+        ) : null}
         <section className="panel">
           <h2>Public links</h2>
           <a
@@ -123,7 +195,7 @@ function FounderDna({ dna }: { dna: LocalFounderDna }) {
     <section className="panel founder-dna" aria-labelledby="founder-dna-title">
       <div className="founder-dna-heading">
         <h2 id="founder-dna-title">Founder DNA</h2>
-        <span className="founder-dna-badge">From saved bio</span>
+        <span className="founder-dna-badge">From saved self-reports</span>
       </div>
       <p className="founder-dna-intro">
         A view of their work, based on what they have shared.
@@ -137,12 +209,12 @@ function FounderDna({ dna }: { dna: LocalFounderDna }) {
         ))}
       </dl>
       <p className="founder-dna-note">
-        Categories are model inferences. “Not yet known” means the saved bio
-        does not give enough evidence.
+        Categories are model inferences. “Not yet known” means the saved sources
+        do not give enough evidence.
       </p>
       {dna.facts.length ? (
         <div className="founder-dna-facts">
-          <h3>What their bio tells us</h3>
+          <h3>What the saved sources tell us</h3>
           <ul>
             {dna.facts.map((fact, index) => (
               <li key={index}>
@@ -159,7 +231,7 @@ function FounderDna({ dna }: { dna: LocalFounderDna }) {
                         target="_blank"
                         rel="noreferrer"
                       >
-                        Source bio ↗
+                        Source ↗
                       </a>
                     );
                   })}
@@ -182,7 +254,7 @@ function FounderDna({ dna }: { dna: LocalFounderDna }) {
           <div key={source.id}>
             <blockquote>{source.text}</blockquote>
             <a href={source.url} target="_blank" rel="noreferrer">
-              Open source bio ↗
+              Open source ↗
             </a>
           </div>
         ))}

@@ -265,7 +265,7 @@ The optional `profiles[].dna` contract is:
 Prepare this small projection explicitly from a completed saved run. Preserve
 actual returned choices, including `unknown`; do not replace them with evaluation
 reference labels. Include only supported professional facts checked against the
-saved founder bio. Do not copy the full result object, evaluation fixtures,
+saved founder self-reports. Do not copy the full result object, evaluation fixtures,
 reference answers or deliberately false candidate claims. The reader strips
 unrecognized fields and omits malformed DNA while retaining the basic profile.
 The input's support and source ownership metadata are trusted local preparation
@@ -282,8 +282,7 @@ The preview does not add personality assessment or synthesize a new summary.
 The development-only `/dna-lab` route compares three editorial prototypes:
 Archetype, Friendly roast and Plot twist. It reads prepared local display data,
 not a provider, and never posts to X. The selected founder and concept are URL
-parameters (`founder` and `concept`), so links preserve the comparison. A local
-profile links to the lab only when its portrait passes validation. Missing or
+parameters (`founder` and `concept`), so links preserve the comparison. The lab remains a separate comparison route. Missing or
 prohibited snapshots return 404. The route is excluded from indexing.
 
 A `profiles[].portrait` projection contains:
@@ -294,12 +293,12 @@ A `profiles[].portrait` projection contains:
   `receipt` equal to a receipt label.
 - `story`: `title` (120), `before` and `after` (240 each), `connection` (600).
 - `receipts`: one to six records with unique `label` (80), `quote` (2,400),
-  `source` exactly `bio` or `product`, and a safe HTTP(S) `url` (2,000).
+  `source` exactly `bio`, `post` or `product`, and a safe HTTP(S) `url` (2,000).
 - `shareText`: a prepared archetype draft, at most 1,200 characters.
 
 Strings must be nonempty. Invalid portraits are omitted. The lab lists at most
-12 linked profiles. Source labels distinguish saved bio excerpts from saved
-product summaries; summaries are not presented as verbatim website quotations.
+12 linked profiles. Source labels distinguish saved bio excerpts, saved posts and saved product
+summaries; summaries are not presented as verbatim website quotations.
 The local preparer checks each excerpt against its saved source and owns the
 editorial interpretation. The sanitizer validates the display shape and receipt
 references; it does not prove that a joke follows from its source.
@@ -310,3 +309,18 @@ personality scores or rank founders. Each share action previews an editable text
 draft, copies only on a click, and selects the draft for manual copying if the
 clipboard is unavailable. Roast drafts use the title and first line; story drafts
 use the title and connection. No social posting or image upload occurs.
+
+### Integrated local founder profile
+
+When a saved local profile includes a valid portrait, `/u/<handle>` shows one
+complete profile: identity and bio, archetype and hook, story connection, friendly
+roast, linked products, and a share draft. It has no founder picker, concept tabs,
+or lab heading. A small local preview label identifies the environment.
+
+The collapsed **Why this fits** section separates editorial interpretation from
+source facts. It contains attributed saved bio/post excerpts and product summaries,
+then the separate model classification and supported professional facts when
+available. Saved post receipts must point to their specific source post. Unknown
+model choices remain unknown. Share text remains editable and is copied only on
+an explicit click. Profiles without portraits retain the existing DNA display.
+The development-only guard and linked-product requirement are unchanged.

@@ -184,7 +184,7 @@ export type LocalPortrait = {
   receipts: {
     label: string;
     quote: string;
-    source: "bio" | "product";
+    source: "bio" | "product" | "post";
     url: string;
   }[];
   shareText: string;
@@ -233,14 +233,16 @@ function localPortrait(value: unknown): LocalPortrait | null {
       !boundedText(receipt.quote, 2400) ||
       !url ||
       url.length > 2000 ||
-      (receipt.source !== "bio" && receipt.source !== "product") ||
+      (receipt.source !== "bio" &&
+        receipt.source !== "product" &&
+        receipt.source !== "post") ||
       receipts.some((r) => r.label === receipt.label)
     )
       return null;
     receipts.push({
       label: receipt.label,
       quote: receipt.quote,
-      source: receipt.source as "bio" | "product",
+      source: receipt.source,
       url,
     });
   }
