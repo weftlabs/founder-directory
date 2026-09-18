@@ -3,6 +3,8 @@ import Link from "next/link";
 import { SiteHeader } from "../../site-header";
 import { notFound } from "next/navigation";
 import { getFounder } from "@/lib/db";
+import { loadLocalProductFounder } from "@/lib/product-snapshot";
+import { LocalProductProfile } from "../../local-product-profile";
 import { displayLink, safeHttpUrl } from "@/lib/model";
 
 export const dynamic = "force-dynamic";
@@ -13,6 +15,13 @@ export async function generateMetadata({
   params: Promise<{ handle: string }>;
 }): Promise<Metadata> {
   const { handle } = await params;
+  if (process.env.PRODUCTS_LOCAL_SNAPSHOT) {
+    const founder = await loadLocalProductFounder(handle);
+    return {
+      title: founder?.name ?? "Founder profile",
+      robots: { index: false, follow: false },
+    };
+  }
   const founder = await getFounder(handle).catch(() => null);
   if (!founder) return { title: "Not found" };
   const description = `${founder.name} (@${founder.handle}) is listed in Founder Directory${
@@ -42,6 +51,11 @@ export default async function ProfilePage({
   params: Promise<{ handle: string }>;
 }) {
   const { handle } = await params;
+  if (process.env.PRODUCTS_LOCAL_SNAPSHOT) {
+    const founder = await loadLocalProductFounder(handle);
+    if (!founder) notFound();
+    return <LocalProductProfile founder={founder} />;
+  }
   const founder = await getFounder(handle).catch(() => null);
   if (!founder) notFound();
   const place = [founder.city, founder.country].filter(Boolean).join(", ");

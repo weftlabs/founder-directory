@@ -21,3 +21,5 @@ a second, conflicting specification.
 boundaries. It does not verify remote links or replace human documentation review.
 
 - [Founder map](discovery.md): locations, bounded discovery data and local previews.
+
+- [Products](products.md): published product descriptions, categories and no-key previews.

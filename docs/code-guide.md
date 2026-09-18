@@ -81,3 +81,10 @@ The database currently bootstraps its small schema on access; see the
 [Founder map](discovery.md) documents geographic coverage and local previews. `lib/geography.ts` keeps the city
 gazetteer on the server; `lib/discovery.ts` owns pure filtering and pagination.
 `lib/discovery-data.ts` sends only display fields to the client.
+
+## Products
+
+[Products](products.md) documents published descriptions, category rules and local
+previews. `lib/products.ts` owns pure display and navigation values;
+`lib/product-data.ts` owns the bounded read-only projection. The Products route
+and `app/products-view.tsx` render server components with standard GET filters.
