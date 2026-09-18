@@ -3,7 +3,10 @@ import { test } from "node:test";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadLocalProductFounder } from "../lib/product-snapshot";
+import {
+  loadLocalProductFounder,
+  loadLocalPortraitFounders,
+} from "../lib/product-snapshot";
 import { productCard } from "../lib/products";
 test("local founder pages use only sanitized linked snapshot profiles and fail closed", async () => {
   const dir = await mkdtemp(join(tmpdir(), "founder-preview-"));
@@ -128,6 +131,107 @@ test("local DNA keeps evidence-backed facts and unknown categories, without eval
       await save(invalid);
       assert.equal((await loadLocalProductFounder("example", env))?.dna, null);
     }
+  } finally {
+    await rm(dir, { recursive: true });
+  }
+});
+
+test("local portraits reject unsafe or ungrounded editorial projections and stay development-only", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "founder-portrait-"));
+  const file = join(dir, "snapshot.json");
+  const portrait = {
+    archetype: {
+      title: "The builder",
+      kicker: "A saved-data portrait",
+      hook: "Build, learn, repeat.",
+      summary: "An editorial read of the evidence.",
+      tags: ["Builds software"],
+    },
+    roast: {
+      title: "A gentle roast",
+      lines: [{ text: "Even the side quest has a roadmap.", receipt: "Bio" }],
+    },
+    story: {
+      title: "The plot twist",
+      before: "Former designer",
+      after: "Building software",
+      connection: "A new medium for the same creative work.",
+    },
+    receipts: [
+      {
+        label: "Bio",
+        quote: "Former designer, now building software.",
+        source: "bio",
+        url: "https://example.test/bio",
+      },
+    ],
+    shareText: "My founder DNA: The builder.",
+    rawResponse: "PRIVATE PROVIDER DATA",
+  };
+  const save = (value: unknown) =>
+    writeFile(
+      file,
+      JSON.stringify({
+        version: 1,
+        products: [{ founders: ["example"] }],
+        profiles: [{ handle: "example", portrait: value }],
+      }),
+    );
+  const env = { NODE_ENV: "development", PRODUCTS_LOCAL_SNAPSHOT: file };
+  try {
+    await save(portrait);
+    const founder = await loadLocalProductFounder("example", env);
+    assert.equal(founder?.portrait?.archetype.title, "The builder");
+    assert.equal((await loadLocalPortraitFounders(env)).length, 1);
+    assert.equal(
+      JSON.stringify(founder).includes("PRIVATE PROVIDER DATA"),
+      false,
+    );
+    for (const value of [
+      {
+        ...portrait,
+        receipts: [{ ...portrait.receipts[0], url: "javascript:alert(1)" }],
+      },
+      {
+        ...portrait,
+        roast: {
+          ...portrait.roast,
+          lines: [{ text: "Unfounded", receipt: "missing" }],
+        },
+      },
+      {
+        ...portrait,
+        archetype: { ...portrait.archetype, title: "x".repeat(121) },
+      },
+      { ...portrait, receipts: [portrait.receipts[0], portrait.receipts[0]] },
+      { ...portrait, receipts: [{ ...portrait.receipts[0], source: ["bio"] }] },
+    ]) {
+      await save(value);
+      assert.equal(
+        (await loadLocalProductFounder("example", env))?.portrait,
+        null,
+      );
+    }
+    await save(portrait);
+    assert.deepEqual(
+      await loadLocalPortraitFounders({ ...env, NODE_ENV: "production" }),
+      [],
+    );
+    assert.deepEqual(
+      await loadLocalPortraitFounders({ ...env, VERCEL: "1" }),
+      [],
+    );
+    assert.equal(
+      await loadLocalProductFounder("example", {
+        ...env,
+        NODE_ENV: "production",
+      }),
+      null,
+    );
+    assert.equal(
+      await loadLocalProductFounder("example", { ...env, VERCEL: "1" }),
+      null,
+    );
   } finally {
     await rm(dir, { recursive: true });
   }

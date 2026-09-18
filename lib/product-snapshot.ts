@@ -62,6 +62,7 @@ export async function loadLocalProductFounder(
       website: safeHttpUrl(field("website")),
       avatarUrl: safeHttpUrl(field("avatarUrl")),
       dna: localFounderDna(record?.dna),
+      portrait: localPortrait(record?.portrait),
       products,
     };
   } catch {
@@ -168,4 +169,137 @@ function localFounderDna(value: unknown): LocalFounderDna | null {
     sources,
     facts,
   };
+}
+
+export type LocalPortrait = {
+  archetype: {
+    title: string;
+    kicker: string;
+    hook: string;
+    summary: string;
+    tags: string[];
+  };
+  roast: { title: string; lines: { text: string; receipt: string }[] };
+  story: { title: string; before: string; after: string; connection: string };
+  receipts: {
+    label: string;
+    quote: string;
+    source: "bio" | "product";
+    url: string;
+  }[];
+  shareText: string;
+};
+function localPortrait(value: unknown): LocalPortrait | null {
+  const p = object(value);
+  const a = object(p?.archetype),
+    r = object(p?.roast),
+    s = object(p?.story);
+  if (
+    !p ||
+    !a ||
+    !r ||
+    !s ||
+    !boundedText(p.shareText, 1200) ||
+    !boundedText(a.title, 120) ||
+    !boundedText(a.kicker, 120) ||
+    !boundedText(a.hook, 240) ||
+    !boundedText(a.summary, 600) ||
+    !Array.isArray(a.tags) ||
+    !a.tags.length ||
+    a.tags.length > 5 ||
+    !a.tags.every((t) => boundedText(t, 80)) ||
+    !boundedText(r.title, 120) ||
+    !Array.isArray(r.lines) ||
+    !r.lines.length ||
+    r.lines.length > 5 ||
+    !boundedText(s.title, 120) ||
+    !boundedText(s.before, 240) ||
+    !boundedText(s.after, 240) ||
+    !boundedText(s.connection, 600) ||
+    !Array.isArray(p.receipts) ||
+    !p.receipts.length ||
+    p.receipts.length > 6
+  )
+    return null;
+  const receipts: LocalPortrait["receipts"] = [];
+  for (const item of p.receipts) {
+    const receipt = object(item);
+    const url = safeHttpUrl(
+      typeof receipt?.url === "string" ? receipt.url : null,
+    );
+    if (
+      !receipt ||
+      !boundedText(receipt.label, 80) ||
+      !boundedText(receipt.quote, 2400) ||
+      !url ||
+      url.length > 2000 ||
+      (receipt.source !== "bio" && receipt.source !== "product") ||
+      receipts.some((r) => r.label === receipt.label)
+    )
+      return null;
+    receipts.push({
+      label: receipt.label,
+      quote: receipt.quote,
+      source: receipt.source as "bio" | "product",
+      url,
+    });
+  }
+  const lines: LocalPortrait["roast"]["lines"] = [];
+  for (const item of r.lines) {
+    const line = object(item);
+    if (
+      !line ||
+      !boundedText(line.text, 400) ||
+      typeof line.receipt !== "string" ||
+      !receipts.some((r) => r.label === line.receipt)
+    )
+      return null;
+    lines.push({ text: line.text, receipt: line.receipt });
+  }
+  return {
+    archetype: {
+      title: a.title,
+      kicker: a.kicker,
+      hook: a.hook,
+      summary: a.summary,
+      tags: a.tags as string[],
+    },
+    roast: { title: r.title, lines },
+    story: {
+      title: s.title,
+      before: s.before,
+      after: s.after,
+      connection: s.connection,
+    },
+    receipts,
+    shareText: p.shareText,
+  };
+}
+export async function loadLocalPortraitFounders(env: Env = process.env) {
+  try {
+    const snapshot = await readProductSnapshot(env);
+    if (!Array.isArray(snapshot.profiles)) return [];
+    const handles = [
+      ...new Set(
+        snapshot.profiles.flatMap((value) => {
+          const profile = object(value);
+          return typeof profile?.handle === "string" &&
+            /^[a-zA-Z0-9_]{1,15}$/.test(profile.handle)
+            ? [profile.handle.toLowerCase()]
+            : [];
+        }),
+      ),
+    ].slice(0, 12);
+    const founders = await Promise.all(
+      handles.map((handle) => loadLocalProductFounder(handle, env)),
+    );
+    return founders.filter(
+      (
+        founder,
+      ): founder is NonNullable<typeof founder> & { portrait: LocalPortrait } =>
+        !!founder?.portrait,
+    );
+  } catch {
+    return [];
+  }
 }

@@ -46,6 +46,15 @@ export function LocalProductProfile({
           </div>
         </div>
         {founder.bio ? <p className="bio">{founder.bio}</p> : null}
+        {founder.portrait ? (
+          <Link
+            className="portrait-profile-link"
+            href={`/dna-lab?founder=${founder.handle}`}
+          >
+            Try DNA portraits{" "}
+            <span>Three ways to see your founder story ↗</span>
+          </Link>
+        ) : null}
         {founder.dna ? <FounderDna dna={founder.dna} /> : null}
         <section className="panel">
           <h2>Products</h2>

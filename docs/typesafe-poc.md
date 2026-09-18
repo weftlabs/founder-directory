@@ -276,3 +276,37 @@ known”, and facts as supported by a saved self-report rather than independentl
 verified. Evidence details show all considered source text, the model and saved
 date. Confidence appears only in those details and is never an ability score.
 The preview does not add personality assessment or synthesize a new summary.
+
+### Editorial portrait lab
+
+The development-only `/dna-lab` route compares three editorial prototypes:
+Archetype, Friendly roast and Plot twist. It reads prepared local display data,
+not a provider, and never posts to X. The selected founder and concept are URL
+parameters (`founder` and `concept`), so links preserve the comparison. A local
+profile links to the lab only when its portrait passes validation. Missing or
+prohibited snapshots return 404. The route is excluded from indexing.
+
+A `profiles[].portrait` projection contains:
+
+- `archetype`: `title` and `kicker` (120 characters each), `hook` (240), `summary`
+  (600), and one to five `tags` (80 each).
+- `roast`: `title` (120) and one to five `lines`, each with `text` (400) and
+  `receipt` equal to a receipt label.
+- `story`: `title` (120), `before` and `after` (240 each), `connection` (600).
+- `receipts`: one to six records with unique `label` (80), `quote` (2,400),
+  `source` exactly `bio` or `product`, and a safe HTTP(S) `url` (2,000).
+- `shareText`: a prepared archetype draft, at most 1,200 characters.
+
+Strings must be nonempty. Invalid portraits are omitted. The lab lists at most
+12 linked profiles. Source labels distinguish saved bio excerpts from saved
+product summaries; summaries are not presented as verbatim website quotations.
+The local preparer checks each excerpt against its saved source and owns the
+editorial interpretation. The sanitizer validates the display shape and receipt
+references; it does not prove that a joke follows from its source.
+
+The three cards contain editorial copy, clearly separate from saved model
+classifications. They do not claim that the classifier wrote the copy, invent
+personality scores or rank founders. Each share action previews an editable text
+draft, copies only on a click, and selects the draft for manual copying if the
+clipboard is unavailable. Roast drafts use the title and first line; story drafts
+use the title and connection. No social posting or image upload occurs.
