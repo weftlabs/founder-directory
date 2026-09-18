@@ -23,6 +23,14 @@ export function ProductImage({
         // eslint-disable-next-line @next/next/no-img-element
         <img
           key={source}
+          ref={(image) => {
+            // A server-rendered image can fail before React attaches onError.
+            if (image?.complete && image.naturalWidth === 0) {
+              setFailed((previous) =>
+                previous.includes(source) ? previous : [...previous, source],
+              );
+            }
+          }}
           src={source}
           alt={`${name} image`}
           width={600}

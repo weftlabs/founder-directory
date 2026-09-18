@@ -112,6 +112,11 @@ test("product images load and failed images have a stable fallback", async ({
     route.abort(),
   );
   await page.route("https://example.com/favicon.ico", (route) => route.abort());
+  // Let image requests fail before client scripts attach their event handlers.
+  await page.route("**/_next/static/chunks/**", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await route.continue();
+  });
   await page.reload();
   await expect(
     page.getByLabel("Example 01: image unavailable", { exact: true }),
