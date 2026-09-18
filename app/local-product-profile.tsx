@@ -132,7 +132,9 @@ export function LocalProductProfile({
                         ? "Saved bio"
                         : receipt.source === "post"
                           ? "Saved post"
-                          : "Saved product summary"}
+                          : receipt.source === "biography"
+                            ? "Official bio"
+                            : "Saved product summary"}
                     </span>
                     <h3>{receipt.label}</h3>
                     <blockquote>
@@ -195,10 +197,10 @@ function FounderDna({ dna }: { dna: LocalFounderDna }) {
     <section className="panel founder-dna" aria-labelledby="founder-dna-title">
       <div className="founder-dna-heading">
         <h2 id="founder-dna-title">Founder DNA</h2>
-        <span className="founder-dna-badge">From saved self-reports</span>
+        <span className="founder-dna-badge">From saved founder sources</span>
       </div>
       <p className="founder-dna-intro">
-        A view of their work, based on what they have shared.
+        A view of their work, based on the saved founder sources.
       </p>
       <dl className="founder-dna-facets">
         {dna.facets.map((facet) => (
@@ -240,7 +242,7 @@ function FounderDna({ dna }: { dna: LocalFounderDna }) {
             ))}
           </ul>
           <p className="founder-dna-note">
-            Supported by the saved self-report; not independently verified.
+            Supported by the saved sources; not independently verified.
           </p>
         </div>
       ) : null}

@@ -237,3 +237,49 @@ test("CLI dispatches founder input offline and refuses product-site evidence", a
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("first-party biographies remain attributed published evidence, not self-reports", async () => {
+  const evidence = {
+    ...fixture.founders[0].evidence[0],
+    sourceKind: "first-party-biography",
+    sourceUrl: "https://example.com/team",
+    text: "Example is a co-founder. Previously a researcher.",
+  };
+  const input = {
+    ...fixture,
+    founders: [{ ...fixture.founders[0], evidence: [evidence] }],
+  };
+  const parsed = parseFounderInput(input);
+  const request = buildFounderRequest(parsed.founders[0]);
+  assert.equal(
+    JSON.parse(request.state).evidence[0].sourceKind,
+    "first-party-biography",
+  );
+  assert.match(request.questions.founding_role.instructions, /official site/);
+  assert.match(request.questions.claim_0.instructions, /published claim/);
+  assert.match(
+    request.questions.claim_0.instructions,
+    /not independently verified/,
+  );
+  assert.doesNotMatch(
+    request.questions.claim_0.criteria.supported,
+    /founder's own/,
+  );
+  for (const invalid of [
+    { ...evidence, ownerId: "other-person" },
+    { ...evidence, sourceKind: "product-site" },
+    { ...evidence, sourceKind: ["first-party-biography"] },
+    { ...evidence, sourceKind: "third-party-biography" },
+  ])
+    assert.throws(() =>
+      parseFounderInput({
+        ...fixture,
+        founders: [{ ...fixture.founders[0], evidence: [invalid] }],
+      }),
+    );
+  const html = renderFounderReport(
+    await runFounderPoc(parsed, { live: false }),
+  );
+  assert.match(html, /first-party-biography/);
+  assert.doesNotMatch(html, /1 self-reports/);
+});

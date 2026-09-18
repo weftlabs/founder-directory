@@ -197,12 +197,21 @@ It produces typed decisions, not a generated biography or personality profile.
 ```
 
 Accepts one to three founders, each with one to six evidence records and one to
-twelve candidate claims. Every record must have `sourceKind: "self-reported"`
-and an `ownerId` exactly equal to its founder's `id`. Product-site records and
-records for another owner are rejected before any call. The command trusts this
-explicit metadata; it cannot independently prove authorship or identity. Check
-the owner against the saved data before preparing the input. URLs are attribution
-only and are never fetched. Reference labels and notes never enter a request.
+twelve candidate claims. Every record must have an `ownerId` exactly equal to its
+founder's `id` and one of two explicit source kinds:
+
+- `self-reported`: the founder’s own bio or posts.
+- `first-party-biography`: only the named subject’s biography on their
+  organization’s official site. Prepare the subject’s section alone, excluding
+  other people and product capability copy. This is a first-party published claim,
+  not a personal quotation or independent verification.
+
+Product-site records, third-party biographies and records for another owner are
+rejected before any call. The command trusts the explicit kind and ownership
+metadata; it cannot independently prove authorship, organizational authority or
+identity. Check the subject, site and saved text before preparing the input. URLs
+are attribution only and are never fetched. Reference labels and notes never enter
+a request. The prompt preserves each evidence kind and current versus former roles.
 
 | Facet            | Choices and limits                                                                                                                                                                                                                                                |
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -256,7 +265,7 @@ The optional `profiles[].dna` contract is:
   as `{ "key": "craft", "value": "technical", "confidence": 0.9 }`. Only the
   defined choices and finite confidence values between zero and one are accepted.
 - `sources`: one to six `{ "id", "url", "text" }` records from the founder's saved
-  self-report. IDs are unique and at most 120 characters, text is at most 4,000,
+  self-reports or first-party biography. IDs are unique and at most 120 characters, text is at most 4,000,
   and URLs are safe HTTP(S) URLs without credentials, at most 2,000 characters.
 - `facts`: zero to twelve `{ "text", "state": "supported", "sourceIds": ["id"] }`
   records. Text is at most 1,200 characters. Each fact must cite one to six IDs
@@ -265,14 +274,14 @@ The optional `profiles[].dna` contract is:
 Prepare this small projection explicitly from a completed saved run. Preserve
 actual returned choices, including `unknown`; do not replace them with evaluation
 reference labels. Include only supported professional facts checked against the
-saved founder self-reports. Do not copy the full result object, evaluation fixtures,
+saved founder sources. Do not copy the full result object, evaluation fixtures,
 reference answers or deliberately false candidate claims. The reader strips
 unrecognized fields and omits malformed DNA while retaining the basic profile.
 The input's support and source ownership metadata are trusted local preparation
 claims, not proof supplied by this display sanitizer.
 
 The page labels categories as model inferences, unknown choices as “Not yet
-known”, and facts as supported by a saved self-report rather than independently
+known”, and facts as supported by saved founder sources rather than independently
 verified. Evidence details show all considered source text, the model and saved
 date. Confidence appears only in those details and is never an ability score.
 The preview does not add personality assessment or synthesize a new summary.
@@ -293,11 +302,11 @@ A `profiles[].portrait` projection contains:
   `receipt` equal to a receipt label.
 - `story`: `title` (120), `before` and `after` (240 each), `connection` (600).
 - `receipts`: one to six records with unique `label` (80), `quote` (2,400),
-  `source` exactly `bio`, `post` or `product`, and a safe HTTP(S) `url` (2,000).
+  `source` exactly `bio`, `post`, `biography` or `product`, and a safe HTTP(S) `url` (2,000).
 - `shareText`: a prepared archetype draft, at most 1,200 characters.
 
 Strings must be nonempty. Invalid portraits are omitted. The lab lists at most
-12 linked profiles. Source labels distinguish saved bio excerpts, saved posts and saved product
+12 linked profiles. Source labels distinguish saved bio excerpts, saved posts, official biographies and saved product
 summaries; summaries are not presented as verbatim website quotations.
 The local preparer checks each excerpt against its saved source and owns the
 editorial interpretation. The sanitizer validates the display shape and receipt
@@ -318,7 +327,7 @@ roast, linked products, and a share draft. It has no founder picker, concept tab
 or lab heading. A small local preview label identifies the environment.
 
 The collapsed **Why this fits** section separates editorial interpretation from
-source facts. It contains attributed saved bio/post excerpts and product summaries,
+source facts. It contains attributed saved bio/post excerpts, official biography excerpts and product summaries,
 then the separate model classification and supported professional facts when
 available. Saved post receipts must point to their specific source post. Unknown
 model choices remain unknown. Share text remains editable and is copied only on

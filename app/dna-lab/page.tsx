@@ -234,7 +234,9 @@ export default async function PortraitLab({
                     ? "SAVED BIO"
                     : receipt.source === "post"
                       ? "SAVED POST"
-                      : "SAVED PRODUCT SUMMARY"}
+                      : receipt.source === "biography"
+                        ? "OFFICIAL BIO"
+                        : "SAVED PRODUCT SUMMARY"}
                 </span>
                 <h3>{receipt.label}</h3>
                 <blockquote>

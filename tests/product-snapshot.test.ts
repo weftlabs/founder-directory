@@ -202,6 +202,21 @@ test("local portraits reject unsafe or ungrounded editorial projections and stay
         .source,
       "post",
     );
+    await save({
+      ...portrait,
+      receipts: [
+        {
+          ...portrait.receipts[0],
+          source: "biography",
+          url: "https://example.test/team",
+        },
+      ],
+    });
+    assert.equal(
+      (await loadLocalProductFounder("example", env))?.portrait?.receipts[0]
+        .source,
+      "biography",
+    );
     for (const value of [
       {
         ...portrait,

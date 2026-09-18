@@ -51,6 +51,12 @@ test("a local portrait is one founder profile with collapsed receipts and no lab
               source: "post",
               url: "https://example.test/posts/1",
             },
+            {
+              label: "Team",
+              quote: "Example is a co-founder.",
+              source: "biography",
+              url: "https://example.test/team",
+            },
           ],
           shareText: "My founder portrait.",
         },
@@ -65,6 +71,7 @@ test("a local portrait is one founder profile with collapsed receipts and no lab
     "Example product",
     "Why this fits",
     "Saved post",
+    "Official bio",
     "My founder portrait.",
   ])
     assert.ok(html.includes(text), text);
