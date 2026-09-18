@@ -75,7 +75,7 @@ export type Run = {
     durationMs: number;
   };
 };
-class PocError extends Error {
+export class PocError extends Error {
   constructor(
     code: string,
     readonly responseText?: string,

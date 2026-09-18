@@ -140,3 +140,102 @@ Provider sources: [API](https://docs.typesafe.ai/api),
 [source citation checks](https://docs.typesafe.ai/cookbooks/citation_check).
 Pricing and the pinned model were checked on 2026-09-18; verify them before a later
 paid experiment.
+
+## Founder categories and DNA claims
+
+The same CLI accepts a separate founder input with `kind: "founder"`. Product
+inputs and reports retain their original contract. Founder mode uses one grouped
+request per founder, with the same limits, private outputs and opt-in live flag.
+It produces typed decisions, not a generated biography or personality profile.
+
+```json
+{
+  "version": 1,
+  "kind": "founder",
+  "founders": [
+    {
+      "id": "example-founder",
+      "name": "Example Founder",
+      "evidence": [
+        {
+          "id": "saved-bio",
+          "ownerId": "example-founder",
+          "sourceKind": "self-reported",
+          "sourceUrl": "https://example.com/profile",
+          "text": "I am a software engineer and co-founder of a scheduling tool."
+        }
+      ],
+      "expectedFacets": {
+        "venture_domain": {
+          "expected": "productivity",
+          "referenceNote": "The founder states a scheduling venture."
+        },
+        "craft": {
+          "expected": "technical",
+          "referenceNote": "Explicit current software engineer."
+        },
+        "building_style": {
+          "expected": "unknown",
+          "referenceNote": "No personal working practice stated."
+        },
+        "founding_role": {
+          "expected": "cofounder",
+          "referenceNote": "Explicit co-founder role."
+        }
+      },
+      "claims": [
+        {
+          "id": "interest",
+          "text": "The founder says that scheduling is a personal interest.",
+          "expected": "unsupported",
+          "referenceNote": "A venture domain is not a stated personal interest."
+        }
+      ]
+    }
+  ]
+}
+```
+
+Accepts one to three founders, each with one to six evidence records and one to
+twelve candidate claims. Every record must have `sourceKind: "self-reported"`
+and an `ownerId` exactly equal to its founder's `id`. Product-site records and
+records for another owner are rejected before any call. The command trusts this
+explicit metadata; it cannot independently prove authorship or identity. Check
+the owner against the saved data before preparing the input. URLs are attribution
+only and are never fetched. Reference labels and notes never enter a request.
+
+| Facet            | Choices and limits                                                                                                                                                                                                                                                |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `venture_domain` | The eleven product taxonomy IDs plus `unknown`. Classifies the stated current venture, not the person's craft. `unknown` means insufficient evidence; `uncategorized` means an explicit venture outside the listed domains. A company name alone is insufficient. |
+| `craft`          | `technical`, `creative_branding`, `research`, `operations`, `mixed`, `unknown`. Explicit current personal craft only. Former work does not establish current craft. CEO or founder alone is unknown.                                                              |
+| `building_style` | `publicly_documenting`, `explicitly_private`, `unknown`. How the person says they work, not product capabilities. Silence does not imply private building.                                                                                                        |
+| `founding_role`  | `solo`, `cofounder`, `unknown`. Requires an explicit founding role. Working alone does not establish solo-founder status.                                                                                                                                         |
+
+The candidate-claim judge preserves tense, former/current qualifiers, and the
+separation between craft, working style and interests used by the existing
+[Founder DNA recipe](../lib/enrichment/recipes.ts). A profession is not a stated
+personal interest. An inference cannot be accepted as an explicit self-report.
+There is no ability ranking, personality assessment, free-text summary generation,
+publication step, or database write.
+
+```sh
+pnpm exec tsx scripts/typesafe-poc.ts \
+  --input .local/typesafe-founder-input.json \
+  --output .local/typesafe-founder-dry.json
+```
+
+After reviewing the proposed requests and authorizing spending, use `--live` with
+a new output path. Founder results use `schema: "typesafe-founder-poc-result-v1"`,
+a `founders` array, and `facetMatches`/`facetTotal` in place of the product category
+counters. Each founder retains its source ownership metadata, reference labels,
+exact request, provider response, and timing. The private HTML shows facets,
+claim agreement, confidence, selected probability, and expandable evidence with
+source attribution. This lists all evidence considered; it does not invent exact
+per-answer citations. Do not publish the report or input.
+
+Run the founder and product contracts together:
+
+```sh
+pnpm exec tsx --import ./tests/no-network.mjs --test \
+  tests/typesafe-founder-poc.test.ts tests/typesafe-poc.test.ts
+```

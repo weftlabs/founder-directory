@@ -8,6 +8,13 @@ import {
   type Run,
 } from "../lib/typesafe-poc";
 
+import {
+  parseFounderInput,
+  runFounderPoc,
+  renderFounderReport,
+  type FounderRun,
+} from "../lib/typesafe-founder-poc";
+
 async function main() {
   const args = process.argv.slice(2);
   let input: string | undefined;
@@ -58,7 +65,11 @@ async function main() {
   try {
     if ((await inputFile.stat()).size > 1_000_000)
       throw new Error("input_too_large");
-    data = parseInput(JSON.parse(await inputFile.readFile("utf8")));
+    const raw: unknown = JSON.parse(await inputFile.readFile("utf8"));
+    data =
+      raw && typeof raw === "object" && "kind" in raw && raw.kind === "founder"
+        ? parseFounderInput(raw)
+        : parseInput(raw);
   } finally {
     await inputFile.close();
   }
@@ -71,10 +82,15 @@ async function main() {
     await json.close();
     throw new Error("report_path_exists");
   }
-  const checkpoint = async (run: Run) => {
+  const checkpoint = async (run: Run | FounderRun) => {
     for (const [file, body] of [
       [json, JSON.stringify(run, null, 2) + "\n"],
-      [html, renderReport(run)],
+      [
+        html,
+        run.schema === "typesafe-founder-poc-result-v1"
+          ? renderFounderReport(run)
+          : renderReport(run),
+      ],
     ] as const) {
       await file.write(body, 0, "utf8");
       await file.truncate(Buffer.byteLength(body));
@@ -82,7 +98,7 @@ async function main() {
     }
   };
   try {
-    const run = await runPoc(data, {
+    const options = {
       live,
       apiKey: live
         ? process.env.TYPESAFE_AI_API_KEY ||
@@ -90,7 +106,11 @@ async function main() {
           process.env.TYPESAFE_API_KEY
         : undefined,
       checkpoint,
-    });
+    };
+    const run =
+      "kind" in data
+        ? await runFounderPoc(data, options)
+        : await runPoc(data, options);
     console.log(
       `TypeSafe ${run.mode}: ${run.status}; ${run.summary.callsAttempted} calls attempted. Private JSON and HTML saved.`,
     );
