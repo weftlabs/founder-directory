@@ -1,5 +1,6 @@
 // Layer: UI. Server-rendered cards and GET filters keep state in shareable URLs.
 import Link from "next/link";
+import { ProductImage } from "./product-image";
 import {
   PRODUCT_CATEGORIES,
   productHref,
@@ -7,7 +8,7 @@ import {
   type ProductPage,
   type ProductQuery,
 } from "@/lib/products";
-function Claim({
+export function Claim({
   claim,
   fallback = "Unknown",
 }: {
@@ -173,10 +174,12 @@ export function ProductsView({
                   data-testid="product-card"
                   key={`${product.name.value}-${index}`}
                 >
+                  <ProductImage
+                    name={product.name.value ?? "Product"}
+                    imageUrl={product.imageUrl}
+                    website={product.website}
+                  />
                   <div className="product-card-top">
-                    <span className="product-mark" aria-hidden="true">
-                      {(product.name.value ?? "?").slice(0, 1).toUpperCase()}
-                    </span>
                     <span className="product-category">
                       {PRODUCT_CATEGORIES.find((c) => c.id === product.category)
                         ?.label ?? "Uncategorized"}
@@ -217,22 +220,18 @@ export function ProductsView({
                     <div className="product-founders">
                       {product.founders.length ? (
                         product.founders.map((handle) =>
-                          preview ? (
-                            <a
-                              key={handle}
-                              href={`https://x.com/${handle}`}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              @{handle}
-                            </a>
+                          preview === "synthetic" ? (
+                            <span key={handle}>@{handle} · Sample founder</span>
                           ) : (
                             <Link
                               key={handle}
                               href={`/u/${handle}`}
                               prefetch={false}
                             >
-                              @{handle}
+                              <span>@{handle}</span>
+                              <span className="product-profile-label">
+                                View founder →
+                              </span>
                             </Link>
                           ),
                         )

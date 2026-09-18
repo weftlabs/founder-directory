@@ -1,7 +1,7 @@
 // Layer: persistence. A bounded read of published display fields; no collection.
 import "./assert-server";
 import { neon } from "@neondatabase/serverless";
-import { readFile } from "node:fs/promises";
+import { readProductSnapshot } from "./product-snapshot";
 import type { Sql } from "./enrichment/db";
 import {
   PRODUCT_CATEGORIES,
@@ -39,6 +39,7 @@ const eligible = `WITH eligible AS (
   'website',(SELECT min(e.source_url) FROM jsonb_array_elements_text(a.evidence_ids) cited(id)
     JOIN enrichment_evidence e ON e.id::text=cited.id
     WHERE e.payload->>'sourceKind'='product-site'),
+  'imageUrl',(SELECT min(e.payload->>'imageUrl') FROM jsonb_array_elements_text(a.evidence_ids) cited(id) JOIN enrichment_evidence e ON e.id::text=cited.id WHERE e.payload->>'sourceKind'='product-site'),
   'founders',f.handles) AS card,
  concat_ws(' ', coalesce(fields->'name'->>'value',''),coalesce(fields->'description'->>'value',''),coalesce(fields->'audience'->>'value',''),f.search) AS search,
  coalesce(fields->'name'->>'value','') AS name,
@@ -95,19 +96,7 @@ export async function loadProducts(
     if (env.NODE_ENV !== "development" || env.VERCEL)
       return { ...empty, unavailable: true, preview: null };
     try {
-      const data = await readFile(env.PRODUCTS_LOCAL_SNAPSHOT, "utf8");
-      if (Buffer.byteLength(data) > 1_000_000)
-        throw new Error("snapshot_too_large");
-      const parsed = JSON.parse(data);
-      if (
-        parsed?.version !== 1 ||
-        !Array.isArray(parsed.products) ||
-        parsed.products.length > 200 ||
-        parsed.products.some(
-          (p: unknown) => !p || typeof p !== "object" || Array.isArray(p),
-        )
-      )
-        throw new Error("invalid_snapshot");
+      const parsed = await readProductSnapshot(env);
       return {
         ...productPage(parsed.products.map(productCard), query),
         unavailable: false,

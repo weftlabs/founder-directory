@@ -21,7 +21,7 @@ source retention, withdrawal and suppression, including independently purged
 evidence and suppressed evidence owners. Founder links also require retained
 relationship evidence. Publication does not imply that all founders have products.
 
-Only selected display claims, eligible founder handles and cited product-site URLs
+Only selected display claims, eligible founder handles and cited product-site URLs and image URLs
 leave the query. Raw responses, manifests, evidence IDs and private entity IDs do
 not reach the page. Unsafe URL schemes and credentials are removed. Website links
 are omitted when a product has no eligible cited product-site URL. Founder links
@@ -46,13 +46,18 @@ For an explicitly prepared local display snapshot, set `PRODUCTS_LOCAL_SNAPSHOT`
 to its absolute path and run `pnpm dev`. Open `/products`. The app accepts this mode
 only in development and when `VERCEL` is unset. It always shows a local preview
 label. An invalid or prohibited snapshot shows unavailable; it never falls back
-to `DATABASE_URL`. Preview founder links lead to public X profiles because the
-local founder database may be absent. This does not publish or approve records.
+to `DATABASE_URL`. Founder links open `/u/<handle>` inside the app. In this mode,
+profiles show only sanitized saved public fields and linked products from the
+snapshot, with a local preview label. Missing records return 404. They never query
+the live founder database. This does not publish or approve records.
 
 The JSON contract is `{ "version": 1, "products": [...] }`, with at most 200
 products and a 1 MB file limit. Each product has `name`, `description`, `audience`,
 `domain`, `productType`, `businessModel` and `stage` claim objects, plus
-`website: string | null` and `founders: string[]` handles. A claim contains
+`website: string | null`, optional `imageUrl: string | null`, and `founders: string[]` handles.
+An optional top-level `profiles` array contains saved `handle`, `name`, `bio`,
+`location`, `website`, and `avatarUrl` display fields. Only profiles linked to a
+snapshot product are available. A claim contains
 `value: string | null`, `state` (`supported`, `unknown`, `conflict`, `stale`, or
 `absent`) and `kind` (`self_report`, `publisher_statement`, or `inference`).
 `domain` is a business domain, never a website URL. Prepare snapshots only from
@@ -68,3 +73,10 @@ projection, literal search, category parity, counts and bounded pages.
 `tests/e2e/products.spec.ts` covers desktop and mobile navigation, search,
 category changes, pagination, history and empty states with no paid calls.
 These tests do not install a production schema or establish enrichment coverage.
+
+Product images use the saved website image URL when available. The SQL reader
+accepts `imageUrl` only from eligible cited product-site evidence. Missing or failed
+images fall back to the website favicon, then an initial. Images load in the browser
+without a referrer; the server does not fetch arbitrary image URLs. The current
+website text collector does not capture image metadata automatically. Prepared
+local snapshots can include an image verified on the official product site.

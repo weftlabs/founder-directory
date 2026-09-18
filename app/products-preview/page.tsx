@@ -29,6 +29,7 @@ export default async function ProductsPreview({
       businessModel: i % 3 ? supported("Subscription") : null,
       stage: i % 3 ? { ...supported("Beta"), kind: "inference" } : null,
       website: i % 3 === 0 ? "javascript:alert(1)" : "https://example.com",
+      imageUrl: "https://example.test/product.png",
       founders: [`example_${i + 1}`],
     }),
   );

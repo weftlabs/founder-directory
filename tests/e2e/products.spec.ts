@@ -79,3 +79,44 @@ test("synthetic Products have bounded pages, safe links, combined filters and hi
   }));
   expect(dimensions.scroll).toBeLessThanOrEqual(dimensions.width);
 });
+
+test("product images load and failed images have a stable fallback", async ({
+  page,
+}) => {
+  await page.route("https://example.test/product.png", (route) =>
+    route.fulfill({
+      contentType: "image/png",
+      body: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9xkAAAAASUVORK5CYII=",
+        "base64",
+      ),
+    }),
+  );
+  await page.goto("/products-preview");
+  const image = page.getByRole("img", {
+    name: "Example 01 image",
+    exact: true,
+  });
+  await expect(image).toBeVisible();
+  await expect
+    .poll(() => image.evaluate((el) => (el as HTMLImageElement).naturalWidth))
+    .toBeGreaterThan(0);
+  await expect(
+    page
+      .getByTestId("product-card")
+      .first()
+      .getByRole("link", { name: /example_1/ }),
+  ).toHaveCount(0);
+  await page.unroute("https://example.test/product.png");
+  await page.route("https://example.test/product.png", (route) =>
+    route.abort(),
+  );
+  await page.route("https://example.com/favicon.ico", (route) => route.abort());
+  await page.reload();
+  await expect(
+    page.getByLabel("Example 01: image unavailable", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByLabel("Example 02: image unavailable", { exact: true }),
+  ).toBeVisible();
+});

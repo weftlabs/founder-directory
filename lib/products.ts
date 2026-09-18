@@ -75,6 +75,7 @@ export type ProductInput = {
   productType?: unknown;
   businessModel?: unknown;
   stage?: unknown;
+  imageUrl?: unknown;
   website?: unknown;
   founders?: unknown;
 };
@@ -87,6 +88,7 @@ export type ProductCard = {
   businessModel: ProductClaim;
   stage: ProductClaim;
   category: string;
+  imageUrl: string | null;
   website: string | null;
   founders: string[];
 };
@@ -144,6 +146,8 @@ export function productCard(input: ProductInput): ProductCard {
     businessModel: productClaim(input.businessModel),
     stage: productClaim(input.stage),
     category: productCategory(input),
+    imageUrl:
+      typeof input.imageUrl === "string" ? safeHttpUrl(input.imageUrl) : null,
     website:
       typeof input.website === "string" ? safeHttpUrl(input.website) : null,
     founders: Array.isArray(input.founders)
