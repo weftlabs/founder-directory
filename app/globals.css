@@ -1884,3 +1884,114 @@ main.about code {
   margin: 12px 0;
   line-height: 1.6;
 }
+
+.founder-dna {
+  border-color: #454b2e;
+}
+.founder-dna-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.founder-dna-heading h2 {
+  color: #d8ff3e;
+  margin: 0;
+}
+.founder-dna-badge {
+  font-size: 11px;
+  color: #c1ca9e;
+  border: 1px solid #454b2e;
+  padding: 4px 8px;
+  border-radius: 20px;
+}
+.founder-dna-intro {
+  margin: 16px 0 20px;
+  color: #c8c4b8;
+}
+.founder-dna-facets {
+  gap: 10px;
+  margin: 0 0 14px;
+}
+.founder-dna-facets > div {
+  background: #1e201a;
+  border: 1px solid #30342a;
+  padding: 14px;
+  border-radius: 10px;
+  min-width: 0;
+}
+.founder-dna-facets dd {
+  font-size: 17px;
+  margin: 6px 0 0;
+  font-weight: 600;
+}
+.founder-dna-facets [data-known="false"] dd {
+  color: #a5a294;
+  font-weight: 400;
+}
+.founder-dna-note {
+  color: #9a978c;
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 12px 0;
+}
+.founder-dna-facts {
+  margin-top: 24px;
+}
+.founder-dna-facts h3 {
+  font-size: 15px;
+  margin-bottom: 12px;
+}
+.founder-dna-facts ul {
+  list-style: none;
+  padding: 0;
+}
+.founder-dna-facts li {
+  padding: 12px 0;
+  border-top: 1px solid #30342a;
+}
+.founder-dna-facts li p {
+  margin: 0 0 6px;
+  line-height: 1.5;
+}
+.founder-dna-facts a,
+.founder-dna-evidence a {
+  color: #d8ff3e;
+  font-size: 12px;
+  margin-right: 12px;
+}
+.founder-dna-evidence {
+  border-top: 1px solid #30342a;
+  margin-top: 20px;
+  padding-top: 16px;
+}
+.founder-dna-evidence summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: #c8c4b8;
+}
+.founder-dna-evidence blockquote {
+  margin: 16px 0 8px;
+  padding-left: 14px;
+  border-left: 2px solid #657336;
+  white-space: pre-wrap;
+  color: #c8c4b8;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.founder-dna-confidence {
+  padding-left: 16px;
+  font-size: 12px;
+  color: #9a978c;
+  line-height: 1.8;
+}
+@media (max-width: 400px) {
+  .founder-dna-facets {
+    grid-template-columns: 1fr;
+  }
+}
+
+.hero-row-no-avatar {
+  grid-template-columns: minmax(0, 1fr);
+}

@@ -239,3 +239,40 @@ Run the founder and product contracts together:
 pnpm exec tsx --import ./tests/no-network.mjs --test \
   tests/typesafe-founder-poc.test.ts tests/typesafe-poc.test.ts
 ```
+
+## Local founder profile preview
+
+A prepared `PRODUCTS_LOCAL_SNAPSHOT` can include a `dna` display projection on
+its `profiles` records. Open `/u/<handle>` to see the saved bio, Founder DNA,
+source evidence and linked products together. This uses the same development-only,
+non-Vercel guard as the [Products preview](products.md#no-key-previews). It makes
+no classifier or database calls. Production profile behavior is unchanged.
+
+The optional `profiles[].dna` contract is:
+
+- `model`: nonempty string, at most 80 characters.
+- `completedAt`: parseable ISO date-time string, at most 40 characters.
+- `facets`: exactly one entry for each of the four founder facets above, shaped
+  as `{ "key": "craft", "value": "technical", "confidence": 0.9 }`. Only the
+  defined choices and finite confidence values between zero and one are accepted.
+- `sources`: one to six `{ "id", "url", "text" }` records from the founder's saved
+  self-report. IDs are unique and at most 120 characters, text is at most 4,000,
+  and URLs are safe HTTP(S) URLs without credentials, at most 2,000 characters.
+- `facts`: zero to twelve `{ "text", "state": "supported", "sourceIds": ["id"] }`
+  records. Text is at most 1,200 characters. Each fact must cite one to six IDs
+  present in `sources`. Unsupported, contradicted or uncited facts are omitted.
+
+Prepare this small projection explicitly from a completed saved run. Preserve
+actual returned choices, including `unknown`; do not replace them with evaluation
+reference labels. Include only supported professional facts checked against the
+saved founder bio. Do not copy the full result object, evaluation fixtures,
+reference answers or deliberately false candidate claims. The reader strips
+unrecognized fields and omits malformed DNA while retaining the basic profile.
+The input's support and source ownership metadata are trusted local preparation
+claims, not proof supplied by this display sanitizer.
+
+The page labels categories as model inferences, unknown choices as “Not yet
+known”, and facts as supported by a saved self-report rather than independently
+verified. Evidence details show all considered source text, the model and saved
+date. Confidence appears only in those details and is never an ability score.
+The preview does not add personality assessment or synthesize a new summary.

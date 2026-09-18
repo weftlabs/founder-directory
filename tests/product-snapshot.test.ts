@@ -65,3 +65,70 @@ test("product images reject unsafe schemes and credentials", () => {
     "https://example.test/logo.png",
   );
 });
+
+test("local DNA keeps evidence-backed facts and unknown categories, without evaluation data", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "founder-dna-preview-"));
+  const file = join(dir, "snapshot.json");
+  const dna = {
+    model: "jev-1.13.0",
+    completedAt: "2026-01-01T12:00:00Z",
+    facets: [
+      { key: "venture_domain", value: "unknown", confidence: 0.89 },
+      { key: "craft", value: "technical", confidence: 0.9 },
+      { key: "building_style", value: "unknown", confidence: 0.8 },
+      { key: "founding_role", value: "cofounder", confidence: 1 },
+    ],
+    sources: [
+      {
+        id: "bio",
+        url: "https://example.test/bio",
+        text: "Software engineer and co-founder.",
+      },
+    ],
+    facts: [
+      { text: "Software engineer.", state: "supported", sourceIds: ["bio"] },
+      { text: "Unsupported trap", state: "unsupported", sourceIds: ["bio"] },
+      { text: "Contradicted trap", state: "contradicted", sourceIds: ["bio"] },
+      { text: "No provenance", state: "supported", sourceIds: ["missing"] },
+    ],
+    expectedFacets: { venture_domain: "marketing" },
+    responseText: "PRIVATE RAW RESPONSE",
+  };
+  const save = (value: unknown) =>
+    writeFile(
+      file,
+      JSON.stringify({
+        version: 1,
+        products: [{ founders: ["example"] }],
+        profiles: [{ handle: "example", dna: value }],
+      }),
+    );
+  const env = { NODE_ENV: "development", PRODUCTS_LOCAL_SNAPSHOT: file };
+  try {
+    await save(dna);
+    const founder = await loadLocalProductFounder("example", env);
+    assert.equal(founder?.dna?.facets[0].value, "unknown");
+    assert.deepEqual(founder?.dna?.facts, [
+      { text: "Software engineer.", state: "supported", sourceIds: ["bio"] },
+    ]);
+    assert.equal(
+      JSON.stringify(founder).includes("PRIVATE RAW RESPONSE"),
+      false,
+    );
+    assert.equal(JSON.stringify(founder).includes("marketing"), false);
+    for (const invalid of [
+      { ...dna, facets: [...dna.facets.slice(1), dna.facets[1]] },
+      { ...dna, facets: dna.facets.map((f) => ({ ...f, confidence: 2 })) },
+      { ...dna, facets: dna.facets.map((f) => ({ ...f, value: "invented" })) },
+      {
+        ...dna,
+        sources: [{ id: "bio", url: "javascript:alert(1)", text: "Unsafe" }],
+      },
+    ]) {
+      await save(invalid);
+      assert.equal((await loadLocalProductFounder("example", env))?.dna, null);
+    }
+  } finally {
+    await rm(dir, { recursive: true });
+  }
+});
