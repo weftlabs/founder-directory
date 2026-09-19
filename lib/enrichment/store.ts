@@ -898,15 +898,53 @@ export class EnrichmentStore {
         validation_report: Record<string, unknown>;
       }>(
         `WITH RECURSIVE affected AS (
-      SELECT a.id FROM enrichment_analysis_runs a WHERE a.input_artifact_id=$1 OR EXISTS(
+      SELECT a.id FROM enrichment_analysis_runs a WHERE a.input_artifact_id=$1
+        OR a.validation_report->>'generationResponseArtifactId'=$1::text
+        OR a.validation_report->>'judgeRequestArtifactId'=$1::text
+        OR a.validation_report->>'judgeResponseArtifactId'=$1::text
+        OR EXISTS(SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(a.validation_report->'judgeExchanges')='array' THEN a.validation_report->'judgeExchanges' ELSE '[]'::jsonb END) exchange WHERE exchange->>'requestArtifactId'=$1::text OR exchange->>'responseArtifactId'=$1::text)
+        OR EXISTS(
         SELECT 1 FROM enrichment_evidence e WHERE e.artifact_id=$1 AND a.evidence_ids ? e.id::text)
       UNION SELECT child.id FROM enrichment_analysis_runs child JOIN affected parent ON child.validation_report->>'reusedFromRunId'=parent.id::text)
       SELECT a.id,a.input_artifact_id,a.validation_report FROM enrichment_analysis_runs a JOIN affected USING(id)`,
         [artifactId],
       )
     ).rows;
-    const runIds = runs.map((r) => r.id),
-      inputIds = runs.map((r) => r.input_artifact_id);
+    const interruptions = (
+      await tx.query<{ id: string; metadata: Record<string, unknown> }>(
+        "SELECT id,metadata FROM enrichment_artifacts interrupted WHERE kind='manifest' AND metadata->>'purpose'='portrait_check_interruption' AND (id=$1 OR EXISTS(SELECT 1 FROM enrichment_evidence source WHERE source.artifact_id=$1 AND interrupted.metadata->'evidenceIds' ? source.id::text))",
+        [artifactId],
+      )
+    ).rows;
+    const runIds = runs.map((r) => r.id);
+    const inputIds = [
+      ...runs.map((r) => r.input_artifact_id),
+      ...interruptions.map((r) => r.id),
+      ...[
+        ...runs.map((r) => r.validation_report),
+        ...interruptions.map((r) => r.metadata),
+      ].flatMap((report) => {
+        const exchanges = Array.isArray(report.judgeExchanges)
+          ? report.judgeExchanges
+          : [];
+        const captures = [
+          report.generationResponseArtifactId,
+          report.judgeRequestArtifactId,
+          report.judgeResponseArtifactId,
+          ...exchanges.flatMap((exchange) =>
+            exchange && typeof exchange === "object"
+              ? [exchange.requestArtifactId, exchange.responseArtifactId]
+              : [],
+          ),
+        ];
+        return [
+          ...captures.filter(
+            (id): id is string =>
+              typeof id === "string" && /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(id),
+          ),
+        ];
+      }),
+    ];
     const attempts = runs.flatMap((r) =>
       typeof r.validation_report.attemptId === "string"
         ? [r.validation_report.attemptId]
@@ -934,7 +972,7 @@ export class EnrichmentStore {
     ).rows.flatMap((r) => (r.attempt_id ? [r.attempt_id] : []));
     const artifacts = (
       await tx.query<{ id: string; attempt_id: string | null }>(
-        "SELECT id,attempt_id FROM enrichment_artifacts WHERE id=$1 OR id=ANY($2::uuid[]) OR run_id=ANY($3::uuid[]) OR attempt_id::text=ANY($4::text[]) OR attempt_id=(SELECT attempt_id FROM enrichment_artifacts WHERE id=$1)",
+        "SELECT id,attempt_id FROM enrichment_artifacts WHERE id=$1 OR id=ANY($2::uuid[]) OR run_id=ANY($3::uuid[]) OR attempt_id::text=ANY($4::text[]) OR attempt_id=(SELECT attempt_id FROM enrichment_artifacts WHERE id=$1) OR EXISTS(SELECT 1 FROM enrichment_evidence source WHERE source.artifact_id=$1 AND enrichment_artifacts.metadata->'evidenceIds' ? source.id::text)",
         [artifactId, inputIds, runIds, [...attempts, ...vectorAttempts]],
       )
     ).rows;

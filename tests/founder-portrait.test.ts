@@ -27,7 +27,9 @@ async function verifyPortrait(
     | "wrong portrait citation"
     | "long judge request"
     | "maximum profile"
-    | "oversized evidence",
+    | "oversized evidence"
+    | "interrupted check"
+    | "interrupted budget",
 ) {
   const pg = new PGlite();
   const adapt = (client: Pick<PGlite, "query" | "exec">): Sql => ({
@@ -136,7 +138,7 @@ async function verifyPortrait(
       id: budgetId,
       scope: "test",
       currency: "USD",
-      capMicros: "10000",
+      capMicros: "100000",
     });
     let textCalls = 0,
       judgeCalls = 0;
@@ -158,49 +160,51 @@ async function verifyPortrait(
         judgeCalls++;
         const request = JSON.parse(String(init?.body)) as Request;
         const state = JSON.parse(request.state);
-        // The mock judge uses the claim's own cited scope, not other evidence in the state.
-        const claim = state.claims[0];
-        assert.equal(typeof claim, "object");
+        assert.ok(["facts", "prose", "facets"].includes(state.mode));
+        const ids = state.evidence.map((source: { id: string }) => source.id);
         const sourceIds = (refs: number[]) =>
           refs.map((index) => state.evidence[index].id);
-        const claimSupported = sourceIds(claim.sourceRefs).includes(evidenceId);
-        assert.match(
-          request.questions.claim_0.instructions,
-          /only.*claims\[0\].*sourceRefs/i,
-        );
+        if (state.mode === "facts") {
+          assert.equal(state.prose.length, 0);
+          for (const claim of state.claims)
+            assert.deepEqual(
+              new Set(sourceIds(claim.sourceRefs)),
+              new Set(ids),
+            );
+          if (scenario === "wrong citation")
+            assert.deepEqual(ids, [wrongEvidenceId]);
+        }
+        if (state.mode === "prose") {
+          for (const clause of state.prose)
+            assert.equal(clause.factRefs.length, state.claims.length);
+          assert.deepEqual(
+            new Set(
+              state.claims.flatMap((claim: { sourceRefs: number[] }) =>
+                sourceIds(claim.sourceRefs),
+              ),
+            ),
+            new Set(ids),
+          );
+        }
+        const savedEvidence = await new (
+          await import("../lib/enrichment/worker-store")
+        ).WorkerStore(db).evidenceByIds(entityId, ids);
         assert.deepEqual(
           state.evidence.map((source: { text: string }) => source.text).sort(),
-          (
-            await new (
-              await import("../lib/enrichment/worker-store")
-            ).WorkerStore(db).evidenceByIds(entityId, selectedEvidenceIds)
-          )
-            .map((source) => source.text)
-            .sort(),
+          savedEvidence.map((source) => source.text).sort(),
         );
         assert.ok(Buffer.byteLength(String(init?.body)) <= 40000);
-        if (scenario === "long judge request") {
-          assert.equal(state.claims.length, 6);
-          assert.equal(state.prose.length, 17);
-          assert.equal(state.evidence.length, 6);
-        }
         return new Response(
           JSON.stringify({
             model: MODEL,
             answers: Object.fromEntries(
               Object.entries(request.questions).map(([key, q]) => {
-                const scope = key.startsWith("prose_")
-                  ? state.prose?.[Number(key.slice(6))]
-                  : undefined;
-                if (key.startsWith("prose_")) {
-                  assert.ok(scope);
-                  assert.ok(
-                    scope.factRefs.every(
-                      (index: number) => state.claims[index],
-                    ),
-                  );
-                  assert.match(q.instructions, /only state\.prose/);
-                }
+                const claim = state.claims.find(
+                  (item: { key: string }) => item.key === key,
+                );
+                const scope = state.prose.find(
+                  (item: { key: string }) => item.key === key,
+                );
                 const citedSourceIds = scope
                   ? sourceIds(
                       scope.factRefs.flatMap(
@@ -212,15 +216,20 @@ async function verifyPortrait(
                   !scope ||
                   !scope.text.includes("Zurich") ||
                   citedSourceIds.includes(wrongEvidenceId);
-                const choice = key.startsWith("claim_")
-                  ? (key === "claim_0" ? claimSupported : true)
-                    ? "supported"
-                    : "unsupported"
-                  : key.startsWith("prose_")
-                    ? proseSupported
-                      ? "grounded_editorial"
+                const choice =
+                  state.mode === "facts"
+                    ? (
+                        claim.text.includes("Zurich")
+                          ? ids.includes(wrongEvidenceId)
+                          : ids.includes(evidenceId)
+                      )
+                      ? "supported"
                       : "unsupported"
-                    : "unknown";
+                    : state.mode === "prose"
+                      ? proseSupported
+                        ? "grounded"
+                        : "unsupported"
+                      : "unknown";
                 return [
                   key,
                   {
@@ -242,7 +251,18 @@ async function verifyPortrait(
         );
       },
     });
+    const generationCache = new Map<
+      string,
+      {
+        attemptId: string;
+        rawResponse: string;
+        responseArtifactId: string;
+        usage: null;
+        finishReason: string;
+      }
+    >();
     const executeGeneration = async ({ runId }: { runId: string }) => {
+      if (generationCache.has(runId)) return generationCache.get(runId)!;
       textCalls++;
       const p = founderDnaFixture().portrait;
       const draft = {
@@ -366,13 +386,15 @@ async function verifyPortrait(
         paymentState: "not_charged",
         metadata: { attemptId: attempt.id },
       });
-      return {
+      const result = {
         attemptId: attempt.id,
         rawResponse,
         responseArtifactId: artifact.id,
         usage: null,
         finishReason: "stop",
       };
+      generationCache.set(runId, result);
+      return result;
     };
     const input = {
       entityId,
@@ -394,6 +416,38 @@ async function verifyPortrait(
       assert.equal(textCalls, 0);
       assert.equal(judgeCalls, 0);
       return;
+    }
+    if (scenario === "interrupted check" || scenario === "interrupted budget") {
+      let decisions = 0;
+      await assert.rejects(
+        runFounderPortrait(store, input, {
+          executeGeneration,
+          executeDecision: async (request) => {
+            if (++decisions === 2)
+              throw new Error(
+                scenario === "interrupted budget"
+                  ? "record not found or state conflict"
+                  : "request already reserved, captured, or uncertain",
+              );
+            return executeDecision(request);
+          },
+        }),
+        /jev_execution_interrupted/,
+      );
+      assert.equal(
+        (
+          await db.query(
+            "SELECT id FROM enrichment_analysis_runs WHERE purpose='founder_portrait'",
+          )
+        ).rows.length,
+        0,
+      );
+      const interrupted = await db.query<{
+        metadata: { judgeExchanges: unknown[] };
+      }>(
+        "SELECT metadata FROM enrichment_artifacts WHERE metadata->>'purpose'='portrait_check_interruption'",
+      );
+      assert.equal(interrupted.rows[0].metadata.judgeExchanges.length, 1);
     }
     const result = await runFounderPortrait(store, input, {
       executeGeneration,
@@ -480,7 +534,7 @@ async function verifyPortrait(
     );
     assert.equal(
       savedIdentity.validation_report.judgeRecipeVersion,
-      "cited-founder-portrait-judge-v4",
+      "cited-founder-portrait-judge-v5",
     );
     if (scenario === "long judge request" || scenario === "maximum profile")
       console.log(
@@ -498,7 +552,7 @@ async function verifyPortrait(
     });
     assert.equal(replay.status, "reused");
     assert.equal(textCalls, 1);
-    assert.equal(judgeCalls, 1);
+    assert.equal(judgeCalls, 3);
     let publicationResult = result;
     if (scenario === "new product") {
       const productId = await store.createEntity("product", "new-product");
@@ -555,7 +609,7 @@ async function verifyPortrait(
       assert.equal(secondReplay.status, "reused");
       assert.equal(secondReplay.analysisId, refreshed.analysisId);
       assert.equal(textCalls, 2);
-      assert.equal(judgeCalls, 2);
+      assert.equal(judgeCalls, 6);
       publicationResult = refreshed;
     }
     await dna.approvePortrait(
@@ -584,7 +638,35 @@ async function verifyPortrait(
     ).rows[0];
     assert.equal(accounting.payment_state, "uncertain");
     assert.equal(accounting.cap_micros, "3000");
+    const checkedRun = (
+      await db.query<{
+        validation_report: {
+          judgeExchanges: {
+            requestArtifactId: string;
+            responseArtifactId: string;
+          }[];
+        };
+      }>("SELECT validation_report FROM enrichment_analysis_runs WHERE id=$1", [
+        publicationResult.analysisId,
+      ])
+    ).rows[0];
+    const captureIds = checkedRun.validation_report.judgeExchanges.flatMap(
+      (exchange) => [exchange.requestArtifactId, exchange.responseArtifactId],
+    );
+    assert.ok(captureIds.length >= 6);
+    if (scenario === "unchanged replay") {
+      await db.query(
+        "INSERT INTO enrichment_artifact_withdrawals(artifact_id,actor,reason) VALUES($1,'test','scoped response withdrawn')",
+        [captureIds.at(-1)],
+      );
+      assert.equal(
+        (await readFounderDnaProfile(db, "example")).status,
+        "hidden",
+      );
+    }
     await store.withdrawArtifact(raw.id, "test", "withdraw");
+    for (const id of captureIds)
+      assert.equal(await store.getArtifact(id), null);
     assert.equal((await readFounderDnaProfile(db, "example")).status, "hidden");
     await assert.rejects(
       runFounderPortrait(store, input, {
@@ -606,5 +688,7 @@ for (const scenario of [
   "long judge request",
   "maximum profile",
   "oversized evidence",
+  "interrupted check",
+  "interrupted budget",
 ] as const)
   test(`retained portrait: ${scenario}`, () => verifyPortrait(scenario));

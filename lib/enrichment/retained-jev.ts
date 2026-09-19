@@ -102,7 +102,11 @@ export function retainedJev(
           contentType: "application/json",
           redactionVersion: "credential-free-request-v1",
           runId: input.runId,
-          metadata: { endpoint: ENDPOINT, recipeVersion: input.recipeVersion },
+          metadata: {
+            endpoint: ENDPOINT,
+            recipeVersion: input.recipeVersion,
+            evidenceIds: input.evidenceIds,
+          },
         });
         requestArtifactId = requestArtifact.id;
         const response = await (config.fetcher ?? fetch)(ENDPOINT, {

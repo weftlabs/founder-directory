@@ -114,7 +114,7 @@ test("operator migration supports an empty database and adds legacy intake when 
     );
     assert.deepEqual(
       versions.rows.map((r) => r.version),
-      [1, 3, 4, 5],
+      [1, 3, 4, 5, 6],
     );
     assert.equal(await migrateOperatorDatabase(db), false);
     await db.query("CREATE TABLE founders(handle text PRIMARY KEY)");

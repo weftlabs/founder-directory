@@ -332,7 +332,12 @@ This command requires `--confirm-write`, `--allow-paid`,
 `ENRICHMENT_ALLOW_PAID=1`, `WEFT_API_KEY`, and `TYPESAFE_AI_API_KEY`
 (`TYPESAGE_AI_API_KEY` and `TYPESAFE_API_KEY` are supported aliases). No environment
 file is loaded. It uses only explicit `ENRICHMENT_DATABASE_URL`. Each new portrait
-uses at most one text-generation call and one Jev call. Repeating the same completed
+uses at most one text-generation call. Judge v5 groups fact checks by exact source
+subset and prose checks by exact cited fact subset, then classifies facets in a
+separate call. A typical profile uses three Jev calls; the maximum is fifteen.
+All request sizes and the planned count are checked before the first judge call.
+A failed fact group stops before prose; a failed prose group stops later groups.
+An operator must also enforce its approved aggregate call limit. Repeating the same completed
 run reuses its saved analysis. Replay identity includes the eligible published
 product analyses and their evidence/relationship references, so a changed product
 publication creates a new portrait run. Product claims remain display inputs and
@@ -341,7 +346,7 @@ retry. An approved aggregate budget bounds the full run; per-call caps do not
 replace that budget.
 
 Generation and judgment have separate version identities. The unchanged v3
-generation recipe keeps its original generation run ID; judge v4 creates a new
+generation recipe keeps its original generation run ID; judge v5 creates a new
 analysis/check ID. To resume checking a retained generation, call the same driver
 with its original input, generation `codeDigest`, approved recipe manifest and
 transport scope/policy/provider/price cap. The generation adapter reuses that
@@ -350,9 +355,13 @@ separately. A generation prompt, model, source or recipe change requires new
 generation provenance; never carry an old digest across such a change.
 
 Direct Jev requests are bounded to 40,000 serialized UTF-8 bytes and reserve the
-full per-call cap. Evidence and common judgment rules appear once. Numeric source
-and fact references preserve exact citation scopes; the retained request and
-validation report keep the mapping. A source-only size check runs before any
+full per-call cap. Each provider request physically contains only the relevant
+source subset; a prose request also contains only its cited facts. Other sources
+cannot influence the scoped judgment. Evidence and common rules appear once per
+request. Numeric references preserve exact citation scopes. The private report's
+`judgeExchanges` retains every request/response ID, scope, question keys, evidence
+IDs and usage estimate, including completed exchanges before a failed check.
+All v5 exchanges must remain retained for a profile to stay visible. A source-only size check runs before any
 generation. The complete generated request is checked again before judging; if it
 does not fit, the failure report retains its byte count and no judge call occurs.
 No evidence is truncated. Arbitrarily long or multibyte inputs are not guaranteed
@@ -361,13 +370,18 @@ Token usage at $0.042 per million input tokens is an estimate, not a settled
 payment receipt. Estimated usage above the cap stops the run after retaining the
 response. Fact checks require `supported`, confidence at least 0.8 and support
 probability at least 0.8. Each fact is checked only against its own cited source
-subset; other sources cannot rescue an unsupported citation. Editorial prose also permits `grounded_editorial` at
-those thresholds, which allows humor without adding factual claims. Each roast
+subset; other sources cannot rescue an unsupported citation. Prose requires `grounded` at the same thresholds. This single positive verdict
+covers both supported factual prose and clearly figurative editorial humor that
+adds no factual claim; unsupported traits remain unacceptable. Each roast
 line is bound to its own fact citations; other displayed prose is bound to the
 portrait's fact citations. The private request and validation report retain the
 clause-to-fact-to-source mapping. Uncited facts or sources cannot support a clause. Every check
 and its probabilities remain in the private validation report. Failed checks do
-not replace a published portrait.
+not replace a published portrait. Infrastructure failures save a private interruption
+manifest with completed exchange provenance, then stop without a terminal analysis.
+An explicit resume can reuse those captures after reconciliation; uncertain
+attempts remain blocked and are never automatically retried. Source withdrawal
+also purges the interruption record and its derived captures.
 
 Portrait approval is separate from the foundation's existing profile publication:
 `portrait-approve --entity UUID --id PORTRAIT_ANALYSIS_UUID --actor NAME
