@@ -3,6 +3,7 @@ import { cache } from "react";
 import { loadFounderDnaProfile } from "@/lib/founder-dna-data";
 import { founderShareMetadata } from "@/lib/founder-share";
 import { FounderDnaProfileView } from "../../founder-dna-profile";
+import { FounderConnections } from "../../founder-connections";
 import Link from "next/link";
 import { SiteHeader } from "../../site-header";
 import { notFound } from "next/navigation";
@@ -68,7 +69,18 @@ export default async function ProfilePage({
   const { handle } = await params;
   const dna = await readDnaProfile(handle);
   if (dna.status === "ready")
-    return <FounderDnaProfileView profile={dna.profile} />;
+    return (
+      <FounderDnaProfileView
+        profile={dna.profile}
+        connections={
+          <FounderConnections
+            connections={dna.profile.connections}
+            founderId={dna.profile.id}
+            revision={dna.profile.revision}
+          />
+        }
+      />
+    );
   if (dna.status === "unavailable")
     return (
       <>
