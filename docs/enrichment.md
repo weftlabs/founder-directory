@@ -329,7 +329,10 @@ This command requires `--confirm-write`, `--allow-paid`,
 (`TYPESAGE_AI_API_KEY` and `TYPESAFE_API_KEY` are supported aliases). No environment
 file is loaded. It uses only explicit `ENRICHMENT_DATABASE_URL`. Each new portrait
 uses at most one text-generation call and one Jev call. Repeating the same completed
-run reuses its saved analysis. Failed or uncertain dispatches have no automatic
+run reuses its saved analysis. Replay identity includes the eligible published
+product analyses and their evidence/relationship references, so a changed product
+publication creates a new portrait run. Product claims remain display inputs and
+are not supplied as personal evidence to the generator or judge. Failed or uncertain dispatches have no automatic
 retry. An approved aggregate budget bounds the full run; per-call caps do not
 replace that budget.
 
@@ -337,7 +340,8 @@ Direct Jev requests are bounded to 40,000 bytes and reserve the full per-call ca
 Token usage at $0.042 per million input tokens is an estimate, not a settled
 payment receipt. Estimated usage above the cap stops the run after retaining the
 response. Fact checks require `supported`, confidence at least 0.8 and support
-probability at least 0.8. Editorial prose also permits `grounded_editorial` at
+probability at least 0.8. Each fact is checked only against its own cited source
+subset; other sources cannot rescue an unsupported citation. Editorial prose also permits `grounded_editorial` at
 those thresholds, which allows humor without adding factual claims. Every check
 and its probabilities remain in the private validation report. Failed checks do
 not replace a published portrait.

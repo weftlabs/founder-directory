@@ -6,6 +6,7 @@ import {
   canonicalJson,
   type AnalysisRecipe,
   type EvidenceInput,
+  type JsonValue,
 } from "./contracts";
 import {
   generationContent,
@@ -28,7 +29,7 @@ import {
 import { safeHttpUrl } from "../model";
 import { productCard } from "../products";
 export const MIN_PORTRAIT_SUPPORT = 0.8;
-export const PORTRAIT_RECIPE_VERSION = "checked-founder-portrait-v1";
+export const PORTRAIT_RECIPE_VERSION = "checked-founder-portrait-v2";
 const str = { type: "string" };
 const strings = { type: "array", items: str };
 const obj = (properties: Record<string, unknown>) => ({
@@ -158,6 +159,33 @@ export async function runFounderPortrait(
     )
   ).rows[0];
   if (!sourceAnalysis) throw new Error("founder_analysis_unavailable");
+  const savedProducts = (
+    await store.db.query<{
+      id: string;
+      output: {
+        claims: {
+          field: string;
+          value: JsonValue;
+          kind: string;
+          state: string;
+        }[];
+      };
+      website: string | null;
+      evidenceIds: string[];
+      relationshipEvidenceIds: string[];
+    }>(
+      `SELECT DISTINCT a.id,a.output,a.evidence_ids AS "evidenceIds",
+      ARRAY(SELECT link.evidence_id::text FROM enrichment_founder_products link WHERE link.founder_id=$1 AND link.product_id=a.entity_id AND founder_dna_sources_eligible(jsonb_build_array(link.evidence_id::text)) ORDER BY link.evidence_id) AS "relationshipEvidenceIds",
+      (SELECT min(e.source_url) FROM enrichment_evidence e WHERE a.evidence_ids @> jsonb_build_array(e.id::text) AND e.payload->>'sourceKind'='product-site') AS website
+      FROM enrichment_founder_products relation JOIN enrichment_entities product ON product.id=relation.product_id AND product.status='active'
+      JOIN enrichment_profiles published ON published.entity_id=product.id JOIN enrichment_eligible_analyses a ON a.id=published.analysis_id AND a.entity_id=product.id AND a.purpose='product_descriptions' AND a.status='succeeded'
+      JOIN enrichment_releases r ON r.id=a.release_id AND r.status='approved'
+      WHERE relation.founder_id=$1 AND founder_dna_sources_eligible(a.evidence_ids) AND founder_dna_sources_eligible(jsonb_build_array(relation.evidence_id::text)) ORDER BY a.id LIMIT 12`,
+      [input.entityId],
+    )
+  ).rows;
+  // Published product identity is part of replay identity, but product claims are
+  // not supplied as personal evidence to the portrait generator or judge.
   const prepared = prepareAnalysis({
     entityId: input.entityId,
     releaseId: input.releaseId,
@@ -165,7 +193,11 @@ export async function runFounderPortrait(
     recipe,
     evidence,
     requiredEvidenceIds: input.evidenceIds,
-    upstreamOutputs: [],
+    upstreamOutputs: savedProducts.map((product) => ({
+      id: product.id,
+      contentHash: stableDigest(product),
+      output: { ...product },
+    })),
     context: [],
     messages: renderAnalysisMessages({
       entityId: input.entityId,
@@ -281,28 +313,6 @@ export async function runFounderPortrait(
       url: e.sourceUrl!,
       excerpt: e.text.slice(0, 2400),
     }));
-    const savedProducts = (
-      await store.db.query<{
-        id: string;
-        output: {
-          claims: {
-            field: string;
-            value: unknown;
-            kind: string;
-            state: string;
-          }[];
-        };
-        website: string | null;
-      }>(
-        `SELECT DISTINCT a.id,a.output,
-      (SELECT min(e.source_url) FROM enrichment_evidence e WHERE a.evidence_ids @> jsonb_build_array(e.id::text) AND e.payload->>'sourceKind'='product-site') AS website
-      FROM enrichment_founder_products relation JOIN enrichment_entities product ON product.id=relation.product_id AND product.status='active'
-      JOIN enrichment_profiles published ON published.entity_id=product.id JOIN enrichment_eligible_analyses a ON a.id=published.analysis_id AND a.entity_id=product.id AND a.purpose='product_descriptions' AND a.status='succeeded'
-      JOIN enrichment_releases r ON r.id=a.release_id AND r.status='approved'
-      WHERE relation.founder_id=$1 AND founder_dna_sources_eligible(a.evidence_ids) AND founder_dna_sources_eligible(jsonb_build_array(relation.evidence_id::text)) ORDER BY a.id LIMIT 12`,
-        [input.entityId],
-      )
-    ).rows;
     const products = savedProducts.map((product) => {
       const fields = Object.fromEntries(
         product.output.claims.map((c) => [c.field, c]),
@@ -367,6 +377,31 @@ export async function runFounderPortrait(
       evidence: founderEvidence,
       claims: facts.map((f) => ({ text: f.text })),
     });
+    const claimScopes = facts.map((fact) => ({
+      text: fact.text,
+      sourceIds: fact.sourceIds,
+      evidence: founderEvidence.filter((source) =>
+        fact.sourceIds.includes(source.id),
+      ),
+    }));
+    decisionRequest.state = canonicalJson({
+      ...JSON.parse(decisionRequest.state),
+      claims: claimScopes,
+    });
+    facts.forEach((fact, index) => {
+      const question = decisionRequest.questions[`claim_${index}`];
+      question.instructions += ` For this claim use only state.claims[${index}].evidence, the exact cited source subset ${JSON.stringify(fact.sourceIds)}. Do not use the general evidence pool, other claims, or other claims' sources to support or contradict it. If this cited subset cannot establish the whole claim, answer unsupported even if an uncited source could support it.`;
+      question.criteria.supported =
+        "Only this claim's cited evidence explicitly supports all material parts, qualifiers and tense of the claim.";
+      question.criteria.contradicted =
+        "This claim's cited evidence explicitly conflicts with a material part of the claim.";
+    });
+    validation = {
+      ...validation,
+      claimCitations: Object.fromEntries(
+        facts.map((fact) => [fact.id, fact.sourceIds]),
+      ),
+    };
     const prose = [
       profile.portrait.archetype.title,
       profile.portrait.archetype.kicker,

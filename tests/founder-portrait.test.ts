@@ -18,7 +18,9 @@ import { stableDigest } from "../lib/enrichment/contracts";
 import { founderDnaFixture } from "./fixtures/founder-dna";
 import { readFounderDnaProfile } from "../lib/founder-dna-data";
 import { MODEL, type Request } from "../lib/typesafe-poc";
-test("retained evidence generates a checked no-product portrait and unchanged replay makes zero calls", async () => {
+async function verifyPortrait(
+  scenario: "unchanged replay" | "wrong citation" | "new product",
+) {
   const pg = new PGlite();
   const adapt = (client: Pick<PGlite, "query" | "exec">): Sql => ({
     async query<T>(sql: string, values?: unknown[]) {
@@ -68,6 +70,16 @@ test("retained evidence generates a checked no-product portrait and unchanged re
       sourceUrl: "https://example.com/alex",
     });
     await store.linkEvidence(entityId, evidenceId, "bio");
+    const wrongEvidenceId = await store.addEvidence({
+      artifactId: raw.id,
+      extractorVersion: "v1",
+      locator: "location",
+      excerpt: "Lives in Zurich.",
+      payload: {},
+      sourceUrl: "https://example.com/location",
+    });
+    await store.linkEvidence(entityId, wrongEvidenceId, "bio");
+    const selectedEvidenceIds = [evidenceId, wrongEvidenceId];
     const releaseId = await store.createRelease({
       stages: ["founder_dna", "founder_portrait"],
       recipes: { founder_portrait: stableDigest(recipe) },
@@ -86,7 +98,7 @@ test("retained evidence generates a checked no-product portrait and unchanged re
       inputArtifactId: raw.id,
       inputDigest: "synthetic",
       recipeDigest: "synthetic",
-      evidenceIds: [evidenceId],
+      evidenceIds: selectedEvidenceIds,
       output: {},
       validationReport: {},
       status: "succeeded",
@@ -117,13 +129,28 @@ test("retained evidence generates a checked no-product portrait and unchanged re
       fetcher: async (_url, init) => {
         judgeCalls++;
         const request = JSON.parse(String(init?.body)) as Request;
+        const state = JSON.parse(request.state);
+        // The mock judge uses the claim's own cited scope, not other evidence in the state.
+        const claim = state.claims[0];
+        assert.equal(typeof claim, "object");
+        const claimSupported = claim.sourceIds.includes(evidenceId);
+        assert.deepEqual(
+          claim.evidence.map((e: { id: string }) => e.id),
+          claim.sourceIds,
+        );
+        assert.match(
+          request.questions.claim_0.instructions,
+          /only.*claims\[0\]\.evidence/i,
+        );
         return new Response(
           JSON.stringify({
             model: MODEL,
             answers: Object.fromEntries(
               Object.entries(request.questions).map(([key, q]) => {
                 const choice = key.startsWith("claim_")
-                  ? "supported"
+                  ? claimSupported
+                    ? "supported"
+                    : "unsupported"
                   : key.startsWith("prose_")
                     ? "grounded_editorial"
                     : "unknown";
@@ -161,7 +188,9 @@ test("retained evidence generates a checked no-product portrait and unchanged re
           {
             id: "fact-design",
             text: "Alex describes design work.",
-            evidenceIds: [evidenceId],
+            evidenceIds: [
+              scenario === "wrong citation" ? wrongEvidenceId : evidenceId,
+            ],
           },
         ],
       };
@@ -202,7 +231,7 @@ test("retained evidence generates a checked no-product portrait and unchanged re
       founderAnalysisId,
       releaseId,
       generation: 0,
-      evidenceIds: [evidenceId],
+      evidenceIds: selectedEvidenceIds,
       model,
       codeDigest: "test",
     };
@@ -210,6 +239,22 @@ test("retained evidence generates a checked no-product portrait and unchanged re
       executeGeneration,
       executeDecision,
     });
+    if (scenario === "wrong citation") {
+      assert.equal(result.status, "failed");
+      assert.equal(result.output, null);
+      const saved = await db.query<{ validation_report: { error: string } }>(
+        "SELECT validation_report FROM enrichment_analysis_runs WHERE id=$1",
+        [result.analysisId],
+      );
+      assert.equal(
+        saved.rows[0].validation_report.error,
+        "portrait_fact_not_supported",
+      );
+      await assert.rejects(
+        dna.approvePortrait(entityId, result.analysisId, "reviewer"),
+      );
+      return;
+    }
     assert.equal(result.status, "succeeded");
     assert.equal(result.output?.profile.name, "Alex Example");
     assert.deepEqual(result.output?.profile.products, []);
@@ -224,7 +269,70 @@ test("retained evidence generates a checked no-product portrait and unchanged re
     assert.equal(replay.status, "reused");
     assert.equal(textCalls, 1);
     assert.equal(judgeCalls, 1);
-    await dna.approvePortrait(entityId, result.analysisId, "reviewer");
+    let publicationResult = result;
+    if (scenario === "new product") {
+      const productId = await store.createEntity("product", "new-product");
+      await store.linkEvidence(productId, evidenceId, "product");
+      await db.query(
+        "INSERT INTO enrichment_founder_products(founder_id,product_id,evidence_id) VALUES($1,$2,$3)",
+        [entityId, productId, evidenceId],
+      );
+      const productAnalysis = await store.saveAnalysis({
+        entityId: productId,
+        releaseId,
+        generation: 0,
+        purpose: "product_descriptions",
+        inputArtifactId: raw.id,
+        inputDigest: "product",
+        recipeDigest: "product",
+        evidenceIds: [evidenceId],
+        output: {
+          claims: [
+            {
+              field: "name",
+              value: "New scheduling tool",
+              kind: "publisher_statement",
+              state: "supported",
+            },
+          ],
+        },
+        validationReport: {},
+        status: "succeeded",
+      });
+      await db.query(
+        "INSERT INTO enrichment_profiles(entity_id,analysis_id) VALUES($1,$2)",
+        [productId, productAnalysis],
+      );
+      const refreshed = await runFounderPortrait(store, input, {
+        executeGeneration,
+        executeDecision,
+      });
+      assert.equal(refreshed.status, "succeeded");
+      assert.notEqual(refreshed.analysisId, result.analysisId);
+      assert.equal(refreshed.output?.profile.products.length, 1);
+      assert.notEqual(
+        refreshed.output?.profile.sourceRevision,
+        result.output?.profile.sourceRevision,
+      );
+      const secondReplay = await runFounderPortrait(store, input, {
+        executeGeneration: async () => {
+          throw new Error("unexpected generation");
+        },
+        executeDecision: async () => {
+          throw new Error("unexpected decision");
+        },
+      });
+      assert.equal(secondReplay.status, "reused");
+      assert.equal(secondReplay.analysisId, refreshed.analysisId);
+      assert.equal(textCalls, 2);
+      assert.equal(judgeCalls, 2);
+      publicationResult = refreshed;
+    }
+    await dna.approvePortrait(
+      entityId,
+      publicationResult.analysisId,
+      "reviewer",
+    );
     await dna.createRelease({
       id: "pilot",
       expectedProfiles: 1,
@@ -234,7 +342,7 @@ test("retained evidence generates a checked no-product portrait and unchanged re
       releaseId: "pilot",
       entityId,
       analysisId: founderAnalysisId,
-      portraitAnalysisId: result.analysisId,
+      portraitAnalysisId: publicationResult.analysisId,
     });
     await dna.validateRelease("pilot");
     await dna.activateRelease("pilot");
@@ -249,10 +357,19 @@ test("retained evidence generates a checked no-product portrait and unchanged re
     await store.withdrawArtifact(raw.id, "test", "withdraw");
     assert.equal((await readFounderDnaProfile(db, "example")).status, "hidden");
     await assert.rejects(
-      runFounderPortrait(store, input, { executeGeneration, executeDecision }),
+      runFounderPortrait(store, input, {
+        executeGeneration,
+        executeDecision,
+      }),
       /unavailable/,
     );
   } finally {
     await pg.close();
   }
-});
+}
+for (const scenario of [
+  "unchanged replay",
+  "wrong citation",
+  "new product",
+] as const)
+  test(`retained portrait: ${scenario}`, () => verifyPortrait(scenario));
