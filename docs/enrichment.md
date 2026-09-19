@@ -307,3 +307,55 @@ entities return no profile. Unimported rows retain their existing display.
 The flag does not collect a new tweet or establish historical certainty for a
 legacy snapshot. It does not change map or directory-list suppression behavior.
 Verify broader deletion and backup replay separately before production rollout.
+
+## Checked Founder DNA portraits
+
+The portrait driver uses saved evidence and the existing generation transport.
+It does not collect sources or require a product. Before a run, add
+`founder_portrait: stableDigest(founderPortraitRecipe(model, codeDigest))` to the
+execution release's `recipes`, save its evaluation, approve the release and
+promote the target generation through the normal release workflow.
+
+Run `scripts/enrichment.ts portrait` with `--file INPUT.json`, `--policy` for
+text generation, `--jev-policy` for `typesafe-systemone`, a shared `--budget`,
+`--max-cost` in USD for generation, and `--jev-cap-micros` for direct Jev. The
+input contains `entityId`, the eligible `founderAnalysisId`, `releaseId`, target
+`generation`, one to six retained `evidenceIds`, `model` (provider/model/revision),
+and `codeDigest`. Both policies must use the same scope. Inputs, policies and
+provider responses are private operator data, never public profile JSON.
+
+This command requires `--confirm-write`, `--allow-paid`,
+`ENRICHMENT_ALLOW_PAID=1`, `WEFT_API_KEY`, and `TYPESAFE_AI_API_KEY`
+(`TYPESAGE_AI_API_KEY` and `TYPESAFE_API_KEY` are supported aliases). No environment
+file is loaded. It uses only explicit `ENRICHMENT_DATABASE_URL`. Each new portrait
+uses at most one text-generation call and one Jev call. Repeating the same completed
+run reuses its saved analysis. Failed or uncertain dispatches have no automatic
+retry. An approved aggregate budget bounds the full run; per-call caps do not
+replace that budget.
+
+Direct Jev requests are bounded to 40,000 bytes and reserve the full per-call cap.
+Token usage at $0.042 per million input tokens is an estimate, not a settled
+payment receipt. Estimated usage above the cap stops the run after retaining the
+response. Fact checks require `supported`, confidence at least 0.8 and support
+probability at least 0.8. Editorial prose also permits `grounded_editorial` at
+those thresholds, which allows humor without adding factual claims. Every check
+and its probabilities remain in the private validation report. Failed checks do
+not replace a published portrait.
+
+Portrait approval is separate from the foundation's existing profile publication:
+`portrait-approve --entity UUID --id PORTRAIT_ANALYSIS_UUID --actor NAME
+--confirm-write`. It approves a saved successful portrait for staging only. The
+`DnaPublicationStore` stages profiles from retained analysis output, validates
+counts, source eligibility and hashes, then activates one data-release pointer
+atomically. It never accepts an operator-authored display profile. Connections
+are separate accepted retained decisions and disappear if either endpoint becomes
+ineligible. Rollback revalidates the prior data release before restoring its pointer.
+
+The web reader is off unless `FOUNDER_DNA_ENABLED=1`. It requires
+`FOUNDER_DNA_DATABASE_URL`; it never falls back to `DATABASE_URL`. Use
+`FOUNDER_DNA_DATABASE_TRANSPORT=postgres` for an explicitly selected local PostgreSQL
+instance; the default transport is Neon. Missing configuration or reader errors
+return `unavailable`. Hidden and not-found outcomes remain distinct from disabled.
+Only sanitized public fields cross the reader boundary; raw responses, prompts,
+cost data and evaluations remain private. Expired, withdrawn or purged evidence,
+withdrawn model captures, suppression and stale analysis references fail closed.

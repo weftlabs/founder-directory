@@ -74,3 +74,18 @@ test("local embedding configuration can be generated without a database", async 
     console.log = original;
   }
 });
+
+test("portrait generation is gated before input reads or database access", async () => {
+  await assert.rejects(
+    main(["portrait"]),
+    /explicit_write_confirmation_required/,
+  );
+  await assert.rejects(
+    main(["portrait", "--confirm-write"]),
+    /paid_portrait_not_enabled/,
+  );
+  await assert.rejects(
+    main(["portrait-approve"]),
+    /explicit_write_confirmation_required/,
+  );
+});
