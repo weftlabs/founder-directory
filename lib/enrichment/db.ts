@@ -55,21 +55,32 @@ export function postgresDatabase(
 }
 
 export async function migrateEnrichment(db: Database): Promise<void> {
-  const sql = await readFile(
-    new URL("../../migrations/001_enrichment.sql", import.meta.url),
-    "utf8",
-  );
+  const migrations = [
+    [1, "001_enrichment.sql"],
+    [3, "003_founder_dna.sql"],
+  ] as const;
   await db.transaction(async (tx) => {
     await tx.query("SELECT pg_advisory_xact_lock(73422001)");
     await tx.query(
       "CREATE TABLE IF NOT EXISTS enrichment_migrations (version integer PRIMARY KEY, installed_at timestamptz NOT NULL DEFAULT now())",
     );
-    const applied = await tx.query(
-      "SELECT version FROM enrichment_migrations WHERE version = 1",
-    );
-    if (!applied.rows.length) {
-      await tx.query(sql);
-      await tx.query("INSERT INTO enrichment_migrations(version) VALUES (1)");
+    for (const [version, file] of migrations) {
+      const applied = await tx.query(
+        "SELECT version FROM enrichment_migrations WHERE version=$1",
+        [version],
+      );
+      if (!applied.rows.length) {
+        await tx.query(
+          await readFile(
+            new URL(`../../migrations/${file}`, import.meta.url),
+            "utf8",
+          ),
+        );
+        await tx.query(
+          "INSERT INTO enrichment_migrations(version) VALUES ($1)",
+          [version],
+        );
+      }
     }
   });
 }
