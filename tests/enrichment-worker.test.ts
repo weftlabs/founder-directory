@@ -594,6 +594,21 @@ test("explicit no-product evidence completes with N/A; unknown and protected pro
           .length,
         0,
       );
+      if (!options.protected) {
+        assert.equal(
+          states.find((row) => row.stage === "embeddings")?.status,
+          "succeeded",
+        );
+        assert.equal(
+          (
+            await f.db.query(
+              "SELECT * FROM enrichment_analysis_embeddings WHERE entity_id=$1 AND purpose='founder_dna'",
+              [founder],
+            )
+          ).rows.length,
+          1,
+        );
+      }
     } finally {
       await f.pg.close();
     }

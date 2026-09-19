@@ -8,12 +8,22 @@ import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import { postgresDatabase, migrateEnrichment } from "../lib/enrichment/db";
+import {
+  postgresDatabase,
+  migrateEnrichment,
+  type Database,
+} from "../lib/enrichment/db";
 import { EnrichmentStore } from "../lib/enrichment/store";
 import {
   installLegacyIntake,
   importLegacyIntake,
 } from "../lib/enrichment/legacy";
+import { DnaPublicationStore } from "../lib/enrichment/dna-store";
+import {
+  runFounderPortrait,
+  type RunFounderPortraitInput,
+} from "../lib/enrichment/founder-portrait";
+import { retainedJev } from "../lib/enrichment/retained-jev";
 import { runAnalysis } from "../lib/enrichment/analysis";
 import { weftGeneration, generationRoute } from "../lib/enrichment/generation";
 import {
@@ -46,6 +56,8 @@ const HELP = `Enrichment operator commands (no environment files are loaded)
   budget-create --scope NAME --cap-micros INTEGER --confirm-write
   analyze --file INPUT.json --policy POLICY.json --budget UUID --max-cost USD --allow-paid --confirm-write
   worker --file WORKER_CONFIG.json --scope NAME --mode acquire|rederive [--limit 25] [--lease-seconds 900] --allow-paid --confirm-write
+  portrait --file INPUT.json --policy POLICY.json --jev-policy POLICY.json --budget UUID --max-cost USD --jev-cap-micros INTEGER --allow-paid --confirm-write
+  portrait-approve --entity UUID --id PORTRAIT_ANALYSIS_UUID --actor NAME --confirm-write
   publish --id ANALYSIS_UUID --confirm-write
 
 Set ENRICHMENT_DATABASE_URL explicitly. This tool never falls back to DATABASE_URL.
@@ -54,6 +66,8 @@ Release-template reads configuration and prints a manifest; no database or paid 
 Migrate installs additive tables and a no-spend intake trigger on an existing founders table.
 Analyze uses saved evidence in INPUT.json. It never recollects sources.
 Paid model calls also require WEFT_API_KEY and ENRICHMENT_ALLOW_PAID=1.
+Portrait uses retained founder evidence, one generation and one direct Jev check; it never publishes automatically.
+Portrait additionally requires TYPESAFE_AI_API_KEY (TYPESAGE_AI_API_KEY is supported).
 Approval requires a saved evaluation artifact; no default release is auto-approved.
 Worker imports bounded intake, reconciles durable targets and processes at most --limit stages.
 Re-derive never collects sources; model and embedding calls still need a budget.
@@ -198,6 +212,16 @@ function boundedInteger(
   return result;
 }
 
+export async function migrateOperatorDatabase(db: Database): Promise<boolean> {
+  await migrateEnrichment(db);
+  const founders = await db.query<{ present: boolean }>(
+    "SELECT to_regclass('public.founders') IS NOT NULL AS present",
+  );
+  if (!founders.rows[0]?.present) return false;
+  await installLegacyIntake(db);
+  return true;
+}
+
 export async function main(args = process.argv.slice(2)) {
   const command = args[0];
   if (!command || command === "--help" || command === "help") {
@@ -228,11 +252,25 @@ export async function main(args = process.argv.slice(2)) {
       "analyze",
       "worker",
       "publish",
+      "portrait",
+      "portrait-approve",
     ].includes(command)
   )
     throw new Error("unknown_command");
   if (command !== "inventory" && !args.includes("--confirm-write"))
     throw new Error("explicit_write_confirmation_required");
+  const jevKey =
+    process.env.TYPESAFE_AI_API_KEY ||
+    process.env.TYPESAGE_AI_API_KEY ||
+    process.env.TYPESAFE_API_KEY;
+  if (
+    command === "portrait" &&
+    (!args.includes("--allow-paid") ||
+      process.env.ENRICHMENT_ALLOW_PAID !== "1" ||
+      !process.env.WEFT_API_KEY ||
+      !jevKey)
+  )
+    throw new Error("paid_portrait_not_enabled");
   let worker:
     | {
         file: WorkerFile;
@@ -282,11 +320,13 @@ export async function main(args = process.argv.slice(2)) {
         );
         break;
       }
-      case "migrate":
-        await migrateEnrichment(db);
-        await installLegacyIntake(db);
-        console.log("Additive migrations applied; no source or model calls.");
+      case "migrate": {
+        const legacyInstalled = await migrateOperatorDatabase(db);
+        console.log(
+          `Additive migrations applied; legacy intake ${legacyInstalled ? "installed" : "skipped (no founders table)"}; no source or model calls.`,
+        );
         break;
+      }
       case "release-create":
         console.log(
           await store.createRelease(await jsonFile(argument(args, "--file"))),
@@ -386,6 +426,66 @@ export async function main(args = process.argv.slice(2)) {
         );
         break;
       }
+      case "portrait": {
+        const input = await jsonFile<RunFounderPortraitInput>(
+          argument(args, "--file"),
+        );
+        const policy = await jsonFile<CollectionInput["policy"]>(
+          argument(args, "--policy"),
+        );
+        const jevPolicy = await jsonFile<CollectionInput["policy"]>(
+          argument(args, "--jev-policy"),
+        );
+        if (policy.scope !== jevPolicy.scope)
+          throw new Error("portrait_policy_scope_mismatch");
+        const budgetId = argument(args, "--budget");
+        const capMicros = argument(args, "--jev-cap-micros");
+        if (!/^[1-9][0-9]*$/.test(capMicros))
+          throw new Error("invalid_jev_cap");
+        const enabled = () => process.env.ENRICHMENT_ALLOW_PAID === "1";
+        const result = await runFounderPortrait(store, input, {
+          executeGeneration: weftGeneration(
+            store,
+            boundedWeftClient(
+              process.env.WEFT_API_KEY!,
+              WORKER_WEFT_TIMEOUT_MS,
+            ),
+            {
+              scope: policy.scope,
+              budgetId,
+              maxCostUsd: argument(args, "--max-cost"),
+              policy,
+              enabled,
+            },
+          ),
+          executeDecision: retainedJev(store, {
+            scope: policy.scope,
+            budgetId,
+            capMicros,
+            policy: jevPolicy,
+            mode: "acquire",
+            enabled,
+            apiKey: jevKey,
+          }),
+        });
+        console.log(
+          JSON.stringify({
+            status: result.status,
+            analysisId: result.analysisId,
+          }),
+        );
+        break;
+      }
+      case "portrait-approve":
+        await new DnaPublicationStore(db).approvePortrait(
+          argument(args, "--entity"),
+          argument(args, "--id"),
+          argument(args, "--actor"),
+        );
+        console.log(
+          "Portrait approved for staging; active data release unchanged.",
+        );
+        break;
       case "worker": {
         if (!worker) throw new Error("worker_configuration_missing");
         const intake = await importLegacyIntake(db, worker.scope, worker.limit);

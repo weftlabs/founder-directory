@@ -656,11 +656,9 @@ export function createStageHandlers(
         if (!dependencies.embedding || !dependencies.embed)
           return { status: "blocked", reason: "embeddings_not_configured" };
         const products = await discoveredProducts(work);
-        if (products === null)
-          return { status: "unavailable", reason: "product_ownership_unknown" };
         const subjects = [
           { id: work.entityId, purpose: "founder_dna" },
-          ...products.map((product) => ({
+          ...(products ?? []).map((product) => ({
             id: product.id,
             purpose: "product_descriptions",
           })),
@@ -671,7 +669,10 @@ export function createStageHandlers(
             { ...work, entityId: subject.id },
             subject.purpose,
           );
-          if (!analysis) throw new Error("embedding_analysis_missing");
+          if (!analysis) {
+            if (subject.purpose === "product_descriptions") continue;
+            throw new Error("embedding_analysis_missing");
+          }
           const fields =
             subject.purpose === "founder_dna"
               ? ["summary", "craft", "working_style", "interests"]
