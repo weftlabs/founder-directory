@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { readFile } from "node:fs/promises";
+import { fitShareName, fitShareRoast } from "../lib/founder-share-layout";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { founderDnaFixture } from "./fixtures/founder-dna";
@@ -92,4 +94,29 @@ test("two personal cards render distinct real PNGs offline, including long and m
   }
   assert.equal(buffers[0].equals(buffers[1]), false);
   assert.ok(clipShareText("🧑‍💻", 20, "@example").includes("@example"));
+});
+
+test("wide valid roasts have measured lines and an explicit truncation marker", async () => {
+  const font = await readFile(
+    "node_modules/@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-700-normal.woff",
+  );
+  const text = "WWW ".repeat(95) + "END";
+  const layout = fitShareRoast(text, font);
+  const unbroken = fitShareRoast("W".repeat(380) + "END", font);
+  assert.ok(unbroken.lines.at(-1)?.endsWith("..."));
+  assert.ok(unbroken.lineWidths.every((width) => width <= 1088));
+  assert.ok(fitShareName("W".repeat(200), font, "@example").endsWith("..."));
+  assert.equal(layout.truncated, true);
+  assert.ok(layout.lines.at(-1)?.endsWith("..."));
+  assert.ok(layout.lines.length * layout.lineHeight <= 340);
+  assert.ok(layout.lineWidths.every((width) => width <= 1088));
+  const profile = founderDnaFixture();
+  profile.portrait.roast.lines[0].text = text;
+  const html = renderToStaticMarkup(
+    createElement(FounderDnaProfileView, { profile }),
+  );
+  assert.ok(html.includes(text));
+  const short = fitShareRoast("A short roast with its END", font);
+  assert.equal(short.truncated, false);
+  assert.ok(short.lines.at(-1)?.endsWith("END"));
 });

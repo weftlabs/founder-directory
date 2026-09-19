@@ -107,7 +107,10 @@ large-image social metadata with the canonical profile URL. The image URL carrie
 the profile revision; stale revisions and hidden profiles return no image. Image
 responses use `no-store`. The renderer uses a bundled Latin font and initials, so
 it makes no remote image or font requests. Unsupported glyphs are normalized or
-use a handle fallback in the image; the HTML preserves the original text.
+use a handle fallback in the image; the HTML preserves the original text. Long
+roasts and names are fitted using the bundled font’s measured advance widths.
+When a roast needs shortening, the card shows an ellipsis and points to the full
+text on the profile.
 
 The share control lets visitors edit and copy a draft with the profile link, or
 download its image. Optional analytics record profile views, successful copies,
