@@ -7,6 +7,9 @@ Code deployment and data activation are separate operations.
 `lib/enrichment/dna-bundle.ts` exports one release and its retained dependencies:
 source bytes, evidence and owner links, approved analyses, approval artifacts,
 product ownership references, portrait approvals and published edge decisions.
+For v5 portrait judgments, every scoped judge request and response is required.
+The singular compatibility IDs do not replace the full exchange list. Earlier
+v3/v4 judgments retain their singular captures.
 It does not export the whole database, worker queue, active pointer or suppression
 state. Bundles are private. Never commit them, publish them, or place them in
 `public/`. The export command creates a new file with mode `0600` and will not
