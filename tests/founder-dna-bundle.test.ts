@@ -56,7 +56,12 @@ async function retainIdentity(db: Database, entity: string, authorId: string) {
   });
   await store.linkEvidence(entity, evidence, "profile_source");
 }
-async function seed(db: Database, withProduct = false, handle = "example") {
+async function seed(
+  db: Database,
+  withProduct = false,
+  handle = "example",
+  judgeRecipeVersion?: string,
+) {
   const store = new EnrichmentStore(db),
     dna = new DnaPublicationStore(db);
   const entity = await store.createEntity("founder", handle);
@@ -119,6 +124,30 @@ async function seed(db: Database, withProduct = false, handle = "example") {
   profile.portrait.analysisId = portrait;
   profile.sources[0].id = evidence;
   profile.facts[0].sourceIds = [evidence];
+  const judgeExchanges = [];
+  if (judgeRecipeVersion === "cited-founder-portrait-judge-v5") {
+    for (const scope of ["facts:synthetic", "prose:synthetic"]) {
+      const captures = [];
+      for (const side of ["request", "response"]) {
+        const capture = await store.putArtifact({
+          kind: "generation_response",
+          body: Buffer.from(JSON.stringify({ scope, side })),
+          contentType: "application/json",
+          redactionVersion: "none",
+          importBatch: "synthetic-judge-v5",
+        });
+        captures.push(capture.id);
+      }
+      judgeExchanges.push({
+        requestArtifactId: captures[0],
+        responseArtifactId: captures[1],
+        scope,
+        estimatedCostMicros: 1,
+        evidenceIds: [evidence],
+        questionKeys: ["synthetic"],
+      });
+    }
+  }
   for (const [id, purpose, output] of [
     [analysis, "founder_dna", {}],
     [portrait, "founder_portrait", { profile }],
@@ -137,8 +166,12 @@ async function seed(db: Database, withProduct = false, handle = "example") {
       validationReport: {
         checksPassed: true,
         generationResponseArtifactId: retained.id,
-        judgeRequestArtifactId: retained.id,
-        judgeResponseArtifactId: retained.id,
+        judgeRequestArtifactId:
+          judgeExchanges[0]?.requestArtifactId ?? retained.id,
+        judgeResponseArtifactId:
+          judgeExchanges[0]?.responseArtifactId ?? retained.id,
+        ...(judgeRecipeVersion ? { judgeRecipeVersion } : {}),
+        ...(judgeExchanges.length ? { judgeExchanges } : {}),
         productAnalysisIds: productAnalysis ? [productAnalysis] : [],
       },
       status: "succeeded",
@@ -548,5 +581,119 @@ test("stage rejects an unverified cross-ID handle match before any mutation", as
   } finally {
     await src.pg.close();
     await dst.pg.close();
+  }
+});
+
+test("v5 bundles retain every scoped judge capture and reject incomplete exchanges before writes", async () => {
+  const src = await database(),
+    dst = await database();
+  try {
+    await seed(src.db, false, "example", "cited-founder-portrait-judge-v5");
+    const bundle = await exportDnaBundle(src.db, "release-one");
+    const portrait = bundle.rows.enrichment_analysis_runs.find(
+      (row) => row.purpose === "founder_portrait",
+    )!;
+    const report = portrait.validation_report as {
+      judgeExchanges: {
+        requestArtifactId: string;
+        responseArtifactId: string;
+      }[];
+    };
+    assert.equal(report.judgeExchanges.length, 2);
+    for (const exchange of report.judgeExchanges)
+      for (const id of [
+        exchange.requestArtifactId,
+        exchange.responseArtifactId,
+      ])
+        assert.ok(
+          bundle.rows.enrichment_artifacts.some((row) => row.id === id),
+        );
+
+    for (const id of [
+      report.judgeExchanges[1].requestArtifactId,
+      report.judgeExchanges[1].responseArtifactId,
+    ]) {
+      const incomplete = structuredClone(bundle);
+      incomplete.rows.enrichment_artifacts =
+        incomplete.rows.enrichment_artifacts.filter((row) => row.id !== id);
+      incomplete.manifest.counts.enrichment_artifacts--;
+      incomplete.manifest.rowsHash = stableDigest(incomplete.rows);
+      incomplete.hash = stableDigest({
+        manifest: incomplete.manifest,
+        rows: incomplete.rows,
+      });
+      assert.throws(
+        () => parseDnaBundle(incomplete),
+        /bundle_dependency_missing/,
+      );
+      await assert.rejects(
+        stageDnaBundle(dst.db, incomplete),
+        /bundle_dependency_missing/,
+      );
+    }
+    assert.equal(
+      (await dst.db.query("SELECT id FROM enrichment_entities")).rows.length,
+      0,
+    );
+
+    for (const exchanges of [undefined, [], null]) {
+      const incomplete = structuredClone(bundle);
+      const report = incomplete.rows.enrichment_analysis_runs.find(
+        (row) => row.id === portrait.id,
+      )!.validation_report as Record<string, unknown>;
+      if (exchanges === undefined) delete report.judgeExchanges;
+      else report.judgeExchanges = exchanges;
+      incomplete.manifest.rowsHash = stableDigest(incomplete.rows);
+      incomplete.hash = stableDigest({
+        manifest: incomplete.manifest,
+        rows: incomplete.rows,
+      });
+      assert.throws(
+        () => parseDnaBundle(incomplete),
+        /bundle_judge_exchanges_invalid/,
+      );
+    }
+
+    await stageDnaBundle(dst.db, bundle);
+    const dna = new DnaPublicationStore(dst.db);
+    await dna.validateRelease("release-one");
+    await dna.activateRelease("release-one");
+    const restored = await exportDnaBundle(dst.db, "release-one");
+    assert.deepEqual(
+      restored.rows.enrichment_analysis_runs.find(
+        (row) => row.id === portrait.id,
+      )?.validation_report,
+      portrait.validation_report,
+    );
+  } finally {
+    await src.pg.close();
+    await dst.pg.close();
+  }
+});
+
+test("v3 and v4 bundles remain importable without scoped judge exchanges", async () => {
+  for (const version of ["v3", "v4"]) {
+    const src = await database(),
+      dst = await database();
+    try {
+      await seed(
+        src.db,
+        false,
+        "example",
+        `cited-founder-portrait-judge-${version}`,
+      );
+      const bundle = await exportDnaBundle(src.db, "release-one");
+      await stageDnaBundle(dst.db, bundle);
+      const dna = new DnaPublicationStore(dst.db);
+      await dna.validateRelease("release-one");
+      await dna.activateRelease("release-one");
+      assert.equal(
+        (await readFounderDnaProfile(dst.db, "example")).status,
+        "ready",
+      );
+    } finally {
+      await src.pg.close();
+      await dst.pg.close();
+    }
   }
 });

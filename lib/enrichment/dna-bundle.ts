@@ -501,6 +501,26 @@ export function parseDnaBundle(value: unknown): DnaBundle {
         "judgeResponseArtifactId",
       ])
         need("enrichment_artifacts", "id", report[key]);
+      if (
+        report.judgeRecipeVersion === "cited-founder-portrait-judge-v5" ||
+        report.judgeExchanges !== undefined
+      ) {
+        if (
+          !Array.isArray(report.judgeExchanges) ||
+          !report.judgeExchanges.length
+        )
+          throw new Error("bundle_judge_exchanges_invalid");
+        for (const exchange of report.judgeExchanges) {
+          if (
+            !exchange ||
+            typeof exchange !== "object" ||
+            Array.isArray(exchange)
+          )
+            throw new Error("bundle_judge_exchanges_invalid");
+          for (const key of ["requestArtifactId", "responseArtifactId"])
+            need("enrichment_artifacts", "id", exchange[key]);
+        }
+      }
       for (const id of (report.productAnalysisIds ?? []) as unknown[])
         need("enrichment_analysis_runs", "id", id);
     }
