@@ -2707,3 +2707,64 @@ main.profile-portrait {
     margin: 7px 0 0;
   }
 }
+
+/* Published founder DNA */
+.released-dna-profile {
+  overflow-wrap: anywhere;
+}
+.released-dna-profile .profile-dna-roast > a {
+  display: inline-block;
+  margin-top: 1rem;
+  color: var(--accent, #d8ff3e);
+}
+.released-dna-profile .profile-share label {
+  display: block;
+  margin: 1.2rem 0 0.5rem;
+}
+.released-dna-profile .profile-share textarea {
+  width: 100%;
+  min-height: 130px;
+  resize: vertical;
+  padding: 1rem;
+  border: 1px solid #414438;
+  border-radius: 12px;
+  background: #0c0d0b;
+  color: #f4f1e8;
+  font: inherit;
+}
+.dna-share-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  margin-top: 0.8rem;
+}
+.dna-share-actions button,
+.dna-share-actions a {
+  padding: 0.8rem 1rem;
+  border: 1px solid #414438;
+  border-radius: 8px;
+  font: inherit;
+}
+.dna-share-actions button {
+  background: #d8ff3e;
+  color: #0c0d0b;
+  cursor: pointer;
+}
+.dna-share-actions a {
+  color: #f4f1e8;
+}
+.dna-fact-source {
+  display: inline-block;
+  margin-right: 1rem;
+}
+.released-dna-profile :focus-visible {
+  outline: 2px solid #d8ff3e;
+  outline-offset: 4px;
+}
+@media (max-width: 560px) {
+  .dna-share-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
