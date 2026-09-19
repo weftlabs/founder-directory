@@ -88,3 +88,27 @@ gazetteer on the server; `lib/discovery.ts` owns pure filtering and pagination.
 previews. `lib/products.ts` owns pure display and navigation values;
 `lib/product-data.ts` owns the bounded read-only projection. The Products route
 and `app/products-view.tsx` render server components with standard GET filters.
+
+## Published Founder DNA profiles
+
+When Founder DNA is enabled, `/u/[handle]` reads a saved eligible profile through
+`lib/founder-dna-data.ts`. Page and image requests never collect sources or call a
+model. Hidden profiles cannot fall back to the legacy directory record. Missing
+and unavailable profiles have explicit states; the legacy route remains available
+when the feature is disabled.
+
+The profile puts a playful roast before useful connections and products. “Why
+this fits” contains the approved source excerpts and factual claims. Categories
+are model inferences, and humor is interpretation. Source support does not mean
+independent verification.
+
+Each profile has a 1200×630 PNG at `/u/[handle]/share-image`, advertised through
+large-image social metadata with the canonical profile URL. The image URL carries
+the profile revision; stale revisions and hidden profiles return no image. Image
+responses use `no-store`. The renderer uses a bundled Latin font and initials, so
+it makes no remote image or font requests. Unsupported glyphs are normalized or
+use a handle fallback in the image; the HTML preserves the original text.
+
+The share control lets visitors edit and copy a draft with the profile link, or
+download its image. Optional analytics record profile views, successful copies,
+and download starts. A download-start event does not establish a completed share.
