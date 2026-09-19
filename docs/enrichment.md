@@ -300,7 +300,11 @@ After enrichment migrations and intake are verified in the directory database,
 set server-only `ENRICHMENT_READ_ORIGINS=1` to make profile pages read the saved
 indexing post. `FOUNDER_DNA_ENABLED=1` also enables these foundation visibility
 checks. Legacy directory, map and profile reads use `DATABASE_URL`; the enrichment
-schema and canonical suppression records must be in that same database. A missing
+schema and canonical suppression records must be in that same database. When DNA
+is enabled, `FOUNDER_DNA_DATABASE_URL` is required and must identify the same host,
+port and database as `DATABASE_URL`. Credentials and URL options can differ;
+unknown host aliases are not treated as equivalent. A mismatch fails before any
+query and never switches to another URL automatically. A missing
 schema or failed eligibility query fails the read; it never retries without the
 filter. With both flags off, existing directory behavior is unchanged.
 An imported origin keeps its original text and URL even if the founder row later
