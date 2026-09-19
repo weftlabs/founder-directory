@@ -5,7 +5,23 @@ import {
   type AnalysisInput,
   type AnalysisRecipe,
   type EvidenceInput,
+  type JsonValue,
 } from "./contracts";
+
+/** Save provider controls in recipe identity, before request capture or dispatch. */
+export function deepseekFlashParameters(model: {
+  provider: string;
+  model: string;
+  revision: string | null;
+}): Record<string, JsonValue> {
+  return model.provider === "weft/openrouter" &&
+    (model.revision ?? model.model) === "deepseek/deepseek-v4.1-flash"
+    ? {
+        reasoning: { enabled: false },
+        provider: { require_parameters: true },
+      }
+    : {};
+}
 
 export const DEFAULT_STAGES = [
   { id: "collection", dependencies: [], version: "1" },
@@ -121,6 +137,7 @@ export function buildAnalysisInput(input: {
         input.model.model === "deepseek/deepseek-reasoner"
           ? 8192
           : 1800,
+      ...deepseekFlashParameters(input.model),
     },
     responseSchemaBinding: "selected-evidence-v1",
     responseSchema: {

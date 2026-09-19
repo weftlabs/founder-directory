@@ -3,6 +3,10 @@ import { test } from "node:test";
 import type { CollectionStore } from "../lib/enrichment/collection";
 import type { RenderedAnalysisRequest } from "../lib/enrichment/contracts";
 import { weftGeneration } from "../lib/enrichment/generation";
+import { prepareAnalysis } from "../lib/enrichment/analysis";
+import { stableDigest } from "../lib/enrichment/contracts";
+import { buildAnalysisInput } from "../lib/enrichment/recipes";
+import { founderPortraitRecipe } from "../lib/enrichment/founder-portrait";
 import type { WeftTransport } from "../lib/weft";
 
 function fixture(
@@ -155,6 +159,98 @@ test("OpenRouter route preserves model revision, schema and parameters through d
   assert.equal(result.attemptId, "attempt");
   assert.deepEqual(result.usage, { total_tokens: 12 });
   assert.equal(result.finishReason, "stop");
+});
+
+for (const purpose of ["founder_dna", "founder_portrait"] as const) {
+  test(`${purpose} disables DeepSeek Flash thinking in both recipe identity and captured request`, async () => {
+    const model = {
+      provider: "weft/openrouter",
+      model: "deepseek/deepseek-v4.1-flash",
+      revision: null,
+    };
+    const input = buildAnalysisInput({
+      entityId: "synthetic-founder",
+      releaseId: "synthetic-release",
+      generation: 0,
+      purpose: "founder_dna",
+      evidence: [
+        {
+          id: "synthetic-evidence",
+          artifactId: "synthetic-artifact",
+          text: "Builds tools",
+          contentHash: stableDigest("Builds tools"),
+          sourceUrl: "https://example.test/founder",
+          extractorVersion: "fixture",
+        },
+      ],
+      model,
+      codeDigest: "fixture",
+    });
+    if (purpose === "founder_portrait")
+      input.recipe = founderPortraitRecipe(model, "fixture");
+    const base =
+      purpose === "founder_dna"
+        ? { temperature: 0, max_tokens: 1800 }
+        : { temperature: 0.5, max_tokens: 2400 };
+    assert.deepEqual(input.recipe.parameters, {
+      ...base,
+      reasoning: { enabled: false },
+      provider: { require_parameters: true },
+    });
+    const prepared = prepareAnalysis(input);
+    const previous = prepareAnalysis({
+      ...input,
+      recipe: { ...input.recipe, parameters: base },
+    });
+    assert.notEqual(stableDigest(input.recipe), stableDigest(previous.recipe));
+    assert.notEqual(prepared.recipeDigest, previous.recipeDigest);
+    assert.equal(prepared.inputDigest, previous.inputDigest);
+    const f = fixture();
+    Object.assign(f.request, prepared.request);
+    await f.run();
+    const body = JSON.parse(String(f.requests[0].body));
+    assert.equal(body.model, model.model);
+    assert.deepEqual(body.reasoning, { enabled: false });
+    assert.deepEqual(body.provider, { require_parameters: true });
+    assert.equal(body.max_tokens, base.max_tokens);
+    assert.equal(body.response_format.type, "json_schema");
+    assert.equal(f.requests.length, 1);
+    assert.equal(f.events.at(-1), "archive");
+  });
+}
+
+test("DeepSeek thinking policy matches only the actual OpenRouter Flash model", () => {
+  for (const model of [
+    {
+      provider: "weft/blockrun",
+      model: "deepseek/deepseek-v4.1-flash",
+      revision: null,
+    },
+    { provider: "weft/openrouter", model: "another-model", revision: null },
+    {
+      provider: "weft/openrouter",
+      model: "deepseek/deepseek-v4.1-flash",
+      revision: "another-revision",
+    },
+  ]) {
+    const dna = buildAnalysisInput({
+      entityId: "f",
+      releaseId: "r",
+      generation: 0,
+      purpose: "founder_dna",
+      evidence: [],
+      model,
+      codeDigest: "fixture",
+    });
+    assert.deepEqual(dna.recipe.parameters, {
+      temperature: 0,
+      max_tokens: 1800,
+    });
+    assert.deepEqual(founderPortraitRecipe(model, "fixture").parameters, {
+      temperature: 0.5,
+      max_tokens: 2400,
+    });
+  }
 });
 
 test("BlockRun uses its own reviewed route and matching policy", async () => {
