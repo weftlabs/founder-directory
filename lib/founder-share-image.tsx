@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { FounderDnaResult } from "./founder-dna";
 import { clipShareText } from "./founder-share";
+import { fitShareName, fitShareRoast } from "./founder-share-layout";
 
 export async function respondFounderShareImage(
   request: Request,
@@ -26,7 +27,7 @@ export async function respondFounderShareImage(
       "node_modules/@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-700-normal.woff",
     ),
   );
-  const roast = clipShareText(profile.portrait.roast.lines[0].text, 400);
+  const roast = fitShareRoast(profile.portrait.roast.lines[0].text, font);
   return new ImageResponse(
     <div
       style={{
@@ -55,16 +56,26 @@ export async function respondFounderShareImage(
       <div
         style={{
           display: "flex",
-          fontSize: roast.length > 240 ? 34 : roast.length > 150 ? 44 : 58,
+          fontSize: roast.fontSize,
+          flexDirection: "column",
           lineHeight: 1.13,
           letterSpacing: -1.5,
           color: "#d8ff3e",
-          maxHeight: 340,
-          wordBreak: "break-word",
-          overflow: "hidden",
+          flexShrink: 0,
         }}
       >
-        {roast}
+        {roast.lines.map((line, index) => (
+          <div
+            key={index}
+            style={{
+              display: "flex",
+              whiteSpace: "pre",
+              height: roast.lineHeight,
+            }}
+          >
+            {line}
+          </div>
+        ))}
       </div>
       <div
         style={{
@@ -109,7 +120,7 @@ export async function respondFounderShareImage(
             }}
           >
             <span style={{ fontSize: 26 }}>
-              {clipShareText(profile.name, 36, `@${profile.handle}`)}
+              {fitShareName(profile.name, font, `@${profile.handle}`)}
             </span>
             <span style={{ fontSize: 21, color: "#b7b6ad" }}>
               @{profile.handle}
@@ -126,7 +137,11 @@ export async function respondFounderShareImage(
             flexShrink: 0,
           }}
         >
-          <span>Meet the founder. Find your connections.</span>
+          <span>
+            {roast.truncated
+              ? "Full roast and connections on the profile."
+              : "Meet the founder. Find your connections."}
+          </span>
           <span style={{ color: "#d8ff3e" }}>foundersdirectory.app</span>
         </div>
       </div>
