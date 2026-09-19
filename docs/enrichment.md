@@ -298,14 +298,27 @@ retention approval.
 
 After enrichment migrations and intake are verified in the directory database,
 set server-only `ENRICHMENT_READ_ORIGINS=1` to make profile pages read the saved
-indexing post. The flag uses `DATABASE_URL`; the enrichment schema must be in
-that same database. With the flag off, existing directory behavior is unchanged.
+indexing post. `FOUNDER_DNA_ENABLED=1` also enables these foundation visibility
+checks. Legacy directory, map and profile reads use `DATABASE_URL`; the enrichment
+schema and canonical suppression records must be in that same database. When DNA
+is enabled, `FOUNDER_DNA_DATABASE_URL` is required and must identify the same host,
+port and database as `DATABASE_URL`. Credentials and non-identity options such as
+SSL settings can differ. Identity options (`host`, `hostaddr`, `port`, `database`,
+`dbname`, `db`) in either URL query are rejected because drivers can override the
+URL target. Unknown host aliases are not treated as equivalent. A mismatch fails before any
+query and never switches to another URL automatically. This shared check also
+runs before the DNA profile and share-image readers create either the Neon or
+PostgreSQL client. A missing
+schema or failed eligibility query fails the read; it never retries without the
+filter. With both flags off, existing directory behavior is unchanged.
 An imported origin keeps its original text and URL even if the founder row later
 changes. Unknown, expired, withdrawn or purged origins show no tweet; suppressed
 entities return no profile. Unimported rows retain their existing display.
 
 The flag does not collect a new tweet or establish historical certainty for a
-legacy snapshot. It does not change map or directory-list suppression behavior.
+legacy snapshot. Suppressed founders are excluded in SQL from the map, directory
+rows, total, categories, country and city counts, and city-to-country inference.
+Filtering happens before pagination. Unimported legacy rows remain visible.
 Verify broader deletion and backup replay separately before production rollout.
 
 The migration command also supports an empty database. It applies the core
