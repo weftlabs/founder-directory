@@ -6,6 +6,21 @@ function databaseIdentity(value: string | undefined): string | null {
   try {
     const url = new URL(value);
     const database = decodeURIComponent(url.pathname.slice(1));
+    // Drivers can prefer query options to authority fields. Never accept two targets.
+    const identityOptions = [
+      "host",
+      "hostaddr",
+      "port",
+      "database",
+      "dbname",
+      "db",
+    ];
+    if (
+      [...url.searchParams.keys()].some((key) =>
+        identityOptions.includes(key.toLowerCase()),
+      )
+    )
+      return null;
     if (
       !["postgres:", "postgresql:"].includes(url.protocol) ||
       !url.hostname ||

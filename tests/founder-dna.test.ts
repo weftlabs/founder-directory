@@ -79,6 +79,14 @@ test("runtime DNA clients require the shared database before any provider reques
         { ...env, FOUNDER_DNA_DATABASE_URL: undefined },
         {
           ...env,
+          FOUNDER_DNA_DATABASE_URL: `${env.FOUNDER_DNA_DATABASE_URL}?host=other.example.test&port=6543`,
+        },
+        {
+          ...env,
+          DATABASE_URL: `${env.DATABASE_URL}?host=other.example.test&port=6543`,
+        },
+        {
+          ...env,
           FOUNDER_DNA_DATABASE_URL:
             "postgres://dna:synthetic@other.example.test/founders",
         },

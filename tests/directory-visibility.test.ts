@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { PGlite } from "@electric-sql/pglite";
+import { Client } from "pg";
 import {
   foundationReadEnabled,
   directoryDatabaseUrl,
@@ -281,4 +282,45 @@ test("public directory wrappers reject mismatched or missing DNA database config
       else process.env[key] = value;
     }
   }
+});
+
+test("identity query overrides are rejected despite matching URL authority", () => {
+  const base = "postgres://synthetic:synthetic@db.example.test/founders";
+  const overridden = `${base}?host=other.example.test&port=6543`;
+  // Construct only; these are the effective driver parameters before connect().
+  const client = new Client({ connectionString: overridden });
+  assert.equal(client.host, "other.example.test");
+  assert.equal(client.port, 6543);
+  assert.equal(client.database, "founders");
+  for (const query of [
+    "host=other.example.test",
+    "port=6543",
+    "hostaddr=127.0.0.2",
+    "database=other",
+    "dbname=other",
+    "db=other",
+    "h%6fst=other.example.test",
+    "HOST=other.example.test",
+  ]) {
+    for (const key of ["DATABASE_URL", "FOUNDER_DNA_DATABASE_URL"]) {
+      assert.throws(
+        () =>
+          directoryDatabaseUrl({
+            FOUNDER_DNA_ENABLED: "1",
+            DATABASE_URL: base,
+            FOUNDER_DNA_DATABASE_URL: base,
+            [key]: `${base}?${query}`,
+          }),
+        /same host, port and database/,
+      );
+    }
+  }
+  assert.equal(
+    directoryDatabaseUrl({
+      FOUNDER_DNA_ENABLED: "1",
+      DATABASE_URL: `${base}?sslmode=require`,
+      FOUNDER_DNA_DATABASE_URL: `${base}?sslmode=verify-full&application_name=dna`,
+    }),
+    `${base}?sslmode=require`,
+  );
 });
