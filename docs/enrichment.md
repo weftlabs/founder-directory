@@ -345,8 +345,12 @@ are not supplied as personal evidence to the generator or judge. Failed or uncer
 retry. An approved aggregate budget bounds the full run; per-call caps do not
 replace that budget.
 
-Generation and judgment have separate version identities. The unchanged v3
-generation recipe keeps its original generation run ID; judge v5 creates a new
+Generation and judgment have separate version identities. Generation v4 asks for
+useful atomic facts, exact role/ownership attribution and concrete editorial humor;
+it does not force coverage of every source. It requires a new approved generation
+recipe and cannot reuse v3 generation captures as if their prompt were unchanged.
+Judge v5 remains separate. When the generation recipe and inputs are unchanged,
+a new judge version can keep the original generation run ID while creating a new
 analysis/check ID. To resume checking a retained generation, call the same driver
 with its original input, generation `codeDigest`, approved recipe manifest and
 transport scope/policy/provider/price cap. The generation adapter reuses that
