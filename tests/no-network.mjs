@@ -1,6 +1,9 @@
 // Unit tests are not authorized to use local production credentials or HTTP.
 for (const key of [
   "WEFT_API_KEY",
+  "TYPESAFE_AI_API_KEY",
+  "TYPESAGE_AI_API_KEY",
+  "TYPESAFE_API_KEY",
   "DATABASE_URL",
   "CRON_SECRET",
   "ENRICHMENT_DATABASE_URL",

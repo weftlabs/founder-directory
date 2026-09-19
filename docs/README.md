@@ -23,3 +23,5 @@ boundaries. It does not verify remote links or replace human documentation revie
 - [Founder map](discovery.md): locations, bounded discovery data and local previews.
 
 - [Products](products.md): published product descriptions, categories and no-key previews.
+
+- [TypeSafe experiment](typesafe-poc.md): bounded local product and founder categories, DNA claims and source-support checks.

@@ -56,7 +56,11 @@ products and a 1 MB file limit. Each product has `name`, `description`, `audienc
 `domain`, `productType`, `businessModel` and `stage` claim objects, plus
 `website: string | null`, optional `imageUrl: string | null`, and `founders: string[]` handles.
 An optional top-level `profiles` array contains saved `handle`, `name`, `bio`,
-`location`, `website`, and `avatarUrl` display fields. Only profiles linked to a
+`location`, `website`, and `avatarUrl` display fields. Profiles can also include
+an optional [Founder DNA display projection](typesafe-poc.md#local-founder-profile-preview)
+from a saved classification run. A valid editorial portrait is displayed as an
+integrated founder profile, with its sources and classifications under “Why this
+fits”; the comparison lab remains separate. Only profiles linked to a
 snapshot product are available. A claim contains
 `value: string | null`, `state` (`supported`, `unknown`, `conflict`, `stale`, or
 `absent`) and `kind` (`self_report`, `publisher_statement`, or `inference`).
