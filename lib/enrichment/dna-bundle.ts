@@ -802,6 +802,12 @@ export async function stageDnaBundle(db: Database, value: unknown) {
     await tx.query("SELECT pg_advisory_xact_lock(73422002)");
     const plan = await dryRunDnaBundle(tx, value),
       { bundle, rows, mapping } = plan;
+    const unverified = Object.entries(plan.identityVerification).find(
+      ([id, status]) =>
+        mapping[id] !== id && status === "unverified_handle_match",
+    );
+    if (unverified)
+      throw new Error(`bundle_unverified_founder_identity:${unverified[0]}`);
     const dna = new DnaPublicationStore({ ...tx, transaction: (fn) => fn(tx) });
     for (const row of rows.enrichment_entities)
       await insert(tx, "enrichment_entities", row);

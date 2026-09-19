@@ -37,6 +37,25 @@ async function database() {
   await migrateEnrichment(db);
   return { pg, db };
 }
+async function retainIdentity(db: Database, entity: string, authorId: string) {
+  const store = new EnrichmentStore(db);
+  const raw = await store.putArtifact({
+    kind: "legacy_import",
+    body: Buffer.from(`Account ${authorId}`),
+    contentType: "text/plain",
+    redactionVersion: "none",
+    importBatch: "identity-proof",
+  });
+  const evidence = await store.addEvidence({
+    artifactId: raw.id,
+    extractorVersion: "identity-v1",
+    locator: "profile",
+    authorId,
+    payload: {},
+    excerpt: `Account ${authorId}`,
+  });
+  await store.linkEvidence(entity, evidence, "profile_source");
+}
 async function seed(db: Database, withProduct = false, handle = "example") {
   const store = new EnrichmentStore(db),
     dna = new DnaPublicationStore(db);
@@ -226,6 +245,7 @@ test("stage maps canonical founder identity and preserves raw retained bytes", a
         "example",
       );
     assert.notEqual(seeded.entity, otherId);
+    await retainIdentity(dst.db, otherId, "100");
     const bundle = await exportDnaBundle(src.db, "release-one");
     assert.equal(
       (await dryRunDnaBundle(dst.db, bundle)).summary.identityMappings,
@@ -353,6 +373,7 @@ test("retained product dependency closure maps the established owner/name identi
         `product:${founder}:planner`,
       );
     const bundle = await exportDnaBundle(src.db, "release-one");
+    await retainIdentity(dst.db, founder, "100");
     assert.equal(bundle.rows.enrichment_analysis_runs.length, 3);
     assert.equal(bundle.rows.enrichment_founder_products.length, 1);
     assert.equal(
@@ -482,6 +503,46 @@ test("a reassigned handle cannot merge conflicting known source author identitie
     );
     assert.equal(
       (await dst.db.query("SELECT id FROM founder_dna_releases")).rows.length,
+      0,
+    );
+  } finally {
+    await src.pg.close();
+    await dst.pg.close();
+  }
+});
+
+test("stage rejects an unverified cross-ID handle match before any mutation", async () => {
+  const src = await database(),
+    dst = await database();
+  try {
+    await seed(src.db);
+    const target = new EnrichmentStore(dst.db);
+    await target.createEntity("founder", "example");
+    const bundle = await exportDnaBundle(src.db, "release-one");
+    assert.equal(
+      (await dryRunDnaBundle(dst.db, bundle)).summary
+        .unverifiedIdentityMappings,
+      1,
+    );
+    await assert.rejects(
+      stageDnaBundle(dst.db, bundle),
+      /bundle_unverified_founder_identity/,
+    );
+    assert.equal(
+      (await dst.db.query("SELECT id FROM enrichment_entities")).rows.length,
+      1,
+    );
+    assert.equal(
+      (await dst.db.query("SELECT id FROM enrichment_artifacts")).rows.length,
+      0,
+    );
+    assert.equal(
+      (await dst.db.query("SELECT id FROM founder_dna_releases")).rows.length,
+      0,
+    );
+    assert.equal(
+      (await dst.db.query("SELECT release_id FROM founder_dna_active_release"))
+        .rows.length,
       0,
     );
   } finally {
