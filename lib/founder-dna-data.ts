@@ -1,5 +1,6 @@
 // Saved eligible publications only. Page loads cannot invoke collection or inference.
 import "./assert-server";
+import { directoryDatabaseUrl } from "./founder-database-config";
 import { neon } from "@neondatabase/serverless";
 import { postgresDatabase, type Sql } from "./enrichment/db";
 import { parseFounderDnaProfile, type FounderDnaResult } from "./founder-dna";
@@ -24,8 +25,9 @@ export async function loadFounderDnaProfile(
   db?: Sql,
 ): Promise<FounderDnaResult> {
   if (env.FOUNDER_DNA_ENABLED !== "1") return { status: "disabled" };
-  if (!db && !env.FOUNDER_DNA_DATABASE_URL) return { status: "unavailable" };
   try {
+    // Injected SQL is an explicit offline boundary; runtime clients must share identity.
+    if (!db) directoryDatabaseUrl(env);
     if (!db && env.FOUNDER_DNA_DATABASE_TRANSPORT === "postgres") {
       const connection = postgresDatabase(env.FOUNDER_DNA_DATABASE_URL!);
       try {

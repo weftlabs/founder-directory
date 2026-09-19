@@ -313,7 +313,9 @@ schema and canonical suppression records must be in that same database. When DNA
 is enabled, `FOUNDER_DNA_DATABASE_URL` is required and must identify the same host,
 port and database as `DATABASE_URL`. Credentials and URL options can differ;
 unknown host aliases are not treated as equivalent. A mismatch fails before any
-query and never switches to another URL automatically. A missing
+query and never switches to another URL automatically. This shared check also
+runs before the DNA profile and share-image readers create either the Neon or
+PostgreSQL client. A missing
 schema or failed eligibility query fails the read; it never retries without the
 filter. With both flags off, existing directory behavior is unchanged.
 An imported origin keeps its original text and URL even if the founder row later
