@@ -5,6 +5,10 @@ import { test } from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 import {
   foundationReadEnabled,
+  directoryDatabaseUrl,
+  getFounder,
+  listFounders,
+  listDirectoryPage,
   readDirectoryPage,
   readFounder,
   readFounders,
@@ -202,5 +206,79 @@ test("expired and purged indexing sources cannot revive the legacy profile intro
     }
   } finally {
     await pg.close();
+  }
+});
+
+test("DNA configuration compares database identity, not credentials or URL options", () => {
+  const env = {
+    FOUNDER_DNA_ENABLED: "1",
+    DATABASE_URL:
+      "postgres://directory:synthetic@db.example.test/founders?sslmode=require",
+    FOUNDER_DNA_DATABASE_URL:
+      "postgresql://dna:other@DB.example.test:5432/%66ounders?application_name=dna",
+  };
+  assert.equal(directoryDatabaseUrl(env), env.DATABASE_URL);
+  for (const value of [
+    undefined,
+    "",
+    "invalid",
+    "https://db.example.test/founders",
+    "postgres://alias.example.test/founders",
+    "postgres://db.example.test:5433/founders",
+    "postgres://db.example.test/other",
+    "postgres://db.example.test/",
+  ]) {
+    assert.throws(
+      () => directoryDatabaseUrl({ ...env, FOUNDER_DNA_DATABASE_URL: value }),
+      /same host, port and database/,
+    );
+  }
+  assert.equal(
+    directoryDatabaseUrl({ DATABASE_URL: env.DATABASE_URL }),
+    env.DATABASE_URL,
+  );
+});
+
+test("public directory wrappers reject mismatched or missing DNA database configuration before any query", async () => {
+  const keys = [
+    "DATABASE_URL",
+    "FOUNDER_DNA_ENABLED",
+    "FOUNDER_DNA_DATABASE_URL",
+  ] as const;
+  const saved = new Map(keys.map((key) => [key, process.env[key]]));
+  const previousFetch = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = async () => {
+    requests++;
+    throw new Error("Unexpected database request");
+  };
+  try {
+    process.env.DATABASE_URL =
+      "postgres://synthetic@directory.example.test/founders";
+    process.env.FOUNDER_DNA_ENABLED = "1";
+    for (const target of [
+      undefined,
+      "postgres://synthetic@dna.example.test/founders",
+    ]) {
+      if (target) process.env.FOUNDER_DNA_DATABASE_URL = target;
+      else delete process.env.FOUNDER_DNA_DATABASE_URL;
+      await assert.rejects(listFounders(), /same host, port and database/);
+      await assert.rejects(
+        listDirectoryPage(filters),
+        /same host, port and database/,
+      );
+      await assert.rejects(
+        getFounder("synthetic"),
+        /same host, port and database/,
+      );
+    }
+    assert.equal(requests, 0);
+  } finally {
+    globalThis.fetch = previousFetch;
+    for (const key of keys) {
+      const value = saved.get(key);
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   }
 });
