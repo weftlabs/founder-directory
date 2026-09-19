@@ -27,3 +27,4 @@ boundaries. It does not verify remote links or replace human documentation revie
 - [TypeSafe experiment](typesafe-poc.md): bounded local product and founder categories, DNA claims and source-support checks.
 
 - [Founder DNA preparation](founder-dna-prepare.md): stage approved portraits and discover retained, supported connections before release export.
+- [Founder DNA data releases](founder-dna-releases.md): private dependency bundles, staged import, activation and rollback.
