@@ -23,7 +23,7 @@ export const DEFAULT_STAGES = [
   },
   {
     id: "embeddings",
-    dependencies: ["founder_dna", "product_descriptions"],
+    dependencies: ["founder_dna"],
     version: "1",
   },
 ] as const;

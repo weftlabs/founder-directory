@@ -79,7 +79,13 @@ test("data releases stage without exposure, activate atomically, roll back and o
         recipeDigest: "recipe",
         evidenceIds: [evidence],
         output,
-        validationReport: {},
+        validationReport: {
+          checksPassed: true,
+          generationResponseArtifactId: raw.id,
+          judgeRequestArtifactId: raw.id,
+          judgeResponseArtifactId: raw.id,
+          productAnalysisIds: [],
+        },
         status: "succeeded",
       });
     await dna.approvePortrait(entity, portrait, "reviewer");

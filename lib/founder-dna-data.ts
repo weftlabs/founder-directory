@@ -1,7 +1,7 @@
 // Saved eligible publications only. Page loads cannot invoke collection or inference.
 import "./assert-server";
 import { neon } from "@neondatabase/serverless";
-import type { Sql } from "./enrichment/db";
+import { postgresDatabase, type Sql } from "./enrichment/db";
 import { parseFounderDnaProfile, type FounderDnaResult } from "./founder-dna";
 export async function readFounderDnaProfile(
   db: Sql,
@@ -26,6 +26,20 @@ export async function loadFounderDnaProfile(
   if (env.FOUNDER_DNA_ENABLED !== "1") return { status: "disabled" };
   if (!db && !env.FOUNDER_DNA_DATABASE_URL) return { status: "unavailable" };
   try {
+    if (!db && env.FOUNDER_DNA_DATABASE_TRANSPORT === "postgres") {
+      const connection = postgresDatabase(env.FOUNDER_DNA_DATABASE_URL!);
+      try {
+        return await readFounderDnaProfile(connection, handle);
+      } finally {
+        await connection.close();
+      }
+    }
+    if (
+      !db &&
+      env.FOUNDER_DNA_DATABASE_TRANSPORT &&
+      env.FOUNDER_DNA_DATABASE_TRANSPORT !== "neon"
+    )
+      return { status: "unavailable" };
     if (!db) {
       const sql = neon(env.FOUNDER_DNA_DATABASE_URL!, {
         fetchOptions: { signal: AbortSignal.timeout(10000) },

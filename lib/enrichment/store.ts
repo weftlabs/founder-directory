@@ -455,7 +455,7 @@ export class EnrichmentStore {
       product_discovery: ["extraction"],
       product_descriptions: ["product_discovery"],
       founder_dna: ["extraction"],
-      embeddings: ["founder_dna", "product_descriptions"],
+      embeddings: ["founder_dna"],
     };
     const dependencies =
       manifest.dependencies ??
@@ -647,7 +647,10 @@ export class EnrichmentStore {
           WHERE NOT EXISTS (
             SELECT 1 FROM enrichment_stage_work done WHERE done.entity_id=w.entity_id AND done.release_id=w.release_id
             AND done.generation=w.generation AND done.stage=dependency.stage AND done.status IN ('succeeded','not_applicable')))
-        ORDER BY w.id FOR UPDATE OF w SKIP LOCKED LIMIT 1`,
+        AND (w.stage<>'embeddings' OR NOT EXISTS(
+          SELECT 1 FROM enrichment_stage_work description JOIN enrichment_stage_work discovery ON discovery.entity_id=description.entity_id AND discovery.release_id=description.release_id AND discovery.generation=description.generation AND discovery.stage='product_discovery' AND discovery.status='succeeded'
+          WHERE description.entity_id=w.entity_id AND description.release_id=w.release_id AND description.generation=w.generation AND description.stage='product_descriptions' AND description.status IN ('pending','running')))
+        ORDER BY current_stage.position,w.id FOR UPDATE OF w SKIP LOCKED LIMIT 1`,
           [scope ?? null],
         )
       ).rows[0];

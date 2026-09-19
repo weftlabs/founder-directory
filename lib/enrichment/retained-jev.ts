@@ -90,7 +90,7 @@ export function retainedJev(
         },
         generation: 0,
         budgetId: config.budgetId,
-        capMicros: String(reservation),
+        capMicros: config.capMicros,
         mode: config.mode,
         policy: config.policy,
       },
@@ -154,6 +154,11 @@ export function retainedJev(
       !(await store.getArtifact(artifact.metadata.requestArtifactId))
     )
       throw new Error("jev_request_capture_missing");
+    if (
+      BigInt(Math.ceil(response.usage.input_tokens * 0.042)) >
+      BigInt(config.capMicros)
+    )
+      throw new Error("jev_usage_exceeded_reservation");
     return {
       response,
       requestArtifactId: artifact.metadata.requestArtifactId,

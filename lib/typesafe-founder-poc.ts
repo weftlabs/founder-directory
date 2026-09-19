@@ -184,7 +184,11 @@ const GUIDANCE: Record<Facet, string> = {
   founding_role:
     "Classify the explicit founding role: solo or cofounder. A founder title alone is unknown. Building or working alone does not establish being a solo founder. A solo founder may work with a team.",
 };
-export function buildFounderRequest(founder: Founder): Request {
+export function buildFounderRequest(
+  founder: Pick<Founder, "id" | "name" | "evidence"> & {
+    claims: { text: string }[];
+  },
+): Request {
   const questions: Request["questions"] = {};
   for (const key of Object.keys(FOUNDER_FACETS) as Facet[])
     questions[key] = {

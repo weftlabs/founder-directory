@@ -58,6 +58,7 @@ export async function migrateEnrichment(db: Database): Promise<void> {
   const migrations = [
     [1, "001_enrichment.sql"],
     [3, "003_founder_dna.sql"],
+    [4, "004_founder_dna_retained_results.sql"],
   ] as const;
   await db.transaction(async (tx) => {
     await tx.query("SELECT pg_advisory_xact_lock(73422001)");
