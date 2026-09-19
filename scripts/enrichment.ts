@@ -8,7 +8,11 @@ import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import { postgresDatabase, migrateEnrichment } from "../lib/enrichment/db";
+import {
+  postgresDatabase,
+  migrateEnrichment,
+  type Database,
+} from "../lib/enrichment/db";
 import { EnrichmentStore } from "../lib/enrichment/store";
 import {
   installLegacyIntake,
@@ -208,6 +212,16 @@ function boundedInteger(
   return result;
 }
 
+export async function migrateOperatorDatabase(db: Database): Promise<boolean> {
+  await migrateEnrichment(db);
+  const founders = await db.query<{ present: boolean }>(
+    "SELECT to_regclass('public.founders') IS NOT NULL AS present",
+  );
+  if (!founders.rows[0]?.present) return false;
+  await installLegacyIntake(db);
+  return true;
+}
+
 export async function main(args = process.argv.slice(2)) {
   const command = args[0];
   if (!command || command === "--help" || command === "help") {
@@ -306,11 +320,13 @@ export async function main(args = process.argv.slice(2)) {
         );
         break;
       }
-      case "migrate":
-        await migrateEnrichment(db);
-        await installLegacyIntake(db);
-        console.log("Additive migrations applied; no source or model calls.");
+      case "migrate": {
+        const legacyInstalled = await migrateOperatorDatabase(db);
+        console.log(
+          `Additive migrations applied; legacy intake ${legacyInstalled ? "installed" : "skipped (no founders table)"}; no source or model calls.`,
+        );
         break;
+      }
       case "release-create":
         console.log(
           await store.createRelease(await jsonFile(argument(args, "--file"))),

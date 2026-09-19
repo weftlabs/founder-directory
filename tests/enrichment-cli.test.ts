@@ -3,7 +3,9 @@ import { test } from "node:test";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { main } from "../scripts/enrichment";
+import { PGlite } from "@electric-sql/pglite";
+import type { Database, Sql } from "../lib/enrichment/db";
+import { main, migrateOperatorDatabase } from "../scripts/enrichment";
 
 test("help and release template require no database or paid access", async () => {
   const directory = await mkdtemp(join(tmpdir(), "enrichment-cli-test-"));
@@ -88,4 +90,46 @@ test("portrait generation is gated before input reads or database access", async
     main(["portrait-approve"]),
     /explicit_write_confirmation_required/,
   );
+});
+
+test("operator migration supports an empty database and adds legacy intake when founders later exists", async () => {
+  const pg = new PGlite();
+  const adapt = (client: Pick<PGlite, "query" | "exec">): Sql => ({
+    async query<T>(sql: string, values?: unknown[]) {
+      if (!values && sql.includes(";")) {
+        await client.exec(sql);
+        return { rows: [] as T[] };
+      }
+      return client.query<T>(sql, values);
+    },
+  });
+  const db: Database = {
+    ...adapt(pg),
+    transaction: (fn) => pg.transaction((tx) => fn(adapt(tx))),
+  };
+  try {
+    assert.equal(await migrateOperatorDatabase(db), false);
+    const versions = await db.query<{ version: number }>(
+      "SELECT version FROM enrichment_migrations ORDER BY version",
+    );
+    assert.deepEqual(
+      versions.rows.map((r) => r.version),
+      [1, 3, 4, 5],
+    );
+    assert.equal(await migrateOperatorDatabase(db), false);
+    await db.query("CREATE TABLE founders(handle text PRIMARY KEY)");
+    assert.equal(await migrateOperatorDatabase(db), true);
+    assert.equal(await migrateOperatorDatabase(db), true);
+    await db.query("INSERT INTO founders(handle) VALUES ('synthetic')");
+    assert.equal(
+      (
+        await db.query(
+          "SELECT founder_key FROM enrichment_founder_intake WHERE founder_key='synthetic'",
+        )
+      ).rows.length,
+      1,
+    );
+  } finally {
+    await pg.close();
+  }
 });

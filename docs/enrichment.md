@@ -308,6 +308,10 @@ The flag does not collect a new tweet or establish historical certainty for a
 legacy snapshot. It does not change map or directory-list suppression behavior.
 Verify broader deletion and backup replay separately before production rollout.
 
+The migration command also supports an empty database. It applies the core
+schema and skips legacy intake when `public.founders` is absent. Run it again
+after adding the legacy founder table to install that optional intake trigger.
+
 ## Checked Founder DNA portraits
 
 The portrait driver uses saved evidence and the existing generation transport.
