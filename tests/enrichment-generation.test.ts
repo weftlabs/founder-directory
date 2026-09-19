@@ -7,6 +7,8 @@ import { prepareAnalysis } from "../lib/enrichment/analysis";
 import { stableDigest } from "../lib/enrichment/contracts";
 import { buildAnalysisInput } from "../lib/enrichment/recipes";
 import { founderPortraitRecipe } from "../lib/enrichment/founder-portrait";
+import { parseFounderDnaProfile } from "../lib/founder-dna";
+import { founderDnaFixture } from "./fixtures/founder-dna";
 import type { WeftTransport } from "../lib/weft";
 
 function fixture(
@@ -250,6 +252,54 @@ test("DeepSeek thinking policy matches only the actual OpenRouter Flash model", 
       temperature: 0.5,
       max_tokens: 2400,
     });
+  }
+});
+
+test("captured portrait schema separates local fact references from source UUIDs", async () => {
+  const f = fixture();
+  f.request.recipe = founderPortraitRecipe(
+    { provider: "weft/openrouter", model: "synthetic", revision: null },
+    "fixture",
+  );
+  await f.run();
+  const schema = JSON.parse(String(f.requests[0].body)).response_format
+    .json_schema.schema;
+  const factIdSchemas = [
+    schema.properties.facts.items.properties.id,
+    schema.properties.factIds.items,
+    schema.properties.roast.properties.lines.items.properties.factIds.items,
+  ];
+  const validIds = Array.from({ length: 8 }, (_, i) => `f${i + 1}`);
+  const sourceId = "11111111-2222-4333-8444-555555555555";
+  for (const idSchema of factIdSchemas) {
+    assert.equal(idSchema.type, "string");
+    assert.deepEqual(idSchema.enum, validIds);
+    assert.equal(idSchema.enum.includes(sourceId), false);
+    assert.equal(idSchema.enum.includes("f9"), false);
+    assert.ok(validIds.every((id) => idSchema.enum.includes(id)));
+  }
+  // Source references keep their separate shape; they are not local fact IDs.
+  assert.deepEqual(schema.properties.facts.items.properties.evidenceIds.items, {
+    type: "string",
+  });
+});
+
+test("portrait runtime still rejects source IDs and absent facts in either reference field", () => {
+  const profile = founderDnaFixture();
+  profile.facts[0].id = "f1";
+  profile.portrait.factIds = ["f1"];
+  profile.portrait.roast.lines[0].factIds = ["f1"];
+  assert.equal(parseFounderDnaProfile(profile).facts[0].id, "f1");
+  for (const field of ["portrait", "roast"] as const) {
+    for (const invalid of [profile.sources[0].id, "f8"]) {
+      const broken = structuredClone(profile);
+      if (field === "portrait") broken.portrait.factIds = [invalid];
+      else broken.portrait.roast.lines[0].factIds = [invalid];
+      assert.throws(
+        () => parseFounderDnaProfile(broken),
+        /invalid_dna_reference/,
+      );
+    }
   }
 });
 
