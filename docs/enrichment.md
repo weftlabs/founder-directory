@@ -346,7 +346,10 @@ payment receipt. Estimated usage above the cap stops the run after retaining the
 response. Fact checks require `supported`, confidence at least 0.8 and support
 probability at least 0.8. Each fact is checked only against its own cited source
 subset; other sources cannot rescue an unsupported citation. Editorial prose also permits `grounded_editorial` at
-those thresholds, which allows humor without adding factual claims. Every check
+those thresholds, which allows humor without adding factual claims. Each roast
+line is bound to its own fact citations; other displayed prose is bound to the
+portrait's fact citations. The private request and validation report retain the
+clause-to-fact-to-source mapping. Uncited facts or sources cannot support a clause. Every check
 and its probabilities remain in the private validation report. Failed checks do
 not replace a published portrait.
 

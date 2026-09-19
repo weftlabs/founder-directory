@@ -19,7 +19,12 @@ import { founderDnaFixture } from "./fixtures/founder-dna";
 import { readFounderDnaProfile } from "../lib/founder-dna-data";
 import { MODEL, type Request } from "../lib/typesafe-poc";
 async function verifyPortrait(
-  scenario: "unchanged replay" | "wrong citation" | "new product",
+  scenario:
+    | "unchanged replay"
+    | "wrong citation"
+    | "new product"
+    | "wrong roast citation"
+    | "wrong portrait citation",
 ) {
   const pg = new PGlite();
   const adapt = (client: Pick<PGlite, "query" | "exec">): Sql => ({
@@ -147,12 +152,36 @@ async function verifyPortrait(
             model: MODEL,
             answers: Object.fromEntries(
               Object.entries(request.questions).map(([key, q]) => {
+                const scope = key.startsWith("prose_")
+                  ? state.prose?.[Number(key.slice(6))]
+                  : undefined;
+                if (key.startsWith("prose_")) {
+                  assert.ok(scope);
+                  const citedFacts = state.claims.filter(
+                    (fact: { id: string }) => scope.factIds.includes(fact.id),
+                  );
+                  assert.deepEqual(
+                    new Set(scope.sourceIds),
+                    new Set(
+                      citedFacts.flatMap(
+                        (fact: { sourceIds: string[] }) => fact.sourceIds,
+                      ),
+                    ),
+                  );
+                  assert.match(q.instructions, /Use only state\.prose/);
+                }
+                const proseSupported =
+                  !scope ||
+                  !scope.text.includes("Zurich") ||
+                  scope.sourceIds.includes(wrongEvidenceId);
                 const choice = key.startsWith("claim_")
-                  ? claimSupported
+                  ? (key === "claim_0" ? claimSupported : true)
                     ? "supported"
                     : "unsupported"
                   : key.startsWith("prose_")
-                    ? "grounded_editorial"
+                    ? proseSupported
+                      ? "grounded_editorial"
+                      : "unsupported"
                     : "unknown";
                 return [
                   key,
@@ -194,6 +223,24 @@ async function verifyPortrait(
           },
         ],
       };
+      if (
+        scenario === "wrong roast citation" ||
+        scenario === "wrong portrait citation"
+      ) {
+        draft.facts.push({
+          id: "fact-location",
+          text: "Alex lives in Zurich.",
+          evidenceIds: [wrongEvidenceId],
+        });
+        if (scenario === "wrong roast citation") {
+          draft.factIds = ["fact-design", "fact-location"];
+          draft.roast.lines = [
+            { text: "Alex lives in Zurich.", factIds: ["fact-design"] },
+          ];
+        } else {
+          draft.shareText = "Alex lives in Zurich.";
+        }
+      }
       const rawResponse = JSON.stringify(draft);
       const request = await store.planCollection({
         scope: "test",
@@ -239,17 +286,39 @@ async function verifyPortrait(
       executeGeneration,
       executeDecision,
     });
-    if (scenario === "wrong citation") {
+    if (
+      scenario === "wrong citation" ||
+      scenario === "wrong roast citation" ||
+      scenario === "wrong portrait citation"
+    ) {
       assert.equal(result.status, "failed");
       assert.equal(result.output, null);
-      const saved = await db.query<{ validation_report: { error: string } }>(
-        "SELECT validation_report FROM enrichment_analysis_runs WHERE id=$1",
-        [result.analysisId],
-      );
+      const saved = await db.query<{
+        validation_report: {
+          error: string;
+          proseCitations: Record<
+            string,
+            { path: string; factIds: string[]; sourceIds: string[] }
+          >;
+        };
+      }>("SELECT validation_report FROM enrichment_analysis_runs WHERE id=$1", [
+        result.analysisId,
+      ]);
       assert.equal(
         saved.rows[0].validation_report.error,
-        "portrait_fact_not_supported",
+        scenario === "wrong citation"
+          ? "portrait_fact_not_supported"
+          : "portrait_prose_not_grounded",
       );
+      if (scenario !== "wrong citation") {
+        const path =
+          scenario === "wrong roast citation" ? "roast.lines.0" : "shareText";
+        const savedScope = Object.values(
+          saved.rows[0].validation_report.proseCitations,
+        ).find((scope) => scope.path === path);
+        assert.deepEqual(savedScope?.factIds, ["fact-design"]);
+        assert.deepEqual(savedScope?.sourceIds, [evidenceId]);
+      }
       await assert.rejects(
         dna.approvePortrait(entityId, result.analysisId, "reviewer"),
       );
@@ -371,5 +440,7 @@ for (const scenario of [
   "unchanged replay",
   "wrong citation",
   "new product",
+  "wrong roast citation",
+  "wrong portrait citation",
 ] as const)
   test(`retained portrait: ${scenario}`, () => verifyPortrait(scenario));
