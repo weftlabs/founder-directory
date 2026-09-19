@@ -14,7 +14,7 @@ import {
   runFounderPortrait,
 } from "../lib/enrichment/founder-portrait";
 import { retainedJev } from "../lib/enrichment/retained-jev";
-import { stableDigest } from "../lib/enrichment/contracts";
+import { stableDigest, stableUuid } from "../lib/enrichment/contracts";
 import { founderDnaFixture } from "./fixtures/founder-dna";
 import { readFounderDnaProfile } from "../lib/founder-dna-data";
 import { MODEL, type Request } from "../lib/typesafe-poc";
@@ -24,7 +24,10 @@ async function verifyPortrait(
     | "wrong citation"
     | "new product"
     | "wrong roast citation"
-    | "wrong portrait citation",
+    | "wrong portrait citation"
+    | "long judge request"
+    | "maximum profile"
+    | "oversized evidence",
 ) {
   const pg = new PGlite();
   const adapt = (client: Pick<PGlite, "query" | "exec">): Sql => ({
@@ -85,6 +88,26 @@ async function verifyPortrait(
     });
     await store.linkEvidence(entityId, wrongEvidenceId, "bio");
     const selectedEvidenceIds = [evidenceId, wrongEvidenceId];
+    if (
+      scenario === "long judge request" ||
+      scenario === "maximum profile" ||
+      scenario === "oversized evidence"
+    ) {
+      for (let i = 0; i < 4; i++) {
+        const id = await store.addEvidence({
+          artifactId: raw.id,
+          extractorVersion: "v1",
+          locator: `long-${i}`,
+          excerpt: "Designer building scheduling tools. ".repeat(
+            scenario === "oversized evidence" ? 1200 : 60,
+          ),
+          payload: {},
+          sourceUrl: `https://example.com/long-${i}`,
+        });
+        await store.linkEvidence(entityId, id, "bio");
+        selectedEvidenceIds.push(id);
+      }
+    }
     const releaseId = await store.createRelease({
       stages: ["founder_dna", "founder_portrait"],
       recipes: { founder_portrait: stableDigest(recipe) },
@@ -138,15 +161,29 @@ async function verifyPortrait(
         // The mock judge uses the claim's own cited scope, not other evidence in the state.
         const claim = state.claims[0];
         assert.equal(typeof claim, "object");
-        const claimSupported = claim.sourceIds.includes(evidenceId);
-        assert.deepEqual(
-          claim.evidence.map((e: { id: string }) => e.id),
-          claim.sourceIds,
-        );
+        const sourceIds = (refs: number[]) =>
+          refs.map((index) => state.evidence[index].id);
+        const claimSupported = sourceIds(claim.sourceRefs).includes(evidenceId);
         assert.match(
           request.questions.claim_0.instructions,
-          /only.*claims\[0\]\.evidence/i,
+          /only.*claims\[0\].*sourceRefs/i,
         );
+        assert.deepEqual(
+          state.evidence.map((source: { text: string }) => source.text).sort(),
+          (
+            await new (
+              await import("../lib/enrichment/worker-store")
+            ).WorkerStore(db).evidenceByIds(entityId, selectedEvidenceIds)
+          )
+            .map((source) => source.text)
+            .sort(),
+        );
+        assert.ok(Buffer.byteLength(String(init?.body)) <= 40000);
+        if (scenario === "long judge request") {
+          assert.equal(state.claims.length, 6);
+          assert.equal(state.prose.length, 17);
+          assert.equal(state.evidence.length, 6);
+        }
         return new Response(
           JSON.stringify({
             model: MODEL,
@@ -157,23 +194,24 @@ async function verifyPortrait(
                   : undefined;
                 if (key.startsWith("prose_")) {
                   assert.ok(scope);
-                  const citedFacts = state.claims.filter(
-                    (fact: { id: string }) => scope.factIds.includes(fact.id),
-                  );
-                  assert.deepEqual(
-                    new Set(scope.sourceIds),
-                    new Set(
-                      citedFacts.flatMap(
-                        (fact: { sourceIds: string[] }) => fact.sourceIds,
-                      ),
+                  assert.ok(
+                    scope.factRefs.every(
+                      (index: number) => state.claims[index],
                     ),
                   );
-                  assert.match(q.instructions, /Use only state\.prose/);
+                  assert.match(q.instructions, /only state\.prose/);
                 }
+                const citedSourceIds = scope
+                  ? sourceIds(
+                      scope.factRefs.flatMap(
+                        (index: number) => state.claims[index].sourceRefs,
+                      ),
+                    )
+                  : [];
                 const proseSupported =
                   !scope ||
                   !scope.text.includes("Zurich") ||
-                  scope.sourceIds.includes(wrongEvidenceId);
+                  citedSourceIds.includes(wrongEvidenceId);
                 const choice = key.startsWith("claim_")
                   ? (key === "claim_0" ? claimSupported : true)
                     ? "supported"
@@ -241,6 +279,69 @@ async function verifyPortrait(
           draft.shareText = "Alex lives in Zurich.";
         }
       }
+      if (scenario === "long judge request" || scenario === "maximum profile") {
+        const repeated = (limit: number) =>
+          "Design scheduling tools. ".repeat(60).slice(0, limit);
+        draft.facts = Array.from(
+          { length: scenario === "maximum profile" ? 8 : 6 },
+          (_, i) => ({
+            id: i === 0 ? "fact-design" : randomUUID(),
+            text: repeated(1200),
+            evidenceIds: selectedEvidenceIds,
+          }),
+        );
+        draft.factIds = draft.facts.map((f) => f.id);
+        draft.archetype = {
+          title: repeated(100),
+          kicker: repeated(100),
+          hook: repeated(200),
+          summary: repeated(500),
+          tags: Array.from({ length: 4 }, () => repeated(40)),
+        };
+        draft.roast = {
+          title: repeated(100),
+          lines: Array.from({ length: 3 }, () => ({
+            text: repeated(300),
+            factIds: draft.factIds,
+          })),
+        };
+        draft.story = {
+          title: repeated(100),
+          before: repeated(240),
+          after: repeated(240),
+          connection: repeated(500),
+        };
+        draft.shareText = repeated(260);
+        if (scenario === "maximum profile") {
+          draft.facts = Array.from({ length: 8 }, (_, i) => ({
+            id: i === 0 ? "fact-design" : randomUUID().padEnd(120, "x"),
+            text: repeated(1200),
+            evidenceIds: selectedEvidenceIds,
+          }));
+          draft.factIds = draft.facts.map((fact) => fact.id);
+          draft.archetype = {
+            title: repeated(120),
+            kicker: repeated(120),
+            hook: repeated(240),
+            summary: repeated(600),
+            tags: Array.from({ length: 5 }, () => repeated(80)),
+          };
+          draft.roast = {
+            title: repeated(120),
+            lines: Array.from({ length: 5 }, () => ({
+              text: repeated(400),
+              factIds: draft.factIds,
+            })),
+          };
+          draft.story = {
+            title: repeated(120),
+            before: repeated(240),
+            after: repeated(240),
+            connection: repeated(600),
+          };
+          draft.shareText = repeated(1200);
+        }
+      }
       const rawResponse = JSON.stringify(draft);
       const request = await store.planCollection({
         scope: "test",
@@ -282,6 +383,18 @@ async function verifyPortrait(
       model,
       codeDigest: "test",
     };
+    if (scenario === "oversized evidence") {
+      await assert.rejects(
+        runFounderPortrait(store, input, {
+          executeGeneration,
+          executeDecision,
+        }),
+        /portrait_judge_request_too_large/,
+      );
+      assert.equal(textCalls, 0);
+      assert.equal(judgeCalls, 0);
+      return;
+    }
     const result = await runFounderPortrait(store, input, {
       executeGeneration,
       executeDecision,
@@ -324,7 +437,55 @@ async function verifyPortrait(
       );
       return;
     }
-    assert.equal(result.status, "succeeded");
+    assert.equal(
+      result.status,
+      "succeeded",
+      JSON.stringify(
+        (
+          await db.query(
+            "SELECT validation_report->>'error' AS error FROM enrichment_analysis_runs WHERE id=$1",
+            [result.analysisId],
+          )
+        ).rows,
+      ),
+    );
+    const savedIdentity = (
+      await db.query<{
+        input_digest: string;
+        recipe_digest: string;
+        validation_report: {
+          generationRunId: string;
+          judgeRecipeVersion: string;
+          judgeRequestBytes: number;
+        };
+      }>(
+        "SELECT input_digest,recipe_digest,validation_report FROM enrichment_analysis_runs WHERE id=$1",
+        [result.analysisId],
+      )
+    ).rows[0];
+    assert.equal(
+      savedIdentity.validation_report.generationRunId,
+      stableUuid({
+        entityId,
+        inputDigest: savedIdentity.input_digest,
+        recipeDigest: savedIdentity.recipe_digest,
+        founderAnalysisId,
+        releaseId,
+        generation: 0,
+      }),
+    );
+    assert.notEqual(
+      result.analysisId,
+      savedIdentity.validation_report.generationRunId,
+    );
+    assert.equal(
+      savedIdentity.validation_report.judgeRecipeVersion,
+      "cited-founder-portrait-judge-v4",
+    );
+    if (scenario === "long judge request" || scenario === "maximum profile")
+      console.log(
+        `Synthetic compact judge request: ${savedIdentity.validation_report.judgeRequestBytes} bytes`,
+      );
     assert.equal(result.output?.profile.name, "Alex Example");
     assert.deepEqual(result.output?.profile.products, []);
     const replay = await runFounderPortrait(store, input, {
@@ -442,5 +603,8 @@ for (const scenario of [
   "new product",
   "wrong roast citation",
   "wrong portrait citation",
+  "long judge request",
+  "maximum profile",
+  "oversized evidence",
 ] as const)
   test(`retained portrait: ${scenario}`, () => verifyPortrait(scenario));

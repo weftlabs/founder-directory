@@ -340,7 +340,23 @@ are not supplied as personal evidence to the generator or judge. Failed or uncer
 retry. An approved aggregate budget bounds the full run; per-call caps do not
 replace that budget.
 
-Direct Jev requests are bounded to 40,000 bytes and reserve the full per-call cap.
+Generation and judgment have separate version identities. The unchanged v3
+generation recipe keeps its original generation run ID; judge v4 creates a new
+analysis/check ID. To resume checking a retained generation, call the same driver
+with its original input, generation `codeDigest`, approved recipe manifest and
+transport scope/policy/provider/price cap. The generation adapter reuses that
+retained response before any dispatch. Record the current runtime/checker version
+separately. A generation prompt, model, source or recipe change requires new
+generation provenance; never carry an old digest across such a change.
+
+Direct Jev requests are bounded to 40,000 serialized UTF-8 bytes and reserve the
+full per-call cap. Evidence and common judgment rules appear once. Numeric source
+and fact references preserve exact citation scopes; the retained request and
+validation report keep the mapping. A source-only size check runs before any
+generation. The complete generated request is checked again before judging; if it
+does not fit, the failure report retains its byte count and no judge call occurs.
+No evidence is truncated. Arbitrarily long or multibyte inputs are not guaranteed
+to fit merely because their individual fields pass the public parser.
 Token usage at $0.042 per million input tokens is an estimate, not a settled
 payment receipt. Estimated usage above the cap stops the run after retaining the
 response. Fact checks require `supported`, confidence at least 0.8 and support
