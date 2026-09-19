@@ -44,8 +44,10 @@ Rollback rechecks the previous release; it cannot restore withdrawn material.
 
 Existing founder identities match on kind and normalized handle. Conflicting known
 source author IDs block a match, including a reassigned handle. Missing source IDs
-are reported as unverified handle matches in the dry-run summary and retained
-import provenance; review these mappings before a production import. Product identity
+are reported as unverified handle matches in the dry-run summary. Stage rejects
+an unverified match when the source and destination entity IDs differ. Retain
+matching source author ID evidence before retrying; a matching handle alone does
+not prove identity. Same-ID replay remains safe. Product identity
 uses the established owner-and-product-name key. The importer retains the source
 identity map and original artifact origins in a private provenance artifact.
 Captured bytes and metadata remain unchanged. Conflicting identities, suppressed
