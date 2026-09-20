@@ -4,20 +4,55 @@ import { directoryDatabaseUrl } from "./founder-database-config";
 import { neon } from "@neondatabase/serverless";
 import { postgresDatabase, type Sql } from "./enrichment/db";
 import { parseFounderDnaProfile, type FounderDnaResult } from "./founder-dna";
-export async function readFounderDnaProfile(
+async function parseProfileRead(
   db: Sql,
-  handle: string,
+  text: string,
+  values: unknown[],
 ): Promise<FounderDnaResult> {
-  if (!/^[a-zA-Z0-9_]{1,15}$/.test(handle)) return { status: "not_found" };
   const { rows } = await db.query<{ status: string; profile: unknown }>(
-    "SELECT status, profile FROM founder_dna_profile_reads WHERE handle=lower($1)",
-    [handle],
+    text,
+    values,
   );
   const row = rows[0];
   if (!row) return { status: "not_found" };
   if (row.status === "hidden") return { status: "hidden" };
   if (row.status !== "ready") return { status: "unavailable" };
   return { status: "ready", profile: parseFounderDnaProfile(row.profile) };
+}
+export async function readFounderDnaProfile(
+  db: Sql,
+  handle: string,
+): Promise<FounderDnaResult> {
+  if (!/^[a-zA-Z0-9_]{1,15}$/.test(handle)) return { status: "not_found" };
+  return parseProfileRead(
+    db,
+    "SELECT status, profile FROM founder_dna_profile_reads WHERE handle=lower($1)",
+    [handle],
+  );
+}
+export async function readFounderDnaReleaseProfile(
+  db: Sql,
+  releaseId: string,
+  handle: string,
+): Promise<FounderDnaResult> {
+  if (
+    !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,119}$/.test(releaseId) ||
+    !/^[a-zA-Z0-9_]{1,15}$/.test(handle)
+  )
+    return { status: "not_found" };
+  const release = (
+    await db.query<{ status: string }>(
+      "SELECT status FROM founder_dna_releases WHERE id=$1",
+      [releaseId],
+    )
+  ).rows[0];
+  if (!release || release.status !== "validated")
+    return { status: "unavailable" };
+  return parseProfileRead(
+    db,
+    "SELECT status,profile FROM founder_dna_release_profile_reads($1) WHERE handle=lower($2)",
+    [releaseId, handle],
+  );
 }
 export async function loadFounderDnaProfile(
   handle: string,

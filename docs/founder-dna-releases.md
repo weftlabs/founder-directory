@@ -28,6 +28,8 @@ pnpm exec tsx scripts/founder-dna-release.ts stage \
   --database-url "$DESTINATION_DATABASE_URL" --file private-bundle.json --confirm-write
 pnpm exec tsx scripts/founder-dna-release.ts validate \
   --database-url "$DESTINATION_DATABASE_URL" --release RELEASE_ID --confirm-write
+pnpm exec tsx scripts/founder-dna-release.ts preview \
+  --database-url "$DESTINATION_DATABASE_URL" --release RELEASE_ID --handle HANDLE
 pnpm exec tsx scripts/founder-dna-release.ts activate \
   --database-url "$DESTINATION_DATABASE_URL" --release RELEASE_ID --confirm-write
 pnpm exec tsx scripts/founder-dna-release.ts rollback \
@@ -44,6 +46,12 @@ an interrupted stage leaves no partial data. Repeating the same bundle is safe.
 Stage does not activate it. Validate and activate recheck eligibility. Failed
 upload, validation or activation leaves the previous active release selected.
 Rollback rechecks the previous release; it cannot restore withdrawn material.
+
+Preview reads one validated release by explicit ID through the same release-scoped
+projection as the public reader. It does not change the active pointer and cannot
+preview a staging release. The command returns only the bounded public profile state.
+Withdrawal, expiry and suppression still return hidden or unavailable state. There
+is no public URL, query parameter or header for selecting an inactive release.
 
 Existing founder identities match on kind and normalized handle. Conflicting known
 source author IDs block a match, including a reassigned handle. Missing source IDs

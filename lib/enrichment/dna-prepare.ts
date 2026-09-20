@@ -29,6 +29,10 @@ export type PreparationManifest = {
     portraitAnalysisId: string;
   }[];
 };
+export type FrozenCohortSelection = {
+  version: 1;
+  entityIds: string[];
+};
 function record(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
@@ -84,6 +88,60 @@ export function parsePreparationManifest(value: unknown): PreparationManifest {
     scope: value.scope,
     profiles,
   };
+}
+export function parseFrozenCohortSelection(
+  value: unknown,
+): FrozenCohortSelection {
+  if (
+    !record(value) ||
+    Object.keys(value).sort().join() !== "entityIds,version" ||
+    value.version !== 1 ||
+    !Array.isArray(value.entityIds) ||
+    !value.entityIds.length ||
+    value.entityIds.length > 1000 ||
+    value.entityIds.some((id) => !uuid(id))
+  )
+    throw new Error("invalid_frozen_cohort_selection");
+  const entityIds = value.entityIds.map((id) => id.toLowerCase()).sort();
+  if (new Set(entityIds).size !== entityIds.length)
+    throw new Error("duplicate_frozen_cohort_entity");
+  return { version: 1, entityIds };
+}
+
+export async function planPreparationManifest(
+  db: Database,
+  releaseId: string,
+  scope: string,
+  input: unknown,
+): Promise<PreparationManifest> {
+  if (!label(releaseId) || !label(scope))
+    throw new Error("invalid_preparation_manifest_identity");
+  const selection = parseFrozenCohortSelection(input);
+  const profiles = (
+    await db.query<{
+      entityId: string;
+      analysisId: string;
+      portraitAnalysisId: string;
+    }>(
+      `SELECT entity_id AS "entityId",analysis_id AS "analysisId",portrait_analysis_id AS "portraitAnalysisId"
+       FROM founder_dna_eligible_portrait_publications
+       WHERE entity_id=ANY($1::uuid[]) ORDER BY entity_id`,
+      [selection.entityIds],
+    )
+  ).rows;
+  if (
+    profiles.length !== selection.entityIds.length ||
+    profiles.some(
+      (profile, index) => profile.entityId !== selection.entityIds[index],
+    )
+  )
+    throw new Error("cohort_selection_incomplete_or_ineligible");
+  return parsePreparationManifest({
+    version: 1,
+    releaseId,
+    scope,
+    profiles,
+  });
 }
 
 export async function prepareFounderDnaRelease(db: Database, input: unknown) {

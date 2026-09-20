@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { main } from "../scripts/founder-dna-prepare";
-import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -14,6 +14,7 @@ import {
 import { EnrichmentStore } from "../lib/enrichment/store";
 import { DnaPublicationStore } from "../lib/enrichment/dna-store";
 import {
+  parseFrozenCohortSelection,
   parsePreparationManifest,
   type PreparationManifest,
 } from "../lib/enrichment/dna-prepare";
@@ -51,6 +52,19 @@ test("manifest rejects display JSON, duplicate owners and unbounded cohorts", ()
     { ...manifest, version: 2 },
   ])
     assert.throws(() => parsePreparationManifest(invalid));
+  assert.deepEqual(
+    parseFrozenCohortSelection({
+      version: 1,
+      entityIds: [profile.entityId.toUpperCase()],
+    }),
+    { version: 1, entityIds: [profile.entityId] },
+  );
+  assert.throws(() =>
+    parseFrozenCohortSelection({
+      version: 1,
+      entityIds: [profile.entityId, profile.entityId],
+    }),
+  );
 });
 
 test("database fallback and paid env alone cannot authorize the command", async () => {
@@ -74,6 +88,43 @@ test("database fallback and paid env alone cannot authorize the command", async 
     /paid_connections_not_enabled/,
   );
   assert.equal(connected, false);
+});
+
+test("cohort planning rejects falsey JSON through its strict parser", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "founder-cohort-falsey-"));
+  const memberFile = join(directory, "members.json");
+  try {
+    await writeFile(memberFile, "null");
+    await assert.rejects(
+      main(
+        [
+          "cohort-plan",
+          "--database-url",
+          "postgres://explicit-test-only",
+          "--release",
+          "test-release",
+          "--scope",
+          "test-scope",
+          "--members",
+          memberFile,
+          "--file",
+          join(directory, "cohort.json"),
+          "--confirm-write",
+        ],
+        {
+          connect: () => ({
+            query: async () => assert.fail("invalid input must not query"),
+            transaction: async () =>
+              assert.fail("invalid input must not transact"),
+            close: async () => {},
+          }),
+        },
+      ),
+      /invalid_frozen_cohort_selection/,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("default command wiring stages retained portraits, captures paid mock decisions and replays without network", async () => {
@@ -161,6 +212,9 @@ test("default command wiring stages retained portraits, captures paid mock decis
     }) as typeof fetch,
   };
   const file = join(directory, "cohort.json"),
+    memberFile = join(directory, "cohort-members.json"),
+    derivedFile = join(directory, "derived-cohort.json"),
+    replayDerivedFile = join(directory, "derived-cohort-replay.json"),
     policyFile = join(directory, "policy.json"),
     batchFile = join(directory, "connection-batches.json");
   const prepare = [
@@ -199,6 +253,20 @@ test("default command wiring stages retained portraits, captures paid mock decis
     scope,
     "--file",
     batchFile,
+    "--confirm-write",
+  ];
+  const cohortPlan = [
+    "cohort-plan",
+    "--database-url",
+    "postgres://explicit-test-only",
+    "--release",
+    releaseId,
+    "--scope",
+    scope,
+    "--members",
+    memberFile,
+    "--file",
+    derivedFile,
     "--confirm-write",
   ];
   const count = async (table: string) =>
@@ -286,8 +354,21 @@ test("default command wiring stages retained portraits, captures paid mock decis
       manifest.profiles.push({ entityId, analysisId, portraitAnalysisId });
     }
     await writeFile(file, JSON.stringify(manifest));
+    await writeFile(
+      memberFile,
+      JSON.stringify({
+        version: 1,
+        entityIds: manifest.profiles
+          .map((profile) => profile.entityId)
+          .reverse(),
+      }),
+    );
     await writeFile(policyFile, JSON.stringify(policy));
     await assert.rejects(main(prepare, dependencies), /portrait_not_approved/);
+    await assert.rejects(
+      main(cohortPlan, dependencies),
+      /cohort_selection_incomplete_or_ineligible/,
+    );
     assert.equal(await count("founder_dna_portrait_publications"), 0);
     assert.equal(await count("founder_dna_release_profiles"), 0);
     for (const profile of manifest.profiles)
@@ -296,8 +377,31 @@ test("default command wiring stages retained portraits, captures paid mock decis
         profile.portraitAnalysisId,
         "fixture-reviewer",
       );
-    await main(prepare, dependencies);
-    await main(prepare, dependencies);
+    await main(cohortPlan, dependencies);
+    const replayCohortPlan = [...cohortPlan];
+    replayCohortPlan[replayCohortPlan.indexOf("--file") + 1] =
+      replayDerivedFile;
+    await main(replayCohortPlan, dependencies);
+    assert.equal(
+      await readFile(replayDerivedFile, "utf8"),
+      await readFile(derivedFile, "utf8"),
+    );
+    assert.deepEqual(
+      JSON.parse(await readFile(derivedFile, "utf8")),
+      parsePreparationManifest(manifest),
+    );
+    assert.equal((await stat(derivedFile)).mode & 0o777, 0o600);
+    assert.deepEqual(JSON.parse(output.at(-1)!), {
+      releaseId,
+      profiles: 3,
+      manifestHash: JSON.parse(output.at(-1)!).manifestHash,
+    });
+    assert.match(JSON.parse(output.at(-1)!).manifestHash, /^[a-f0-9]{64}$/);
+    await assert.rejects(main(cohortPlan, dependencies), /EEXIST/);
+    const prepareDerived = [...prepare];
+    prepareDerived[prepareDerived.indexOf("--file") + 1] = derivedFile;
+    await main(prepareDerived, dependencies);
+    await main(prepareDerived, dependencies);
     assert.equal(await count("founder_dna_release_profiles"), 3);
     assert.deepEqual(JSON.parse(output.at(-1)!), {
       releaseId,

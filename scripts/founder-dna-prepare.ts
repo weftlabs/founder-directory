@@ -6,21 +6,25 @@ import { pathToFileURL } from "node:url";
 import { postgresDatabase, type Database } from "../lib/enrichment/db";
 import {
   parsePreparationManifest,
+  planPreparationManifest,
   planFounderConnectionBatches,
   prepareFounderDnaRelease,
   prepareFounderConnections,
   validateConnectionOptions,
   type ConnectionOptions,
 } from "../lib/enrichment/dna-prepare";
+import { stableDigest } from "../lib/enrichment/contracts";
 import { parseConnectionBatchManifest } from "../lib/enrichment/founder-connections";
 
 const HELP = `Founder DNA source release preparation (no environment files are loaded)
+  cohort-plan --database-url URL --release ID --scope NAME --members PRIVATE_MEMBERS.json --file PRIVATE_COHORT.json --confirm-write
   prepare --database-url URL --file PRIVATE_COHORT.json --confirm-write
   connections-plan --database-url URL --release ID --scope NAME --file PRIVATE_BATCHES.json --confirm-write
   connections --database-url URL --release ID --scope NAME --policy JEV_POLICY.json --budget UUID --jev-cap-micros INTEGER --max-requests INTEGER [--batch-file PRIVATE_BATCHES.json --batch UUID] [--mode replay|acquire] [--allow-paid] --confirm-write
 
 Pass --database-url explicitly; database environment variables are never used.
-Prepare reads approved retained portraits, stages 1–1000 profiles and can resume unchanged work.
+Cohort-plan derives analysis IDs from a frozen entity set and current eligible portrait approvals.
+Prepare reads that generated cohort, stages 1–1000 profiles and can resume unchanged work.
 Connections defaults to replay (no network). Acquire also requires --allow-paid,
 ENRICHMENT_ALLOW_PAID=1 and TYPESAFE_AI_API_KEY (or TYPESAGE_AI_API_KEY/TYPESAFE_API_KEY).
 Acquire requires one immutable manifest batch. Each batch contains at most 25 pairs.
@@ -66,6 +70,7 @@ export async function main(
     return;
   }
   if (
+    command !== "cohort-plan" &&
     command !== "prepare" &&
     command !== "connections-plan" &&
     command !== "connections"
@@ -76,6 +81,7 @@ export async function main(
     options: {
       "database-url": { type: "string" },
       file: { type: "string" },
+      members: { type: "string" },
       release: { type: "string" },
       scope: { type: "string" },
       policy: { type: "string" },
@@ -112,6 +118,8 @@ export async function main(
     command === "prepare"
       ? parsePreparationManifest(await jsonFile(required("file")))
       : undefined;
+  const cohortSelection =
+    command === "cohort-plan" ? await jsonFile(required("members")) : undefined;
   const batchManifest =
     command === "connections" && values["batch-file"]
       ? parseConnectionBatchManifest(await jsonFile(required("batch-file")))
@@ -136,7 +144,20 @@ export async function main(
   const db = (dependencies.connect ?? postgresDatabase)(values["database-url"]);
   try {
     let result: unknown;
-    if (manifest) result = await prepareFounderDnaRelease(db, manifest);
+    if (command === "cohort-plan") {
+      const plan = await planPreparationManifest(
+        db,
+        required("release"),
+        required("scope"),
+        cohortSelection,
+      );
+      await writeJsonExclusive(required("file"), plan);
+      result = {
+        releaseId: plan.releaseId,
+        profiles: plan.profiles.length,
+        manifestHash: stableDigest(plan),
+      };
+    } else if (manifest) result = await prepareFounderDnaRelease(db, manifest);
     else if (command === "connections-plan") {
       const plan = await planFounderConnectionBatches(
         db,

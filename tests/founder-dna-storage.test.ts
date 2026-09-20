@@ -9,8 +9,12 @@ import {
 } from "../lib/enrichment/db";
 import { EnrichmentStore } from "../lib/enrichment/store";
 import { DnaPublicationStore } from "../lib/enrichment/dna-store";
-import { readFounderDnaProfile } from "../lib/founder-dna-data";
+import {
+  readFounderDnaProfile,
+  readFounderDnaReleaseProfile,
+} from "../lib/founder-dna-data";
 import { founderDnaFixture } from "./fixtures/founder-dna";
+import { main as releaseMain } from "../scripts/founder-dna-release";
 export async function dnaDatabase() {
   const pg = new PGlite();
   const adapt = (client: Pick<PGlite, "query" | "exec">): Sql => ({
@@ -112,7 +116,50 @@ test("data releases stage without exposure, activate atomically, roll back and o
     assert.equal(first.status, "ready");
     if (first.status === "ready")
       assert.equal(first.profile.releaseId, "data-one");
+    assert.deepEqual(
+      await readFounderDnaReleaseProfile(db, "data-two", "example"),
+      { status: "unavailable" },
+    );
     await dna.validateRelease("data-two");
+    const inactive = await readFounderDnaReleaseProfile(
+      db,
+      "data-two",
+      "example",
+    );
+    assert.equal(inactive.status, "ready");
+    if (inactive.status === "ready")
+      assert.equal(inactive.profile.releaseId, "data-two");
+    let closed = false;
+    assert.deepEqual(
+      await releaseMain(
+        [
+          "preview",
+          "--database-url",
+          "postgres://explicit-test-only",
+          "--release",
+          "data-two",
+          "--handle",
+          "example",
+        ],
+        {
+          connect: (url) => {
+            assert.equal(url, "postgres://explicit-test-only");
+            return {
+              ...db,
+              close: async () => {
+                closed = true;
+              },
+            };
+          },
+        },
+      ),
+      { command: "preview", release: "data-two", result: inactive },
+    );
+    assert.equal(closed, true);
+    const stillFirst = await readFounderDnaProfile(db, "example");
+    assert.equal(stillFirst.status, "ready");
+    if (stillFirst.status === "ready")
+      assert.equal(stillFirst.profile.releaseId, "data-one");
     await dna.activateRelease("data-two");
     await dna.rollback();
     const back = await readFounderDnaProfile(db, "example");
@@ -120,6 +167,10 @@ test("data releases stage without exposure, activate atomically, roll back and o
       assert.equal(back.profile.releaseId, "data-one");
     else assert.fail(back.status);
     await store.withdrawArtifact(raw.id, "test", "withdrawn");
+    assert.deepEqual(
+      await readFounderDnaReleaseProfile(db, "data-two", "example"),
+      { status: "hidden" },
+    );
     assert.deepEqual(await readFounderDnaProfile(db, "example"), {
       status: "hidden",
     });

@@ -22,24 +22,29 @@ pnpm exec tsx scripts/enrichment.ts portrait-approve \
   --actor "$REVIEWER" --confirm-write
 ```
 
-That enrichment command uses an explicitly set `ENRICHMENT_DATABASE_URL`. Keep
-the following cohort manifest in a private file outside the repository. Replace
-the illustrative UUIDs with approved retained IDs. A cohort contains 1–1000
-distinct entities. Unknown fields, duplicate entities, and malformed IDs fail.
+That enrichment command uses an explicitly set `ENRICHMENT_DATABASE_URL`. Freeze
+the selected entity IDs in a private file outside the repository. A cohort contains
+1–1000 distinct entities. Unknown fields, duplicate entities, and malformed IDs
+fail. The file carries no operator-authored analysis IDs or display profile data.
 
 ```json
 {
   "version": 1,
-  "releaseId": "pilot-001",
-  "scope": "pilot-001",
-  "profiles": [
-    {
-      "entityId": "00000000-0000-4000-8000-000000000001",
-      "analysisId": "00000000-0000-4000-8000-000000000002",
-      "portraitAnalysisId": "00000000-0000-4000-8000-000000000003"
-    }
-  ]
+  "entityIds": ["00000000-0000-4000-8000-000000000001"]
 }
+```
+
+Derive the cohort manifest from that frozen membership and the database's current
+eligible portrait publications. The command fails the complete plan when a selected
+entity has no current approved portrait or eligible DNA analysis. It sorts the
+result, writes mode `0600`, and refuses to replace an existing file.
+
+```sh
+pnpm exec tsx scripts/founder-dna-prepare.ts cohort-plan \
+  --database-url "$SOURCE_DATABASE_URL" \
+  --release pilot-001 --scope pilot-001 \
+  --members "$PRIVATE_MEMBER_FILE" --file "$PRIVATE_COHORT_FILE" \
+  --confirm-write
 ```
 
 ```sh
@@ -48,7 +53,8 @@ pnpm exec tsx scripts/founder-dna-prepare.ts prepare \
   --file "$PRIVATE_COHORT_FILE" --confirm-write
 ```
 
-Preparation creates the source release and stages the stored approved profiles.
+Preparation parses the generated manifest, creates the source release and stages
+the stored approved profiles.
 It preserves their analysis identities and creates no new approvals. The release
 stays in `staging`, with no change to the active pointer. If a profile fails, the
 earlier staged profiles remain private. Correct the eligibility problem and rerun
