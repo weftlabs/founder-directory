@@ -394,6 +394,18 @@ export function parseConnectionBatchManifest(
     batches,
   };
 }
+export function assertConnectionBatchManifest(
+  value: unknown,
+  releaseId: string,
+  scope: string,
+  pairs: ConnectionPair[],
+) {
+  const manifest = parseConnectionBatchManifest(value);
+  const expected = createConnectionBatchManifest(releaseId, scope, pairs);
+  if (stableDigest(manifest) !== stableDigest(expected))
+    throw new Error("connection_batch_manifest_mismatch");
+  return manifest;
+}
 export function resolveConnectionBatch(
   value: unknown,
   releaseId: string,
@@ -401,10 +413,12 @@ export function resolveConnectionBatch(
   pairs: ConnectionPair[],
   requestedBatchId: string,
 ) {
-  const manifest = parseConnectionBatchManifest(value);
-  const expected = createConnectionBatchManifest(releaseId, scope, pairs);
-  if (stableDigest(manifest) !== stableDigest(expected))
-    throw new Error("connection_batch_manifest_mismatch");
+  const manifest = assertConnectionBatchManifest(
+    value,
+    releaseId,
+    scope,
+    pairs,
+  );
   const batch = manifest.batches.find((item) => item.id === requestedBatchId);
   if (!batch) throw new Error("connection_batch_not_found");
   return batch;

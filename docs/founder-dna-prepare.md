@@ -93,15 +93,17 @@ retained responses, so it resumes without buying completed pairs again. Batch
 runs save decisions but stage no edges because selection must compare the full
 candidate set.
 
-After all batches finish, run the command once without `--batch-file`, `--batch`,
-or paid flags. This full replay ranks all retained decisions together and stages
-at most three accepted edges per profile:
+After all batches finish, run the command once with the same batch manifest and
+without `--batch` or paid flags. This full replay checks the complete candidate
+set again, ranks all retained decisions together, and stages at most three
+accepted edges per profile:
 
 ```sh
 pnpm exec tsx scripts/founder-dna-prepare.ts connections \
   --database-url "$SOURCE_DATABASE_URL" --release pilot-001 --scope pilot-001 \
   --policy "$PRIVATE_JEV_POLICY_FILE" --budget "$BUDGET_ID" \
   --jev-cap-micros "$PER_REQUEST_CAP" --max-requests "$REQUEST_LIMIT" \
+  --batch-file "$PRIVATE_CONNECTION_BATCH_FILE" \
   --confirm-write
 ```
 

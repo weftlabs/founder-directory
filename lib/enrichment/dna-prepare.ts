@@ -9,10 +9,10 @@ import {
   loadConnectionEndpoints,
 } from "./dna-connections-data";
 import {
+  assertConnectionBatchManifest,
   buildConnectionRequest,
   createConnectionBatchManifest,
   discoverFounderConnections,
-  parseConnectionBatchManifest,
   rankConnectionCandidates,
   resolveConnectionBatch,
   type ConnectionBatchManifest,
@@ -124,8 +124,8 @@ export function validateConnectionOptions(input: ConnectionOptions) {
     input.maxRequests < 1 ||
     input.maxRequests > 5000 ||
     !["acquire", "replay"].includes(input.mode) ||
-    !!input.batchManifest !== !!input.batchId ||
-    (input.mode === "acquire" && !input.batchManifest)
+    (!!input.batchId && !input.batchManifest) ||
+    (input.mode === "acquire" && (!input.batchManifest || !input.batchId))
   )
     throw new Error("invalid_connection_options");
   if (
@@ -200,15 +200,23 @@ export async function prepareFounderConnections(
   const cohort = await loadReleaseCohort(db, input.releaseId, input.scope);
   if (cohort.pairs.length > input.maxRequests)
     throw new Error("connection_request_limit_exceeded");
-  const batch = input.batchManifest
-    ? resolveConnectionBatch(
-        parseConnectionBatchManifest(input.batchManifest),
-        input.releaseId,
-        input.scope,
-        cohort.pairs,
-        input.batchId!,
-      )
-    : undefined;
+  if (input.batchManifest)
+    assertConnectionBatchManifest(
+      input.batchManifest,
+      input.releaseId,
+      input.scope,
+      cohort.pairs,
+    );
+  const batch =
+    input.batchManifest && input.batchId
+      ? resolveConnectionBatch(
+          input.batchManifest,
+          input.releaseId,
+          input.scope,
+          cohort.pairs,
+          input.batchId,
+        )
+      : undefined;
   if (
     !(
       await db.query(
@@ -261,11 +269,8 @@ function stableBatchMismatch(
   pairs: ReturnType<typeof rankConnectionCandidates>,
 ) {
   try {
-    const parsed = parseConnectionBatchManifest(manifest);
-    return (
-      parsed.candidateDigest !==
-      createConnectionBatchManifest(releaseId, scope, pairs).candidateDigest
-    );
+    assertConnectionBatchManifest(manifest, releaseId, scope, pairs);
+    return false;
   } catch {
     return true;
   }

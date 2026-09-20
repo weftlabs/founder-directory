@@ -372,7 +372,24 @@ test("default command wiring stages retained portraits, captures paid mock decis
       3,
       "a resumed batch reuses every retained decision",
     );
-    await main(connections, {
+    await db.query(
+      "UPDATE enrichment_embeddings SET vector=ARRAY[2::double precision,0::double precision]",
+    );
+    await assert.rejects(
+      main([...connections, "--batch-file", batchFile], {
+        ...dependencies,
+        env: { ENRICHMENT_DATABASE_URL: "postgres://explicit-test-only" },
+        fetcher: async () => {
+          throw new Error("replay_must_not_dispatch");
+        },
+      }),
+      /connection_batch_manifest_mismatch/,
+    );
+    assert.equal(await count("founder_dna_release_edges"), 0);
+    await db.query(
+      "UPDATE enrichment_embeddings SET vector=ARRAY[1::double precision,0::double precision]",
+    );
+    await main([...connections, "--batch-file", batchFile], {
       ...dependencies,
       env: { ENRICHMENT_DATABASE_URL: "postgres://explicit-test-only" },
       fetcher: async () => {
