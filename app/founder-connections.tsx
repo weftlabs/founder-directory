@@ -10,19 +10,21 @@ import styles from "./founder-connections.module.css";
 
 export function FounderConnections({
   connections,
-  founderId = "",
-  revision = "",
+  founderId,
+  profileRevision,
+  releaseId,
 }: {
   connections: FounderConnection[];
-  founderId?: string;
-  revision?: string;
+  founderId: string;
+  profileRevision: string;
+  releaseId: string;
 }) {
   const items = connections.slice(0, MAX_FOUNDER_CONNECTIONS);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = items.find((item) => item.id === selectedId);
   const section = useRef<HTMLElement>(null);
   const recorded = useRef("");
-  const signature = `${founderId}:${revision}:${items.map((item) => item.id).join(",")}`;
+  const signature = `${founderId}:${profileRevision}:${releaseId}:${items.map((item) => item.id).join(",")}`;
   useEffect(() => {
     if (
       !items.length ||
@@ -35,10 +37,11 @@ export function FounderConnections({
       ([entry]) => {
         if (!entry?.isIntersecting) return;
         recorded.current = signature;
-        capture("founder_connections_viewed", {
-          founder_id: founderId,
-          revision,
-          connection_count: String(items.length),
+        capture("weft_founder_dna_connections_viewed", {
+          profile_id: founderId,
+          profile_revision: profileRevision,
+          release_id: releaseId,
+          connection_count: items.length,
         });
         observer.disconnect();
       },
@@ -46,13 +49,14 @@ export function FounderConnections({
     );
     observer.observe(section.current);
     return () => observer.disconnect();
-  }, [signature, founderId, revision, items.length]);
-  const click = (item: FounderConnection, surface: string) =>
-    capture("founder_connection_clicked", {
-      founder_id: founderId,
-      revision,
+  }, [signature, founderId, profileRevision, releaseId, items.length]);
+  const click = (item: FounderConnection, surface: "graph" | "card") =>
+    capture("weft_founder_dna_connection_clicked", {
+      profile_id: founderId,
+      profile_revision: profileRevision,
+      release_id: releaseId,
       connection_id: item.id,
-      destination_id: item.founder.id,
+      destination_profile_id: item.founder.id,
       surface,
     });
   return (
@@ -88,9 +92,10 @@ export function FounderConnections({
                   aria-controls="connection-preview"
                   onClick={() => {
                     setSelectedId(item.id);
-                    capture("founder_connection_previewed", {
-                      founder_id: founderId,
-                      revision,
+                    capture("weft_founder_dna_connection_previewed", {
+                      profile_id: founderId,
+                      profile_revision: profileRevision,
+                      release_id: releaseId,
                       connection_id: item.id,
                     });
                   }}

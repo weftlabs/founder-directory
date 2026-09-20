@@ -76,7 +76,8 @@ export default async function ProfilePage({
           <FounderConnections
             connections={dna.profile.connections}
             founderId={dna.profile.id}
-            revision={dna.profile.revision}
+            profileRevision={dna.profile.revision}
+            releaseId={dna.profile.releaseId}
           />
         }
       />

@@ -3,30 +3,42 @@ import { useEffect, useRef, useState } from "react";
 import { capture } from "./analytics";
 
 export function FounderDnaShare({
+  profileId,
   handle,
-  revision,
+  profileRevision,
+  releaseId,
   text,
   imageUrl,
 }: {
+  profileId: string;
   handle: string;
-  revision: string;
+  profileRevision: string;
+  releaseId: string;
   text: string;
   imageUrl: string;
 }) {
   const [draft, setDraft] = useState(text);
   const lastView = useRef("");
   useEffect(() => {
-    const view = `${handle}:${revision}`;
+    const view = `${profileId}:${profileRevision}:${releaseId}`;
     if (lastView.current !== view)
-      capture("founder_dna_profile_viewed", { handle, revision });
+      capture("weft_founder_dna_profile_viewed", {
+        profile_id: profileId,
+        profile_revision: profileRevision,
+        release_id: releaseId,
+      });
     lastView.current = view;
-  }, [handle, revision]);
+  }, [profileId, profileRevision, releaseId]);
   const [message, setMessage] = useState("");
   async function copy() {
     try {
       await navigator.clipboard.writeText(draft);
       setMessage("Copied. Ready to share.");
-      capture("founder_profile_share_copied", { handle, revision });
+      capture("weft_founder_dna_share_copied", {
+        profile_id: profileId,
+        profile_revision: profileRevision,
+        release_id: releaseId,
+      });
     } catch {
       setMessage("Copy did not work. Select the text and copy it.");
     }
@@ -50,9 +62,10 @@ export function FounderDnaShare({
           href={imageUrl}
           download={`${handle}-founder-dna.png`}
           onClick={() =>
-            capture("founder_profile_image_download_started", {
-              handle,
-              revision,
+            capture("weft_founder_dna_image_download_started", {
+              profile_id: profileId,
+              profile_revision: profileRevision,
+              release_id: releaseId,
             })
           }
         >

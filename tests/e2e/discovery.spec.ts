@@ -1,5 +1,14 @@
 import { expect, test } from "@playwright/test";
 
+test.beforeEach(async ({ page }) => {
+  await page.route("https://tiles.openfreemap.org/styles/dark", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ version: 8, sources: {}, layers: [] }),
+    }),
+  );
+});
+
 test("zooming loads a bounded viewport page without resetting the map", async ({
   page,
 }) => {

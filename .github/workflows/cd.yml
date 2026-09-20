@@ -1,79 +1,367 @@
 name: CD
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
+  push:
     tags:
       - "v*.*.*"
 
 permissions:
+  actions: read
   contents: read
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 concurrency:
-  group: cd-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
+  group: ${{ github.event_name == 'workflow_run' && 'cd-candidate' || 'cd-production' }}
+  queue: max
+  cancel-in-progress: false
 
 jobs:
-  deploy:
-    name: Deploy
+  candidate:
+    name: Stage production candidate
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment:
-      name: ${{ startsWith(github.ref, 'refs/tags/v') && 'production' || 'preview' }}
+      name: production-candidate
       url: ${{ steps.deploy.outputs.url }}
     env:
       NEXT_TELEMETRY_DISABLED: "1"
-      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+      CI_RUN_ID: ${{ github.event.workflow_run.id }}
+      CANDIDATE_NAME: production-candidate-${{ github.event.workflow_run.head_sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.RELEASE_SHA }}
           persist-credentials: false
       - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .node-version
           cache: pnpm
-      - name: Require Vercel secrets
+      - run: pnpm install --frozen-lockfile
+      - name: Require one candidate per SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          missing=
-          [ -n "$VERCEL_TOKEN" ] || missing="$missing VERCEL_TOKEN"
-          [ -n "$VERCEL_ORG_ID" ] || missing="$missing VERCEL_ORG_ID"
-          [ -n "$VERCEL_PROJECT_ID" ] || missing="$missing VERCEL_PROJECT_ID"
-          if [ -n "$missing" ]; then
-            echo "Missing GitHub secrets:$missing"
-            echo "Add repository secrets before this workflow can deploy."
-            exit 1
-          fi
+          gh api --paginate --slurp \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" \
+            > "$RUNNER_TEMP/artifacts.json"
+          pnpm exec tsx scripts/release-candidate.ts artifacts require-absent \
+            --file "$RUNNER_TEMP/artifacts.json" --name "$CANDIDATE_NAME"
+      - name: Install Vercel CLI
+        run: npm install --global vercel@59.19.0
+      - name: Pull production build configuration
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+      - name: Build exact SHA once
+        env:
+          NEXT_PUBLIC_RELEASE_SHA: ${{ env.RELEASE_SHA }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: vercel build --prod --token="$VERCEL_TOKEN"
+      - id: deploy
+        name: Stage prebuilt production deployment
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          url=$(vercel deploy --prebuilt --prod --skip-domain --yes \
+            --meta githubDeployment=1 \
+            --meta githubCommitSha="$RELEASE_SHA" \
+            --token="$VERCEL_TOKEN")
+          [[ "$url" =~ ^https://[a-z0-9-]+\.vercel\.app$ ]]
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+      - name: Read staged deployment proof
+        env:
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.url }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          deployment_host=${DEPLOYMENT_URL#https://}
+          curl --fail --silent --show-error --get \
+            -H "Authorization: Bearer $VERCEL_TOKEN" \
+            --data-urlencode "teamId=$VERCEL_ORG_ID" \
+            "https://api.vercel.com/v13/deployments/$deployment_host" \
+            -o "$RUNNER_TEMP/deployment.json"
+          vercel curl /api/release --deployment "$DEPLOYMENT_URL" \
+            --token="$VERCEL_TOKEN" > "$RUNNER_TEMP/readback.json"
+          pnpm exec tsx scripts/release-candidate.ts deployment verify \
+            --deployment-file "$RUNNER_TEMP/deployment.json" \
+            --readback-file "$RUNNER_TEMP/readback.json" \
+            --sha "$RELEASE_SHA" --project-id "$VERCEL_PROJECT_ID" \
+            --deployment-url "$DEPLOYMENT_URL"
+      - name: Write immutable candidate record
+        env:
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          pnpm exec tsx scripts/release-candidate.ts manifest create \
+            --repository "$GITHUB_REPOSITORY" --sha "$RELEASE_SHA" \
+            --deployment-url "$DEPLOYMENT_URL" --ci-run-id "$CI_RUN_ID" \
+            --candidate-run-id "$GITHUB_RUN_ID" \
+            --candidate-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --file "$RUNNER_TEMP/release-candidate.json"
+      - id: record
+        name: Retain candidate record
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ env.CANDIDATE_NAME }}
+          path: ${{ runner.temp }}/release-candidate.json
+          retention-days: 90
+          if-no-files-found: error
+      - name: Record candidate summary
+        env:
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.url }}
+          ARTIFACT_ID: ${{ steps.record.outputs.artifact-id }}
+          ARTIFACT_DIGEST: ${{ steps.record.outputs.artifact-digest }}
+        run: |
+          {
+            echo "### Staged production candidate"
+            echo "| Proof | Value |"
+            echo "| --- | --- |"
+            echo "| SHA | \`$RELEASE_SHA\` |"
+            echo "| CI run | \`$CI_RUN_ID\` |"
+            echo "| Deployment | \`$DEPLOYMENT_URL\` |"
+            echo "| Artifact | \`$ARTIFACT_ID\` |"
+            echo "| Artifact digest | \`$ARTIFACT_DIGEST\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  verify-tag:
+    name: Verify tag candidate
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      release_sha: ${{ steps.tag.outputs.release_sha }}
+      deployment_url: ${{ steps.manifest.outputs.deployment_url }}
+      artifact_digest: ${{ steps.artifact.outputs.artifact_digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - id: tag
+        name: Bind strict tag to current main
+        run: |
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          git fetch --no-tags origin \
+            +refs/heads/main:refs/remotes/origin/main
+          release_sha=$(git rev-parse "$GITHUB_REF_NAME^0")
+          main_sha=$(git rev-parse "origin/main^0")
+          [ "$release_sha" = "$main_sha" ]
+          [ "$release_sha" = "$(git rev-parse HEAD^0)" ]
+          echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
+      - name: List candidate records
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate --slurp \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" \
+            > "$RUNNER_TEMP/artifacts.json"
+      - id: artifact
+        name: Select exact immutable candidate
+        env:
+          RELEASE_SHA: ${{ steps.tag.outputs.release_sha }}
+        run: |
+          pnpm exec tsx scripts/release-candidate.ts artifacts select \
+            --file "$RUNNER_TEMP/artifacts.json" \
+            --name "production-candidate-$RELEASE_SHA" \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Download exact candidate record
+        env:
+          ARTIFACT_DIGEST: ${{ steps.artifact.outputs.artifact_digest }}
+          ARTIFACT_ID: ${{ steps.artifact.outputs.artifact_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl --location --fail --silent --show-error \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" \
+            -o "$RUNNER_TEMP/candidate.zip"
+          expected_digest=${ARTIFACT_DIGEST#sha256:}
+          echo "$expected_digest  $RUNNER_TEMP/candidate.zip" | sha256sum --check --status
+          mkdir "$RUNNER_TEMP/candidate"
+          unzip -q "$RUNNER_TEMP/candidate.zip" -d "$RUNNER_TEMP/candidate"
+      - id: manifest
+        name: Verify candidate manifest
+        env:
+          ARTIFACT_RUN_ID: ${{ steps.artifact.outputs.artifact_run_id }}
+          RELEASE_SHA: ${{ steps.tag.outputs.release_sha }}
+        run: |
+          pnpm exec tsx scripts/release-candidate.ts manifest verify \
+            --file "$RUNNER_TEMP/candidate/release-candidate.json" \
+            --repository "$GITHUB_REPOSITORY" --sha "$RELEASE_SHA" \
+            --artifact-run-id "$ARTIFACT_RUN_ID" \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Read exact source runs
+        env:
+          CANDIDATE_RUN_ID: ${{ steps.manifest.outputs.candidate_run_id }}
+          CI_RUN_ID: ${{ steps.manifest.outputs.ci_run_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN_ID" \
+            > "$RUNNER_TEMP/ci-run.json"
+          gh api -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID" \
+            > "$RUNNER_TEMP/candidate-run.json"
+      - name: Verify exact successful source runs
+        run: |
+          pnpm exec tsx scripts/release-candidate.ts runs verify \
+            --manifest "$RUNNER_TEMP/candidate/release-candidate.json" \
+            --ci-file "$RUNNER_TEMP/ci-run.json" \
+            --candidate-file "$RUNNER_TEMP/candidate-run.json"
+      - name: Record approval summary
+        env:
+          ARTIFACT_DIGEST: ${{ steps.artifact.outputs.artifact_digest }}
+          CANDIDATE_RUN_ID: ${{ steps.manifest.outputs.candidate_run_id }}
+          CI_RUN_ID: ${{ steps.manifest.outputs.ci_run_id }}
+          DEPLOYMENT_URL: ${{ steps.manifest.outputs.deployment_url }}
+          RELEASE_SHA: ${{ steps.tag.outputs.release_sha }}
+        run: |
+          {
+            echo "### Production approval"
+            echo "| Proof | Value |"
+            echo "| --- | --- |"
+            echo "| Tag | \`$GITHUB_REF_NAME\` |"
+            echo "| Approved SHA | \`$RELEASE_SHA\` |"
+            echo "| CI run | \`$CI_RUN_ID\` |"
+            echo "| Candidate run | \`$CANDIDATE_RUN_ID\` |"
+            echo "| Artifact digest | \`$ARTIFACT_DIGEST\` |"
+            echo "| Staged deployment | \`$DEPLOYMENT_URL\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  promote:
+    name: Promote exact candidate
+    needs: verify-tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: production
+      url: https://foundersdirectory.app
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      PRODUCTION_URL: https://foundersdirectory.app
+      RELEASE_SHA: ${{ needs.verify-tag.outputs.release_sha }}
+      DEPLOYMENT_URL: ${{ needs.verify-tag.outputs.deployment_url }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Install Vercel CLI
         run: npm install --global vercel@59.19.0
-      - name: Pull Vercel environment
+      - id: before
+        name: Verify exact staged deployment
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
-            vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
-          else
-            vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
-          fi
-      - name: Build
+          deployment_host=${DEPLOYMENT_URL#https://}
+          curl --fail --silent --show-error --get \
+            -H "Authorization: Bearer $VERCEL_TOKEN" \
+            --data-urlencode "teamId=$VERCEL_ORG_ID" \
+            "https://api.vercel.com/v13/deployments/$deployment_host" \
+            -o "$RUNNER_TEMP/deployment-before.json"
+          vercel curl /api/release --deployment "$DEPLOYMENT_URL" \
+            --token="$VERCEL_TOKEN" > "$RUNNER_TEMP/readback-before.json"
+          pnpm exec tsx scripts/release-candidate.ts deployment verify \
+            --deployment-file "$RUNNER_TEMP/deployment-before.json" \
+            --readback-file "$RUNNER_TEMP/readback-before.json" \
+            --sha "$RELEASE_SHA" --project-id "$VERCEL_PROJECT_ID" \
+            --deployment-url "$DEPLOYMENT_URL" \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Promote without rebuild
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: vercel promote "$DEPLOYMENT_URL" --yes --token="$VERCEL_TOKEN"
+      - name: Read production domain
+        env:
+          DEPLOYMENT_ID: ${{ steps.before.outputs.deployment_id }}
         run: |
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
-            vercel build --prod --token="$VERCEL_TOKEN"
-          else
-            vercel build --token="$VERCEL_TOKEN"
-          fi
-      - id: deploy
-        name: Deploy
+          for attempt in 1 2 3 4 5 6; do
+            if curl --fail --silent --show-error \
+              "$PRODUCTION_URL/api/release" \
+              -o "$RUNNER_TEMP/readback-production.json" && \
+              pnpm exec tsx scripts/release-candidate.ts readback verify \
+                --readback-file "$RUNNER_TEMP/readback-production.json" \
+                --sha "$RELEASE_SHA" \
+                --deployment-id "$DEPLOYMENT_ID" > /dev/null; then
+              break
+            fi
+            [ "$attempt" -lt 6 ] || exit 1
+            sleep 5
+          done
+      - name: Verify production domain resolves to the deployment
+        env:
+          DEPLOYMENT_ID: ${{ steps.before.outputs.deployment_id }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
-            url=$(vercel deploy --prebuilt --prod --yes --token="$VERCEL_TOKEN")
-          else
-            url=$(vercel deploy --prebuilt --yes --token="$VERCEL_TOKEN")
-          fi
+          production_host=${PRODUCTION_URL#https://}
+          curl --fail --silent --show-error --get \
+            -H "Authorization: Bearer $VERCEL_TOKEN" \
+            --data-urlencode "teamId=$VERCEL_ORG_ID" \
+            "https://api.vercel.com/v13/deployments/$production_host" \
+            -o "$RUNNER_TEMP/deployment-after.json"
+          pnpm exec tsx scripts/release-candidate.ts deployment verify \
+            --deployment-file "$RUNNER_TEMP/deployment-after.json" \
+            --readback-file "$RUNNER_TEMP/readback-production.json" \
+            --sha "$RELEASE_SHA" --project-id "$VERCEL_PROJECT_ID" \
+            --deployment-url "$DEPLOYMENT_URL" \
+            --deployment-id "$DEPLOYMENT_ID"
+      - name: Record production proof
+        env:
+          ARTIFACT_DIGEST: ${{ needs.verify-tag.outputs.artifact_digest }}
+          DEPLOYMENT_ID: ${{ steps.before.outputs.deployment_id }}
+        run: |
           {
-            echo "url<<EOF"
-            echo "$url"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-          echo "Deployed $url"
+            echo "### Production proof"
+            echo "| Proof | Value |"
+            echo "| --- | --- |"
+            echo "| Tag | \`$GITHUB_REF_NAME\` |"
+            echo "| SHA | \`$RELEASE_SHA\` |"
+            echo "| Candidate artifact | \`$ARTIFACT_DIGEST\` |"
+            echo "| Deployment ID | \`$DEPLOYMENT_ID\` |"
+            echo "| Deployment URL | \`$DEPLOYMENT_URL\` |"
+            echo "| Production URL | \`$PRODUCTION_URL\` |"
+          } >> "$GITHUB_STEP_SUMMARY"

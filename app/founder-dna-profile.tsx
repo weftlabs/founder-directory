@@ -178,8 +178,10 @@ export function FounderDnaProfileView({
           </div>
         </details>
         <FounderDnaShare
+          profileId={profile.id}
           handle={profile.handle}
-          revision={profile.revision}
+          profileRevision={profile.revision}
+          releaseId={profile.releaseId}
           text={founderShareText(profile)}
           imageUrl={founderShareImageUrl(profile).replace(
             "https://foundersdirectory.app",

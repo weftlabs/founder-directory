@@ -12,6 +12,7 @@ a second, conflicting specification.
 | How does Weft power the app?                | [Weft integration](weft.md)                      |
 | How do I preserve and reprocess enrichment? | [Enrichment operations](enrichment.md)           |
 | How do I verify a change?                   | [Testing](testing.md)                            |
+| How are product events defined and checked? | [Product analytics](analytics.md)                |
 | How do I deploy, tag, or roll back?         | [Deployment](deployment.md)                      |
 | How do agents work in this repo?            | [Harness](harness.md) and [AGENTS](../AGENTS.md) |
 | What is proven and what is missing?         | [Quality and limitations](quality.md)            |

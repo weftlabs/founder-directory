@@ -7,7 +7,7 @@ platform architecture specification.
 app/                  Next.js routes and presentation
   directory.tsx       page navigation and filters; in-memory synthetic preview
   site-header.tsx     shared product navigation
-  analytics.tsx       optional PostHog; $pageview/$pageleave on App Router nav
+  analytics.tsx       optional anonymous PostHog transport and safe page events
   online-now.tsx      Neon heartbeat for the online chip (~20s ping, 45s window)
   api/cron/discover/  search latest intros; queue leftover handles
   api/cron/hydrate/   enrich queued intros (Pro maxDuration 800s)
@@ -118,4 +118,7 @@ text on the profile.
 
 The share control lets visitors edit and copy a draft with the profile link, or
 download its image. Optional analytics record profile views, successful copies,
-and download starts. A download-start event does not establish a completed share.
+download starts and connection interactions. The typed event catalog drops
+unknown properties and keeps handles, URLs, source text and copy text out of
+custom events. A download-start event does not establish a completed share. See
+the [product analytics contract](analytics.md).
