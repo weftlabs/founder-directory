@@ -6,20 +6,25 @@ import { pathToFileURL } from "node:url";
 import { postgresDatabase, type Database } from "../lib/enrichment/db";
 import {
   parsePreparationManifest,
+  planFounderConnectionBatches,
   prepareFounderDnaRelease,
   prepareFounderConnections,
   validateConnectionOptions,
   type ConnectionOptions,
 } from "../lib/enrichment/dna-prepare";
+import { parseConnectionBatchManifest } from "../lib/enrichment/founder-connections";
 
 const HELP = `Founder DNA source release preparation (no environment files are loaded)
   prepare --database-url URL --file PRIVATE_COHORT.json --confirm-write
-  connections --database-url URL --release ID --scope NAME --policy JEV_POLICY.json --budget UUID --jev-cap-micros INTEGER --max-requests INTEGER [--mode replay|acquire] [--allow-paid] --confirm-write
+  connections-plan --database-url URL --release ID --scope NAME --file PRIVATE_BATCHES.json --confirm-write
+  connections --database-url URL --release ID --scope NAME --policy JEV_POLICY.json --budget UUID --jev-cap-micros INTEGER --max-requests INTEGER [--batch-file PRIVATE_BATCHES.json --batch UUID] [--mode replay|acquire] [--allow-paid] --confirm-write
 
 Pass --database-url explicitly; database environment variables are never used.
 Prepare reads approved retained portraits, stages 1–1000 profiles and can resume unchanged work.
 Connections defaults to replay (no network). Acquire also requires --allow-paid,
 ENRICHMENT_ALLOW_PAID=1 and TYPESAFE_AI_API_KEY (or TYPESAGE_AI_API_KEY/TYPESAFE_API_KEY).
+Acquire requires one immutable manifest batch. Each batch contains at most 25 pairs.
+Batch runs retain decisions but do not stage links; run full replay to rank and stage globally.
 The request limit bounds all candidate decisions, including cached decisions.
 The existing scope budget caps total reservations; --jev-cap-micros caps each request.
 Neither command approves, validates, exports or activates a release. See docs/founder-dna-prepare.md.
@@ -31,6 +36,14 @@ async function jsonFile(path: string): Promise<unknown> {
     if ((await file.stat()).size > 1_000_000)
       throw new Error("operator_file_too_large");
     return JSON.parse(await file.readFile("utf8"));
+  } finally {
+    await file.close();
+  }
+}
+async function writeJsonExclusive(path: string, value: unknown) {
+  const file = await open(path, "wx", 0o600);
+  try {
+    await file.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8");
   } finally {
     await file.close();
   }
@@ -51,7 +64,11 @@ export async function main(
     output(HELP);
     return;
   }
-  if (command !== "prepare" && command !== "connections")
+  if (
+    command !== "prepare" &&
+    command !== "connections-plan" &&
+    command !== "connections"
+  )
     throw new Error("unknown_command");
   const { values } = parseArgs({
     args: args.slice(1),
@@ -65,6 +82,8 @@ export async function main(
       mode: { type: "string", default: "replay" },
       "jev-cap-micros": { type: "string" },
       "max-requests": { type: "string" },
+      "batch-file": { type: "string" },
+      batch: { type: "string" },
       "allow-paid": { type: "boolean" },
       "confirm-write": { type: "boolean" },
     },
@@ -92,6 +111,10 @@ export async function main(
     command === "prepare"
       ? parsePreparationManifest(await jsonFile(required("file")))
       : undefined;
+  const batchManifest =
+    command === "connections" && values["batch-file"]
+      ? parseConnectionBatchManifest(await jsonFile(required("batch-file")))
+      : undefined;
   const connections: ConnectionOptions | undefined =
     command === "connections"
       ? {
@@ -104,19 +127,38 @@ export async function main(
           policy: (await jsonFile(
             required("policy"),
           )) as ConnectionOptions["policy"],
+          batchManifest,
+          batchId: values.batch,
         }
       : undefined;
   if (connections) validateConnectionOptions(connections);
   const db = (dependencies.connect ?? postgresDatabase)(values["database-url"]);
   try {
-    const result = manifest
-      ? await prepareFounderDnaRelease(db, manifest)
-      : await prepareFounderConnections(db, connections!, {
-          enabled: () =>
-            values["allow-paid"] === true && env.ENRICHMENT_ALLOW_PAID === "1",
-          apiKey,
-          fetcher: dependencies.fetcher,
-        });
+    let result: unknown;
+    if (manifest) result = await prepareFounderDnaRelease(db, manifest);
+    else if (command === "connections-plan") {
+      const plan = await planFounderConnectionBatches(
+        db,
+        required("release"),
+        required("scope"),
+      );
+      await writeJsonExclusive(required("file"), plan);
+      result = {
+        releaseId: plan.releaseId,
+        candidatePairs: plan.candidateCount,
+        batches: plan.batches.map((batch) => ({
+          id: batch.id,
+          index: batch.index,
+          pairs: batch.pairIds.length,
+        })),
+      };
+    } else
+      result = await prepareFounderConnections(db, connections!, {
+        enabled: () =>
+          values["allow-paid"] === true && env.ENRICHMENT_ALLOW_PAID === "1",
+        apiKey,
+        fetcher: dependencies.fetcher,
+      });
     output(JSON.stringify(result));
   } finally {
     await db.close();

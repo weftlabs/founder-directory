@@ -62,6 +62,41 @@ separately by `scripts/enrichment.ts budget-create`. A Jev policy file must cont
 `storageVerified: true`, and `retentionApproved: true`. Those policy declarations
 must reflect an actual storage and retention review.
 
+First lock the complete candidate set in a private batch manifest. The command
+creates the file with owner-only permissions and refuses to replace an existing
+file. Each full batch has exactly 25 ordered pair identities. The last batch can
+contain fewer pairs.
+
+```sh
+pnpm exec tsx scripts/founder-dna-prepare.ts connections-plan \
+  --database-url "$SOURCE_DATABASE_URL" --release pilot-001 --scope pilot-001 \
+  --file "$PRIVATE_CONNECTION_BATCH_FILE" --confirm-write
+```
+
+Review the reported batch IDs. Run one named batch at a time:
+
+```sh
+pnpm exec tsx scripts/founder-dna-prepare.ts connections \
+  --database-url "$SOURCE_DATABASE_URL" --release pilot-001 --scope pilot-001 \
+  --policy "$PRIVATE_JEV_POLICY_FILE" --budget "$BUDGET_ID" \
+  --jev-cap-micros "$PER_REQUEST_CAP" --max-requests "$REQUEST_LIMIT" \
+  --batch-file "$PRIVATE_CONNECTION_BATCH_FILE" --batch "$BATCH_ID" \
+  --mode acquire --allow-paid \
+  --confirm-write
+```
+
+Paid acquisition requires an immutable batch file and one batch ID. The command
+recomputes the complete candidate set and checks every request before the first
+dispatch. A changed endpoint, source, analysis, embedding, pair order, manifest,
+release, or scope fails closed. A repeated batch uses the same decision IDs and
+retained responses, so it resumes without buying completed pairs again. Batch
+runs save decisions but stage no edges because selection must compare the full
+candidate set.
+
+After all batches finish, run the command once without `--batch-file`, `--batch`,
+or paid flags. This full replay ranks all retained decisions together and stages
+at most three accepted edges per profile:
+
 ```sh
 pnpm exec tsx scripts/founder-dna-prepare.ts connections \
   --database-url "$SOURCE_DATABASE_URL" --release pilot-001 --scope pilot-001 \
@@ -72,9 +107,9 @@ pnpm exec tsx scripts/founder-dna-prepare.ts connections \
 
 The default mode is `replay`. It uses retained responses and fails with
 `missing_input` when a response is absent. It never dispatches a provider request,
-even when credentials are present. To acquire missing decisions, add
-`--mode acquire --allow-paid` and explicitly set `ENRICHMENT_ALLOW_PAID=1` and
-`TYPESAFE_AI_API_KEY`. The two existing key aliases are also supported.
+even when credentials are present. Acquisition also requires explicitly set
+`ENRICHMENT_ALLOW_PAID=1` and `TYPESAFE_AI_API_KEY`. The two existing key aliases
+are also supported.
 
 The release, policy, and budget scopes must match. `--max-requests` is a positive
 integer no larger than 5000. It bounds the complete candidate set, including
@@ -87,8 +122,9 @@ Candidates come from eligible staged profiles and compatible saved embeddings.
 Each pair is checked again before and after its retained Jev decision. Accepted,
 rejected, and insufficient decisions are stored. At most three accepted edges per
 profile are staged. Missing or withdrawn endpoints produce no new edges. Empty
-results are valid. The JSON result reports candidate, accepted, rejected,
-insufficient, and staged counts. No command activates the release.
+results are valid. The JSON result reports complete candidate, processed,
+accepted, rejected, insufficient, and staged counts. No command activates the
+release.
 
 ## Validate and export
 

@@ -9,8 +9,13 @@ import {
   loadConnectionEndpoints,
 } from "./dna-connections-data";
 import {
+  buildConnectionRequest,
+  createConnectionBatchManifest,
   discoverFounderConnections,
+  parseConnectionBatchManifest,
   rankConnectionCandidates,
+  resolveConnectionBatch,
+  type ConnectionBatchManifest,
 } from "./founder-connections";
 import { retainedJev } from "./retained-jev";
 
@@ -105,6 +110,8 @@ export type ConnectionOptions = {
   maxRequests: number;
   mode: "acquire" | "replay";
   policy: CollectionInput["policy"];
+  batchManifest?: ConnectionBatchManifest;
+  batchId?: string;
 };
 export function validateConnectionOptions(input: ConnectionOptions) {
   const policy = input.policy;
@@ -116,7 +123,9 @@ export function validateConnectionOptions(input: ConnectionOptions) {
     !Number.isSafeInteger(input.maxRequests) ||
     input.maxRequests < 1 ||
     input.maxRequests > 5000 ||
-    !["acquire", "replay"].includes(input.mode)
+    !["acquire", "replay"].includes(input.mode) ||
+    !!input.batchManifest !== !!input.batchId ||
+    (input.mode === "acquire" && !input.batchManifest)
   )
     throw new Error("invalid_connection_options");
   if (
@@ -130,6 +139,54 @@ export function validateConnectionOptions(input: ConnectionOptions) {
     throw new Error("connection_policy_not_approved");
 }
 
+async function loadReleaseCohort(
+  db: Database,
+  releaseId: string,
+  scope: string,
+) {
+  const release = (
+    await db.query<{ manifest: unknown; expected: number; total: number }>(
+      `SELECT r.manifest,r.expected_profiles AS expected,
+    (SELECT count(*)::integer FROM founder_dna_release_profiles p WHERE p.release_id=r.id) AS total
+    FROM founder_dna_releases r WHERE r.id=$1 AND r.status='staging'`,
+      [releaseId],
+    )
+  ).rows[0];
+  if (!release) throw new Error("release_not_staging");
+  const manifest = parsePreparationManifest(release.manifest);
+  if (
+    manifest.releaseId !== releaseId ||
+    manifest.scope !== scope ||
+    manifest.profiles.length !== release.expected ||
+    release.total !== release.expected
+  )
+    throw new Error("connection_release_scope_or_cohort_mismatch");
+  const endpoints = await loadConnectionEndpoints(db, releaseId);
+  const approved = new Map(
+    manifest.profiles.map((profile) => [profile.entityId, profile.analysisId]),
+  );
+  if (
+    endpoints.some(
+      (endpoint) => approved.get(endpoint.entityId) !== endpoint.analysisId,
+    )
+  )
+    throw new Error("connection_release_scope_or_cohort_mismatch");
+  return { endpoints, pairs: rankConnectionCandidates(endpoints) };
+}
+
+export async function planFounderConnectionBatches(
+  db: Database,
+  releaseId: string,
+  scope: string,
+) {
+  if (!label(releaseId) || !label(scope))
+    throw new Error("invalid_connection_batch_plan");
+  const { pairs } = await loadReleaseCohort(db, releaseId, scope);
+  if (pairs.length > 5000) throw new Error("connection_request_limit_exceeded");
+  pairs.forEach((pair) => buildConnectionRequest(pair));
+  return createConnectionBatchManifest(releaseId, scope, pairs);
+}
+
 export async function prepareFounderConnections(
   db: Database,
   input: ConnectionOptions,
@@ -140,23 +197,18 @@ export async function prepareFounderConnections(
   },
 ) {
   validateConnectionOptions(input);
-  const release = (
-    await db.query<{ manifest: unknown; expected: number; total: number }>(
-      `SELECT r.manifest,r.expected_profiles AS expected,
-    (SELECT count(*)::integer FROM founder_dna_release_profiles p WHERE p.release_id=r.id) AS total
-    FROM founder_dna_releases r WHERE r.id=$1 AND r.status='staging'`,
-      [input.releaseId],
-    )
-  ).rows[0];
-  if (!release) throw new Error("release_not_staging");
-  const manifest = parsePreparationManifest(release.manifest);
-  if (
-    manifest.releaseId !== input.releaseId ||
-    manifest.scope !== input.scope ||
-    manifest.profiles.length !== release.expected ||
-    release.total !== release.expected
-  )
-    throw new Error("connection_release_scope_or_cohort_mismatch");
+  const cohort = await loadReleaseCohort(db, input.releaseId, input.scope);
+  if (cohort.pairs.length > input.maxRequests)
+    throw new Error("connection_request_limit_exceeded");
+  const batch = input.batchManifest
+    ? resolveConnectionBatch(
+        parseConnectionBatchManifest(input.batchManifest),
+        input.releaseId,
+        input.scope,
+        cohort.pairs,
+        input.batchId!,
+      )
+    : undefined;
   if (
     !(
       await db.query(
@@ -174,16 +226,22 @@ export async function prepareFounderConnections(
   let requests = 0;
   return discoverFounderConnections({
     loadEndpoints: async () => {
-      const endpoints = await loadConnectionEndpoints(db, input.releaseId);
-      const approved = new Map(
-        manifest.profiles.map((p) => [p.entityId, p.analysisId]),
-      );
-      if (endpoints.some((e) => approved.get(e.entityId) !== e.analysisId))
-        throw new Error("connection_release_scope_or_cohort_mismatch");
-      if (rankConnectionCandidates(endpoints).length > input.maxRequests)
+      const current = await loadReleaseCohort(db, input.releaseId, input.scope);
+      if (current.pairs.length > input.maxRequests)
         throw new Error("connection_request_limit_exceeded");
-      return endpoints;
+      if (
+        input.batchManifest &&
+        stableBatchMismatch(
+          input.batchManifest,
+          input.releaseId,
+          input.scope,
+          current.pairs,
+        )
+      )
+        throw new Error("connection_batch_manifest_mismatch");
+      return current.endpoints;
     },
+    pairIds: batch?.pairIds,
     assertEligible: (pair) =>
       assertConnectionEndpointsEligible(db, input.releaseId, pair),
     execute: async (request) => {
@@ -194,4 +252,21 @@ export async function prepareFounderConnections(
     saveDecision: (decision) => publication.saveConnectionDecision(decision),
     stageDecision: (id) => publication.stageConnection(input.releaseId, id),
   });
+}
+
+function stableBatchMismatch(
+  manifest: ConnectionBatchManifest,
+  releaseId: string,
+  scope: string,
+  pairs: ReturnType<typeof rankConnectionCandidates>,
+) {
+  try {
+    const parsed = parseConnectionBatchManifest(manifest);
+    return (
+      parsed.candidateDigest !==
+      createConnectionBatchManifest(releaseId, scope, pairs).candidateDigest
+    );
+  } catch {
+    return true;
+  }
 }

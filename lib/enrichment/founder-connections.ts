@@ -13,6 +13,7 @@ import {
 export const CONNECTION_RECIPE = "related-work-v1";
 export const MAX_CANDIDATE_NEIGHBOURS = 10;
 export const MAX_PUBLISHED_NEIGHBOURS = 3;
+export const CONNECTION_BATCH_SIZE = 25;
 // These are hypotheses, never keyword matches. Jev must support one from both sides.
 export const WORK_RELATIONS = {
   agent_infrastructure:
@@ -49,6 +50,17 @@ export type ConnectionPair = {
   left: ConnectionEndpoint;
   right: ConnectionEndpoint;
   similarity: number;
+};
+export type ConnectionBatchManifest = {
+  version: 1;
+  releaseId: string;
+  scope: string;
+  recipeVersion: typeof CONNECTION_RECIPE;
+  model: typeof MODEL;
+  candidateDigest: string;
+  candidateCount: number;
+  batchSize: typeof CONNECTION_BATCH_SIZE;
+  batches: { id: string; index: number; pairIds: string[] }[];
 };
 export type ConnectionDecision = {
   id: string;
@@ -238,6 +250,165 @@ export function connectionRunId(
     requestDigest: stableDigest(request),
   });
 }
+
+function manifestLabel(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,119}$/.test(value)
+  );
+}
+function manifestUuid(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(
+      value,
+    )
+  );
+}
+function batchId(candidateDigest: string, index: number, pairIds: string[]) {
+  return stableUuid({
+    kind: "founder-connection-batch-v1",
+    candidateDigest,
+    index,
+    pairIds,
+  });
+}
+export function createConnectionBatchManifest(
+  releaseId: string,
+  scope: string,
+  pairs: ConnectionPair[],
+): ConnectionBatchManifest {
+  if (!manifestLabel(releaseId) || !manifestLabel(scope))
+    throw new Error("invalid_connection_batch_manifest");
+  const pairIds = pairs.map((pair) => connectionRunId(pair));
+  if (new Set(pairIds).size !== pairIds.length)
+    throw new Error("duplicate_connection_batch_pair");
+  const candidateDigest = stableDigest({
+    releaseId,
+    scope,
+    recipeVersion: CONNECTION_RECIPE,
+    model: MODEL,
+    pairs: pairs.map((pair, index) => ({
+      id: pairIds[index],
+      similarity: pair.similarity,
+      leftEmbedding: stableDigest(pair.left.embedding),
+      rightEmbedding: stableDigest(pair.right.embedding),
+    })),
+  });
+  const batches: ConnectionBatchManifest["batches"] = [];
+  for (let index = 0; index * CONNECTION_BATCH_SIZE < pairIds.length; index++) {
+    const ids = pairIds.slice(
+      index * CONNECTION_BATCH_SIZE,
+      (index + 1) * CONNECTION_BATCH_SIZE,
+    );
+    batches.push({
+      id: batchId(candidateDigest, index, ids),
+      index,
+      pairIds: ids,
+    });
+  }
+  return {
+    version: 1,
+    releaseId,
+    scope,
+    recipeVersion: CONNECTION_RECIPE,
+    model: MODEL,
+    candidateDigest,
+    candidateCount: pairIds.length,
+    batchSize: CONNECTION_BATCH_SIZE,
+    batches,
+  };
+}
+export function parseConnectionBatchManifest(
+  value: unknown,
+): ConnectionBatchManifest {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.keys(value).sort().join() !==
+      "batchSize,batches,candidateCount,candidateDigest,model,recipeVersion,releaseId,scope,version"
+  )
+    throw new Error("invalid_connection_batch_manifest");
+  const input = value as Record<string, unknown>;
+  if (
+    input.version !== 1 ||
+    !manifestLabel(input.releaseId) ||
+    !manifestLabel(input.scope) ||
+    input.recipeVersion !== CONNECTION_RECIPE ||
+    input.model !== MODEL ||
+    typeof input.candidateDigest !== "string" ||
+    !/^[a-f0-9]{64}$/.test(input.candidateDigest) ||
+    !Number.isSafeInteger(input.candidateCount) ||
+    (input.candidateCount as number) < 0 ||
+    (input.candidateCount as number) > 5000 ||
+    input.batchSize !== CONNECTION_BATCH_SIZE ||
+    !Array.isArray(input.batches)
+  )
+    throw new Error("invalid_connection_batch_manifest");
+  const batchValues = input.batches as unknown[];
+  const batches = batchValues.map((value, index) => {
+    if (
+      !value ||
+      typeof value !== "object" ||
+      Array.isArray(value) ||
+      Object.keys(value).sort().join() !== "id,index,pairIds"
+    )
+      throw new Error("invalid_connection_batch");
+    const batch = value as Record<string, unknown>;
+    if (
+      batch.index !== index ||
+      !manifestUuid(batch.id) ||
+      !Array.isArray(batch.pairIds) ||
+      !batch.pairIds.length ||
+      batch.pairIds.length > CONNECTION_BATCH_SIZE ||
+      (index < batchValues.length - 1 &&
+        batch.pairIds.length !== CONNECTION_BATCH_SIZE) ||
+      !batch.pairIds.every(manifestUuid)
+    )
+      throw new Error("invalid_connection_batch");
+    const pairIds = batch.pairIds.map((id) => id.toLowerCase());
+    if (
+      batch.id.toLowerCase() !==
+      batchId(input.candidateDigest as string, index, pairIds)
+    )
+      throw new Error("invalid_connection_batch_identity");
+    return { id: batch.id.toLowerCase(), index, pairIds };
+  });
+  const pairIds = batches.flatMap((batch) => batch.pairIds);
+  if (
+    pairIds.length !== input.candidateCount ||
+    new Set(pairIds).size !== pairIds.length ||
+    (input.candidateCount === 0) !== (batches.length === 0)
+  )
+    throw new Error("invalid_connection_batch_manifest");
+  return {
+    version: 1,
+    releaseId: input.releaseId,
+    scope: input.scope,
+    recipeVersion: CONNECTION_RECIPE,
+    model: MODEL,
+    candidateDigest: input.candidateDigest,
+    candidateCount: input.candidateCount as number,
+    batchSize: CONNECTION_BATCH_SIZE,
+    batches,
+  };
+}
+export function resolveConnectionBatch(
+  value: unknown,
+  releaseId: string,
+  scope: string,
+  pairs: ConnectionPair[],
+  requestedBatchId: string,
+) {
+  const manifest = parseConnectionBatchManifest(value);
+  const expected = createConnectionBatchManifest(releaseId, scope, pairs);
+  if (stableDigest(manifest) !== stableDigest(expected))
+    throw new Error("connection_batch_manifest_mismatch");
+  const batch = manifest.batches.find((item) => item.id === requestedBatchId);
+  if (!batch) throw new Error("connection_batch_not_found");
+  return batch;
+}
 export async function judgeConnectionPair(
   pair: ConnectionPair,
   dependencies: {
@@ -393,6 +564,7 @@ export function connectionDecisionInput(
 /** One explicit worker operation; visitor routes never import this module. */
 export async function discoverFounderConnections(dependencies: {
   loadEndpoints: () => Promise<ConnectionEndpoint[]>;
+  pairIds?: string[];
   assertEligible: (pair: ConnectionPair) => Promise<void>;
   execute: ExecuteRetainedDecision;
   saveDecision: (decision: ConnectionDecisionInput) => Promise<unknown>;
@@ -404,8 +576,25 @@ export async function discoverFounderConnections(dependencies: {
   // Preflight every request before the first dispatch. Oversize evidence is a gap,
   // not permission to truncate supporting sources or make partial paid progress.
   pairs.forEach((pair) => buildConnectionRequest(pair));
+  let work = pairs;
+  if (dependencies.pairIds) {
+    if (
+      !dependencies.pairIds.length ||
+      dependencies.pairIds.length > CONNECTION_BATCH_SIZE ||
+      new Set(dependencies.pairIds).size !== dependencies.pairIds.length
+    )
+      throw new Error("invalid_connection_batch_selection");
+    const available = new Map(
+      pairs.map((pair) => [connectionRunId(pair), pair]),
+    );
+    work = dependencies.pairIds.map((id) => {
+      const pair = available.get(id);
+      if (!pair) throw new Error("connection_batch_pair_not_found");
+      return pair;
+    });
+  }
   const decisions: ConnectionDecision[] = [];
-  for (const pair of pairs) {
+  for (const pair of work) {
     decisions.push(
       await judgeConnectionPair(pair, {
         execute: dependencies.execute,
@@ -418,14 +607,14 @@ export async function discoverFounderConnections(dependencies: {
       }),
     );
   }
-  const selected = selectPublishedConnections(
-    decisions,
-    await dependencies.loadEndpoints(),
-  );
+  const selected = dependencies.pairIds
+    ? []
+    : selectPublishedConnections(decisions, await dependencies.loadEndpoints());
   for (const decision of selected)
     await dependencies.stageDecision(decision.id);
   return {
     candidatePairs: pairs.length,
+    processedPairs: work.length,
     accepted: decisions.filter((d) => d.status === "accepted").length,
     rejected: decisions.filter((d) => d.status === "rejected").length,
     insufficient: decisions.filter((d) => d.status === "insufficient").length,

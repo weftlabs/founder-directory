@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { main } from "../scripts/founder-dna-prepare";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -22,7 +22,7 @@ import { founderDnaFixture } from "./fixtures/founder-dna";
 import { MODEL, type Request } from "../lib/typesafe-poc";
 
 test("preparation and connections require explicit writes before opening a database", async () => {
-  for (const command of ["prepare", "connections"])
+  for (const command of ["prepare", "connections-plan", "connections"])
     await assert.rejects(
       main([command]),
       /explicit_write_confirmation_required/,
@@ -161,7 +161,8 @@ test("default command wiring stages retained portraits, captures paid mock decis
     }) as typeof fetch,
   };
   const file = join(directory, "cohort.json"),
-    policyFile = join(directory, "policy.json");
+    policyFile = join(directory, "policy.json"),
+    batchFile = join(directory, "connection-batches.json");
   const prepare = [
     "prepare",
     "--database-url",
@@ -186,6 +187,18 @@ test("default command wiring stages retained portraits, captures paid mock decis
     "10000",
     "--max-requests",
     "3",
+    "--confirm-write",
+  ];
+  const connectionsPlan = [
+    "connections-plan",
+    "--database-url",
+    "postgres://explicit-test-only",
+    "--release",
+    releaseId,
+    "--scope",
+    scope,
+    "--file",
+    batchFile,
     "--confirm-write",
   ];
   const count = async (table: string) =>
@@ -294,6 +307,21 @@ test("default command wiring stages retained portraits, captures paid mock decis
       status: "not_found",
     });
     assert.equal(dispatches, 0);
+    await main(connectionsPlan, dependencies);
+    const batchPlan = JSON.parse(await readFile(batchFile, "utf8")) as {
+      candidateCount: number;
+      batches: { id: string; pairIds: string[] }[];
+    };
+    assert.equal(batchPlan.candidateCount, 3);
+    assert.equal(batchPlan.batches.length, 1);
+    assert.equal(batchPlan.batches[0].pairIds.length, 3);
+    await assert.rejects(main(connectionsPlan, dependencies), /EEXIST/);
+    const selectedBatch = [
+      "--batch-file",
+      batchFile,
+      "--batch",
+      batchPlan.batches[0].id,
+    ];
     // Default is replay even if paid credentials are present.
     await assert.rejects(main(connections, dependencies), /missing_input/);
     assert.equal(dispatches, 0);
@@ -301,7 +329,10 @@ test("default command wiring stages retained portraits, captures paid mock decis
     const tooFew = [...connections];
     tooFew[tooFew.indexOf("--max-requests") + 1] = "1";
     await assert.rejects(
-      main([...tooFew, "--mode", "acquire", "--allow-paid"], dependencies),
+      main(
+        [...tooFew, ...selectedBatch, "--mode", "acquire", "--allow-paid"],
+        dependencies,
+      ),
       /request_limit_exceeded/,
     );
     assert.equal(dispatches, 0);
@@ -317,20 +348,30 @@ test("default command wiring stages retained portraits, captures paid mock decis
       scope,
     ]);
     await main(
-      [...connections, "--mode", "acquire", "--allow-paid"],
+      [...connections, ...selectedBatch, "--mode", "acquire", "--allow-paid"],
       dependencies,
     );
     assert.equal(dispatches, 3);
     assert.deepEqual(JSON.parse(output.at(-1)!), {
       candidatePairs: 3,
+      processedPairs: 3,
       accepted: 3,
       rejected: 0,
       insufficient: 0,
-      staged: 3,
+      staged: 0,
     });
     assert.equal(await count("founder_dna_connection_decisions"), 3);
-    assert.equal(await count("founder_dna_release_edges"), 3);
+    assert.equal(await count("founder_dna_release_edges"), 0);
     assert.equal(await count("enrichment_collection_attempts"), 3);
+    await main(
+      [...connections, ...selectedBatch, "--mode", "acquire", "--allow-paid"],
+      dependencies,
+    );
+    assert.equal(
+      dispatches,
+      3,
+      "a resumed batch reuses every retained decision",
+    );
     await main(connections, {
       ...dependencies,
       env: { ENRICHMENT_DATABASE_URL: "postgres://explicit-test-only" },

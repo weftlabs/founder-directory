@@ -4,12 +4,14 @@ import { parseFounderDnaProfile } from "../lib/founder-dna";
 import { founderDnaFixture } from "./fixtures/founder-dna";
 import {
   buildConnectionRequest,
+  createConnectionBatchManifest,
   discoverFounderConnections,
   connectionDecisionInput,
   connectionRunId,
   cosineSimilarity,
   judgeConnectionPair,
   rankConnectionCandidates,
+  resolveConnectionBatch,
   selectPublishedConnections,
   WORK_RELATIONS,
   type ConnectionEndpoint,
@@ -156,6 +158,74 @@ test("candidate list is stable, unique and bounded at both endpoints", () => {
   );
   assert.throws(() => rankConnectionCandidates([endpoint("a"), endpoint("a")]));
   assert.throws(() => rankConnectionCandidates(cohort, 11));
+});
+test("connection batch manifests lock one complete candidate set into stable slices", () => {
+  const cohort = Array.from({ length: 12 }, (_, i) =>
+    endpoint(String(i).padStart(2, "0")),
+  );
+  const pairs = rankConnectionCandidates(cohort);
+  const manifest = createConnectionBatchManifest("release", "scope", pairs);
+  assert.equal(manifest.batchSize, 25);
+  assert.equal(manifest.candidateCount, pairs.length);
+  assert.equal(manifest.batches[0].pairIds.length, 25);
+  assert.ok(manifest.batches.every((batch) => batch.pairIds.length <= 25));
+  assert.deepEqual(
+    manifest,
+    createConnectionBatchManifest(
+      "release",
+      "scope",
+      rankConnectionCandidates([...cohort].reverse()),
+    ),
+  );
+  assert.deepEqual(
+    resolveConnectionBatch(
+      manifest,
+      "release",
+      "scope",
+      pairs,
+      manifest.batches[1].id,
+    ),
+    manifest.batches[1],
+  );
+  const tampered = structuredClone(manifest);
+  tampered.batches[0].pairIds.reverse();
+  assert.throws(
+    () =>
+      resolveConnectionBatch(
+        tampered,
+        "release",
+        "scope",
+        pairs,
+        tampered.batches[0].id,
+      ),
+    /invalid_connection_batch_identity/,
+  );
+  const changed = structuredClone(cohort);
+  changed[0].analysisId = "new-analysis";
+  assert.throws(
+    () =>
+      resolveConnectionBatch(
+        manifest,
+        "release",
+        "scope",
+        rankConnectionCandidates(changed),
+        manifest.batches[0].id,
+      ),
+    /connection_batch_manifest_mismatch/,
+  );
+  const changedEmbedding = structuredClone(cohort);
+  changedEmbedding[0].embedding.vector = [2, 0];
+  assert.throws(
+    () =>
+      resolveConnectionBatch(
+        manifest,
+        "release",
+        "scope",
+        rankConnectionCandidates(changedEmbedding),
+        manifest.batches[0].id,
+      ),
+    /connection_batch_manifest_mismatch/,
+  );
 });
 test("request has exact bounded claims, quotes source injections and contains no reference labels", () => {
   const input = pair();
@@ -305,6 +375,7 @@ test("worker checks requests before dispatch, saves rejected outcomes and stages
   const result = await discoverFounderConnections(dependencies);
   assert.deepEqual(result, {
     candidatePairs: 3,
+    processedPairs: 3,
     accepted: 1,
     rejected: 0,
     insufficient: 2,
@@ -327,6 +398,40 @@ test("worker checks requests before dispatch, saves rejected outcomes and stages
     /connection_request_too_large/,
   );
   assert.equal(calls, 0);
+});
+
+test("worker runs only the selected pair batch and defers global staging", async () => {
+  const endpoints = [endpoint("a"), endpoint("b"), endpoint("c")];
+  const pairs = rankConnectionCandidates(endpoints);
+  const manifest = createConnectionBatchManifest("release", "scope", pairs);
+  const batch = manifest.batches[0];
+  let calls = 0;
+  const result = await discoverFounderConnections({
+    loadEndpoints: async () => endpoints,
+    pairIds: batch.pairIds.slice(0, 2),
+    assertEligible: async () => {},
+    execute: async ({ request }) => {
+      calls++;
+      return {
+        response: response(request),
+        requestArtifactId: "r",
+        responseArtifactId: "s",
+        attemptId: "a",
+        estimatedCostMicros: "1",
+      };
+    },
+    saveDecision: async () => {},
+    stageDecision: async () => assert.fail("batch work must not stage links"),
+  });
+  assert.equal(calls, 2);
+  assert.deepEqual(result, {
+    candidatePairs: 3,
+    processedPairs: 2,
+    accepted: 2,
+    rejected: 0,
+    insufficient: 0,
+    staged: 0,
+  });
 });
 
 test("connection source bounds fit the public profile contract", async () => {
