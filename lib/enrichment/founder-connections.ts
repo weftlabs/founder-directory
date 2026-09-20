@@ -579,6 +579,7 @@ export function connectionDecisionInput(
 export async function discoverFounderConnections(dependencies: {
   loadEndpoints: () => Promise<ConnectionEndpoint[]>;
   pairIds?: string[];
+  stageConnections?: boolean;
   assertEligible: (pair: ConnectionPair) => Promise<void>;
   execute: ExecuteRetainedDecision;
   saveDecision: (decision: ConnectionDecisionInput) => Promise<unknown>;
@@ -621,9 +622,13 @@ export async function discoverFounderConnections(dependencies: {
       }),
     );
   }
-  const selected = dependencies.pairIds
-    ? []
-    : selectPublishedConnections(decisions, await dependencies.loadEndpoints());
+  const selected =
+    dependencies.pairIds || dependencies.stageConnections === false
+      ? []
+      : selectPublishedConnections(
+          decisions,
+          await dependencies.loadEndpoints(),
+        );
   for (const decision of selected)
     await dependencies.stageDecision(decision.id);
   return {

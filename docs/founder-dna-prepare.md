@@ -111,7 +111,8 @@ The default mode is `replay`. It uses retained responses and fails with
 `missing_input` when a response is absent. It never dispatches a provider request,
 even when credentials are present. Acquisition also requires explicitly set
 `ENRICHMENT_ALLOW_PAID=1` and `TYPESAFE_AI_API_KEY`. The two existing key aliases
-are also supported.
+are also supported. Replay without a batch manifest can check and save retained
+decisions, but it cannot stage any edge.
 
 The release, policy, and budget scopes must match. `--max-requests` is a positive
 integer no larger than 5000. It bounds the complete candidate set, including

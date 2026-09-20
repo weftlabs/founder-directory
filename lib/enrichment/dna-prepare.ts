@@ -250,6 +250,7 @@ export async function prepareFounderConnections(
       return current.endpoints;
     },
     pairIds: batch?.pairIds,
+    stageConnections: !!input.batchManifest && !batch,
     assertEligible: (pair) =>
       assertConnectionEndpointsEligible(db, input.releaseId, pair),
     execute: async (request) => {

@@ -25,6 +25,7 @@ Connections defaults to replay (no network). Acquire also requires --allow-paid,
 ENRICHMENT_ALLOW_PAID=1 and TYPESAFE_AI_API_KEY (or TYPESAGE_AI_API_KEY/TYPESAFE_API_KEY).
 Acquire requires one immutable manifest batch. Each batch contains at most 25 pairs.
 Batch runs retain decisions but do not stage links; run full replay with the same manifest to stage globally.
+Replay without a manifest can inspect retained decisions but cannot stage links.
 The request limit bounds all candidate decisions, including cached decisions.
 The existing scope budget caps total reservations; --jev-cap-micros caps each request.
 Neither command approves, validates, exports or activates a release. See docs/founder-dna-prepare.md.
