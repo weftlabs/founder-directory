@@ -51,6 +51,21 @@ export async function importLegacyIntake(
         transaction: (fn) => fn(tx),
       });
       const entityId = await store.createEntity("founder", item.founder_key);
+      const text =
+        typeof item.snapshot.intro_text === "string"
+          ? item.snapshot.intro_text
+          : "";
+      const url =
+        typeof item.snapshot.intro_url === "string"
+          ? item.snapshot.intro_url
+          : "";
+      const origin =
+        /^https:\/\/(?:x|twitter)\.com\/([A-Za-z0-9_]+)\/status\/[0-9]{1,25}$/.exec(
+          url,
+        );
+      const validOrigin =
+        text.trim().length > 0 &&
+        origin?.[1].toLowerCase() === item.founder_key.toLowerCase();
       const artifact = await store.putArtifact({
         kind: "legacy_import",
         body: Buffer.from(JSON.stringify(item.snapshot)),
@@ -60,20 +75,11 @@ export async function importLegacyIntake(
         metadata: {
           kind: "database_snapshot",
           rawProviderDataAvailable: false,
+          ...(validOrigin
+            ? { sourceKind: "self-reported", observedAt: null }
+            : {}),
         },
       });
-      const text =
-        typeof item.snapshot.intro_text === "string"
-          ? item.snapshot.intro_text
-          : "";
-      const url =
-        typeof item.snapshot.intro_url === "string"
-          ? item.snapshot.intro_url
-          : "";
-      const validOrigin =
-        /^https:\/\/(?:x|twitter)\.com\/[A-Za-z0-9_]+\/status\/[0-9]{1,25}$/.test(
-          url,
-        ) && text.length > 0;
       const evidenceId = await store.addEvidence({
         artifactId: artifact.id,
         extractorVersion: "founder-row-v1",

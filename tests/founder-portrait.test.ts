@@ -25,6 +25,7 @@ async function verifyPortrait(
     | "new product"
     | "wrong roast citation"
     | "wrong portrait citation"
+    | "unsupported trait"
     | "long judge request"
     | "maximum profile"
     | "oversized evidence"
@@ -217,19 +218,27 @@ async function verifyPortrait(
                   !scope.text.includes("Zurich") ||
                   citedSourceIds.includes(wrongEvidenceId);
                 const choice =
-                  state.mode === "facts"
-                    ? (
-                        claim.text.includes("Zurich")
-                          ? ids.includes(wrongEvidenceId)
-                          : ids.includes(evidenceId)
+                  key === "trait_safety"
+                    ? scenario === "unsupported trait" &&
+                      state.prose.some(
+                        (item: { path: string }) =>
+                          item.path === "archetype.summary",
                       )
-                      ? "supported"
-                      : "unsupported"
-                    : state.mode === "prose"
-                      ? proseSupported
-                        ? "grounded"
+                      ? "unsupported_trait"
+                      : "trait_safe"
+                    : state.mode === "facts"
+                      ? (
+                          claim.text.includes("Zurich")
+                            ? ids.includes(wrongEvidenceId)
+                            : ids.includes(evidenceId)
+                        )
+                        ? "supported"
                         : "unsupported"
-                      : "unknown";
+                      : state.mode === "prose"
+                        ? proseSupported
+                          ? "grounded"
+                          : "unsupported"
+                        : "unknown";
                 return [
                   key,
                   {
@@ -281,6 +290,9 @@ async function verifyPortrait(
           },
         ],
       };
+      if (scenario === "unsupported trait")
+        draft.archetype.summary =
+          "Alex is a relentlessly curious perfectionist.";
       if (
         scenario === "wrong roast citation" ||
         scenario === "wrong portrait citation"
@@ -456,7 +468,8 @@ async function verifyPortrait(
     if (
       scenario === "wrong citation" ||
       scenario === "wrong roast citation" ||
-      scenario === "wrong portrait citation"
+      scenario === "wrong portrait citation" ||
+      scenario === "unsupported trait"
     ) {
       assert.equal(result.status, "failed");
       assert.equal(result.output, null);
@@ -475,9 +488,14 @@ async function verifyPortrait(
         saved.rows[0].validation_report.error,
         scenario === "wrong citation"
           ? "portrait_fact_not_supported"
-          : "portrait_prose_not_grounded",
+          : scenario === "unsupported trait"
+            ? "portrait_trait_not_supported"
+            : "portrait_prose_not_grounded",
       );
-      if (scenario !== "wrong citation") {
+      if (
+        scenario === "wrong roast citation" ||
+        scenario === "wrong portrait citation"
+      ) {
         const path =
           scenario === "wrong roast citation" ? "roast.lines.0" : "shareText";
         const savedScope = Object.values(
@@ -534,7 +552,7 @@ async function verifyPortrait(
     );
     assert.equal(
       savedIdentity.validation_report.judgeRecipeVersion,
-      "cited-founder-portrait-judge-v5",
+      "cited-founder-portrait-judge-v6",
     );
     if (scenario === "long judge request" || scenario === "maximum profile")
       console.log(
@@ -685,6 +703,7 @@ for (const scenario of [
   "new product",
   "wrong roast citation",
   "wrong portrait citation",
+  "unsupported trait",
   "long judge request",
   "maximum profile",
   "oversized evidence",

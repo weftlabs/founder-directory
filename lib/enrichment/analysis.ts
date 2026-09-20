@@ -127,6 +127,7 @@ export function validateAnalysisOutput(
   evidenceIds: readonly string[],
   schemaVersion: string,
   claimFields?: AnalysisRecipe["claimFields"],
+  evidence?: readonly EvidenceInput[],
 ): AnalysisValidation {
   let value: unknown;
   try {
@@ -142,6 +143,9 @@ export function validateAnalysisOutput(
   )
     return { valid: false, errors: ["invalid_envelope"], output: null };
   const allowed = new Set(evidenceIds);
+  const sourceKinds = new Map(
+    (evidence ?? []).map((item) => [item.id, item.provenance?.sourceKind]),
+  );
   const fields = new Set<string>();
   for (const claim of value.claims) {
     if (
@@ -221,6 +225,29 @@ export function validateAnalysisOutput(
       claim.evidenceIds.some((id) => typeof id !== "string" || !allowed.has(id))
     )
       errors.push("unrelated_evidence");
+    if (claim.state === "supported" && claim.kind !== "inference") {
+      const citedKinds = (claim.evidenceIds as unknown[]).map((id) =>
+        sourceKinds.get(String(id)),
+      );
+      const knownKinds = citedKinds.filter(
+        (kind): kind is string =>
+          kind === "self-reported" ||
+          kind === "first-party-biography" ||
+          kind === "product-site",
+      );
+      if (evidence && knownKinds.length !== citedKinds.length)
+        errors.push("claim_source_kind_unverified");
+      if (
+        knownKinds.length > 0 &&
+        (claim.kind === "self_report"
+          ? knownKinds.some((kind) => kind !== "self-reported")
+          : knownKinds.some(
+              (kind) =>
+                kind !== "first-party-biography" && kind !== "product-site",
+            ))
+      )
+        errors.push("claim_kind_source_mismatch");
+    }
     if (claim.state !== "unknown" && claim.evidenceIds.length === 0)
       errors.push("missing_claim_evidence");
     if (claim.state === "unknown" && claim.value !== null)
@@ -484,6 +511,7 @@ export async function runAnalysis(
     input.evidence.map((item) => item.id),
     input.recipe.schemaVersion,
     input.recipe.claimFields,
+    input.evidence,
   );
   if (
     response.finishReason &&

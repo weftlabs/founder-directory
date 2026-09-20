@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { stableDigest, type AnalysisInput } from "../lib/enrichment/contracts";
+import {
+  stableDigest,
+  type AnalysisInput,
+  type EvidenceInput,
+} from "../lib/enrichment/contracts";
 import {
   prepareAnalysis,
   validateAnalysisOutput,
@@ -41,7 +45,7 @@ test("description recipes distinguish founder behavior, source attribution and p
       model: { provider: "fixture", model: "fixture", revision: null },
       codeDigest: "test",
     });
-    assert.equal(recipe.promptVersion, "evidence-only-v8");
+    assert.equal(recipe.promptVersion, "evidence-only-v9");
     assert.deepEqual(recipe.parameters, { temperature: 0, max_tokens: 1800 });
     assert.match(recipe.template, /Write values in English/);
     assert.match(recipe.template, /publisher_statement/);
@@ -58,6 +62,15 @@ test("description recipes distinguish founder behavior, source attribution and p
       assert.match(recipe.template, /every factual clause/);
       assert.match(recipe.template, /documenting.*public/i);
       assert.match(recipe.template, /CEO.*not.*craft/i);
+      assert.match(
+        recipe.template,
+        /first-party-biography.*publisher_statement/i,
+      );
+      assert.match(recipe.template, /advice.*does not establish.*working/i);
+      assert.match(
+        recipe.template,
+        /sharing a link.*authorship|authorship.*sharing a link/i,
+      );
     }
     if (purpose === "product_descriptions") {
       assert.match(recipe.template, /website exists does not establish.*stage/);
@@ -86,7 +99,7 @@ test("reasoning route reserves output room without changing other model recipes"
   });
 });
 
-test("personal DNA excludes explicitly product-site evidence without discarding it from product analysis", () => {
+test("personal DNA keeps only named founder and official biography evidence", () => {
   const sources = [
     {
       ...evidence,
@@ -98,6 +111,14 @@ test("personal DNA excludes explicitly product-site evidence without discarding 
       id: "product",
       provenance: {
         sourceKind: "product-site",
+        observedAt: "2025-03-10T00:00:00Z",
+      },
+    },
+    {
+      ...evidence,
+      id: "official",
+      provenance: {
+        sourceKind: "first-party-biography",
         observedAt: "2025-03-10T00:00:00Z",
       },
     },
@@ -114,18 +135,18 @@ test("personal DNA excludes explicitly product-site evidence without discarding 
   const dna = buildAnalysisInput({ ...base, purpose: "founder_dna" });
   assert.deepEqual(
     dna.evidence.map((row) => row.id),
-    ["personal", "unclassified"],
+    ["personal", "official"],
   );
-  assert.deepEqual(dna.requiredEvidenceIds, ["personal", "unclassified"]);
+  assert.deepEqual(dna.requiredEvidenceIds, ["personal", "official"]);
   assert.equal(
     dna.recipe.selectionPolicy,
-    "exclude-product-site-for-personal-dna-v1",
+    "named-founder-self-report-and-official-biography-v2",
   );
   assert.deepEqual(
     buildAnalysisInput({ ...base, purpose: "product_descriptions" }).evidence,
     sources,
   );
-  assert.equal(sources.length, 3);
+  assert.equal(sources.length, 4);
 });
 
 test("provider response schemas type every scalar enum and constant explicitly", () => {
@@ -299,6 +320,89 @@ test("claims must cite selected evidence and malformed/refused outputs are rejec
   );
 });
 
+test("supported claim attribution must match the cited source provenance", () => {
+  const claim = {
+    schemaVersion: "claims-v1",
+    claims: [
+      {
+        field: "summary",
+        value: "Alex builds a directory.",
+        kind: "self_report",
+        state: "supported",
+        evidenceIds: ["official"],
+      },
+    ],
+  };
+  const official: EvidenceInput = {
+    id: "official",
+    artifactId: "official-artifact",
+    contentHash: stableDigest("Official team biography"),
+    text: "Official team biography",
+    sourceUrl: "https://company.example/team/alex",
+    extractorVersion: "fixture",
+    provenance: {
+      sourceKind: "first-party-biography",
+      observedAt: "2026-09-20T00:00:00Z",
+    },
+  };
+  const fields = [{ name: "summary", type: "string" as const }];
+  const mislabeled = validateAnalysisOutput(
+    JSON.stringify(claim),
+    [official.id],
+    "claims-v1",
+    fields,
+    [official],
+  );
+  assert.equal(mislabeled.valid, false);
+  assert.ok(mislabeled.errors.includes("claim_kind_source_mismatch"));
+
+  const publisher = structuredClone(claim);
+  publisher.claims[0].kind = "publisher_statement";
+  assert.equal(
+    validateAnalysisOutput(
+      JSON.stringify(publisher),
+      [official.id],
+      "claims-v1",
+      fields,
+      [official],
+    ).valid,
+    true,
+  );
+
+  const selfReport = {
+    ...official,
+    id: "self",
+    provenance: { ...official.provenance!, sourceKind: "self-reported" },
+  };
+  assert.equal(
+    validateAnalysisOutput(
+      JSON.stringify({
+        ...claim,
+        claims: [{ ...claim.claims[0], evidenceIds: [selfReport.id] }],
+      }),
+      [selfReport.id],
+      "claims-v1",
+      fields,
+      [selfReport],
+    ).valid,
+    true,
+  );
+
+  const unknownProvenance = { ...selfReport, provenance: undefined };
+  const unverified = validateAnalysisOutput(
+    JSON.stringify({
+      ...claim,
+      claims: [{ ...claim.claims[0], evidenceIds: [unknownProvenance.id] }],
+    }),
+    [unknownProvenance.id],
+    "claims-v1",
+    fields,
+    [unknownProvenance],
+  );
+  assert.equal(unverified.valid, false);
+  assert.ok(unverified.errors.includes("claim_source_kind_unverified"));
+});
+
 test("identical embedding text shares identity across entities only in compatible spaces", () => {
   const spec = {
     scope: "public",
@@ -327,7 +431,7 @@ test("identical embedding text shares identity across entities only in compatibl
 const replayBaseInput = input;
 for (const provenance of [
   undefined,
-  { sourceKind: "founder_bio", observedAt: "2026-01-01T00:00:00Z" },
+  { sourceKind: "self-reported", observedAt: "2026-01-01T00:00:00Z" },
 ])
   test(`the runner preserves inputs through replay (${provenance ? "with provenance" : "legacy"})`, async () => {
     const input: AnalysisInput = {
@@ -412,8 +516,18 @@ for (const provenance of [
     assert.equal(events.filter((event) => event === "dispatch").length, 1);
     assert.ok(artifacts.has("response-1"));
     assert.equal(runs[0].output, null);
-    raw =
-      '{"schemaVersion":"1","claims":[{"field":"description","value":"Tools","kind":"self_report","state":"supported","evidenceIds":["e1"]}]}';
+    raw = JSON.stringify({
+      schemaVersion: "1",
+      claims: [
+        {
+          field: "description",
+          value: "Tools",
+          kind: provenance ? "self_report" : "inference",
+          state: "supported",
+          evidenceIds: ["e1"],
+        },
+      ],
+    });
     assert.equal(
       (await runAnalysis(store, input, execute, { rerunId: "explicit-retry" }))
         .status,
@@ -568,7 +682,12 @@ test("default recipes require cited product and DNA fields without numeric abili
     releaseId: "release1",
     generation: 1,
     purpose: "founder_dna",
-    evidence: [evidence],
+    evidence: [
+      {
+        ...evidence,
+        provenance: { sourceKind: "self-reported", observedAt: null },
+      },
+    ],
     model: { provider: "fixture", model: "fixture", revision: "1" },
     codeDigest: "code1",
   });

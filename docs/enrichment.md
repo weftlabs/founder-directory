@@ -206,12 +206,15 @@ labels must match saved metadata before reuse or dispatch. Older manifests witho
 these optional labels remain unchanged on replay. Observation time is not a
 publication date or proof that an announced event happened.
 
-Personal DNA excludes evidence explicitly labeled `product-site`; product analysis
-still uses it. Unknown source labels remain eligible, so this rule does not prove
-complete source classification. The exact selected evidence and selection version
-are retained in each manifest. No eligible personal evidence leaves the DNA stage
-unavailable rather than inventing personal traits. Descriptions are bounded to
-1,800 output tokens; a truncated response fails validation and is not published.
+Personal DNA uses only evidence labeled `self-reported` or
+`first-party-biography`. It excludes unknown, product-site and other source kinds;
+product analysis can still use those sources. A supported `self_report` claim must
+cite only self-reported evidence. A supported `publisher_statement` claim must cite
+only a first-party biography or product site. Syntheses and deductions remain
+`inference`. The exact selected evidence and selection version are retained in each
+manifest. No eligible personal evidence leaves the DNA stage unavailable rather
+than inventing personal traits. Descriptions are bounded to 1,800 output tokens; a
+truncated response fails validation and is not published.
 
 Product context retains cited evidence and other saved excerpts at the exact
 product-page URL (ignoring fragments and trailing slashes). It does not retrieve
@@ -338,7 +341,7 @@ This command requires `--confirm-write`, `--allow-paid`,
 `ENRICHMENT_ALLOW_PAID=1`, `WEFT_API_KEY`, and `TYPESAFE_AI_API_KEY`
 (`TYPESAGE_AI_API_KEY` and `TYPESAFE_API_KEY` are supported aliases). No environment
 file is loaded. It uses only explicit `ENRICHMENT_DATABASE_URL`. Each new portrait
-uses at most one text-generation call. Judge v5 groups fact checks by exact source
+uses at most one text-generation call. Judge v6 groups fact checks by exact source
 subset and prose checks by exact cited fact subset, then classifies facets in a
 separate call. A typical profile uses three Jev calls; the maximum is fifteen.
 All request sizes and the planned count are checked before the first judge call.
@@ -358,7 +361,10 @@ it does not force coverage of every source. Its schema separates local fact IDs
 name facts actually present; source references remain on those facts. It requires
 a new approved generation recipe and cannot reuse earlier generation captures as
 if their prompt were unchanged.
-Judge v5 remains separate. When the generation recipe and inputs are unchanged,
+Judge v6 remains separate. It evaluates factual grounding and a distinct
+trait-safety question inside each existing prose request, so unsupported personality,
+motivation, preference, tolerance, ability, habit or repeated-behavior claims fail
+without adding a provider call. When the generation recipe and inputs are unchanged,
 a new judge version can keep the original generation run ID while creating a new
 analysis/check ID. To resume checking a retained generation, call the same driver
 with its original input, generation `codeDigest`, approved recipe manifest and

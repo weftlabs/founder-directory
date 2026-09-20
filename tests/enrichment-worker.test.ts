@@ -53,63 +53,70 @@ test("Atlas website expansion uses only one exact safe mapping", () => {
   }
 });
 
-test("product-only evidence makes personal DNA unavailable without generation", async () => {
-  const worker = {
-    async assertConfiguration() {},
-    async stageOutput() {
-      return "product-artifact";
-    },
-    async evidenceByIds(): Promise<EvidenceInput[]> {
-      return [
-        {
-          id: "product",
-          artifactId: "product-artifact",
-          contentHash: "unused",
-          text: "Synthetic product offer",
-          sourceUrl: "https://product.example",
-          extractorVersion: "test",
-          provenance: { sourceKind: "product-site", observedAt: null },
+test("product-only and unlabeled evidence make personal DNA unavailable without generation", async () => {
+  for (const sourceKind of ["product-site", undefined]) {
+    let generations = 0;
+    const worker = {
+      async assertConfiguration() {},
+      async stageOutput() {
+        return "source-artifact";
+      },
+      async evidenceByIds(): Promise<EvidenceInput[]> {
+        return [
+          {
+            id: "source",
+            artifactId: "source-artifact",
+            contentHash: "unused",
+            text: "Synthetic source text",
+            sourceUrl: null,
+            extractorVersion: "test",
+            ...(sourceKind
+              ? { provenance: { sourceKind, observedAt: null } }
+              : {}),
+          },
+        ];
+      },
+    } as unknown as WorkerStore;
+    const handlers = createStageHandlers(
+      {
+        async getArtifact() {
+          return {
+            kind: "manifest",
+            body: Buffer.from(
+              JSON.stringify({
+                version: "profile-website-evidence-v1",
+                evidenceIds: ["source"],
+                artifactIds: [],
+                website: { status: "captured" },
+              }),
+            ),
+          };
         },
-      ];
-    },
-  } as unknown as WorkerStore;
-  const handlers = createStageHandlers(
-    {
-      async getArtifact() {
-        return {
-          kind: "manifest",
-          body: Buffer.from(
-            JSON.stringify({
-              version: "profile-website-evidence-v1",
-              evidenceIds: ["product"],
-              artifactIds: [],
-              website: { status: "captured" },
-            }),
-          ),
-        };
+      } as unknown as EnrichmentStore,
+      worker,
+      {
+        mode: "rederive",
+        codeDigest: "test",
+        model: { provider: "fixture", model: "fixture", revision: null },
+        async executeGeneration() {
+          generations++;
+          throw new Error("unexpected model dispatch");
+        },
       },
-    } as unknown as EnrichmentStore,
-    worker,
-    {
-      mode: "rederive",
-      codeDigest: "test",
-      model: { provider: "fixture", model: "fixture", revision: null },
-      async executeGeneration() {
-        throw new Error("unexpected model dispatch");
-      },
-    },
-  );
-  assert.deepEqual(
-    await handlers.founder_dna({
-      id: "work",
-      leaseToken: "lease",
-      entityId: "founder",
-      releaseId: "release",
-      generation: 0,
-      stage: "founder_dna",
-    }),
-    { status: "unavailable", reason: "no_personal_evidence" },
-  );
+    );
+    assert.deepEqual(
+      await handlers.founder_dna({
+        id: "work",
+        leaseToken: "lease",
+        entityId: "founder",
+        releaseId: "release",
+        generation: 0,
+        stage: "founder_dna",
+      }),
+      { status: "unavailable", reason: "no_personal_evidence" },
+    );
+    assert.equal(generations, 0);
+  }
 });
 
 test("product context retains uncited excerpts from the exact product page only", () => {
@@ -260,7 +267,12 @@ async function fixture(
               status: 200,
               requestedUrl: "https://synthetic.example/",
             }
-          : {},
+          : operation === "source"
+            ? {
+                sourceKind: "self-reported",
+                observedAt: "2026-09-20T00:00:00Z",
+              }
+            : {},
     });
     return { artifact, attempt };
   }
@@ -370,7 +382,11 @@ async function fixture(
                     },
                   ]
                 : `Synthetic ${field.name}`,
-        kind: "self_report",
+        kind: input.request.evidence.every(
+          (row) => row.provenance?.sourceKind === "self-reported",
+        )
+          ? "self_report"
+          : "inference",
         state:
           field.name === "products"
             ? (options.products ?? "supported")

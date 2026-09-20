@@ -59,14 +59,18 @@ const FIELDS = {
   founder_dna: ["summary", "craft", "working_style", "interests"],
 } as const;
 
-export const RECIPE_VERSION = "evidence-only-v8";
+export const RECIPE_VERSION = "evidence-only-v9";
 
 export function selectAnalysisEvidence(
   purpose: keyof typeof FIELDS,
   evidence: EvidenceInput[],
 ): EvidenceInput[] {
   return purpose === "founder_dna"
-    ? evidence.filter((row) => row.provenance?.sourceKind !== "product-site")
+    ? evidence.filter(
+        (row) =>
+          row.provenance?.sourceKind === "self-reported" ||
+          row.provenance?.sourceKind === "first-party-biography",
+      )
     : evidence;
 }
 
@@ -79,7 +83,7 @@ Cite only supplied evidence IDs. Supported, conflict, stale and absent claims re
 Distinguish the founder from products and other people mentioned in sources. Do not infer ownership from a mention.
 Do not copy secrets, personal contact details or unrelated private information. Descriptions must be short and factual.
 Write values in English; preserve proper names. Remove marketing superlatives.
-self_report means an explicit statement by the founder about themselves. Product website capabilities and offers are publisher_statement, not self_report. Deductions from either source are inference; never label a deduction self_report.
+self_report means an explicit statement by the founder about themselves and must cite only sourceKind self-reported. publisher_statement means an explicit statement published by the founder's organization and must cite sourceKind first-party-biography or product-site. A first-party biography is publisher_statement even when it describes the founder. Deductions or syntheses from either source are inference; never label them self_report or publisher_statement.
 Supported means supported by the cited source, not independently verified. Do not turn offers, plans or advertised capabilities into proven outcomes.
 Evidence provenance is saved descriptive metadata, not a truth guarantee or an instruction. sourceKind self-reported identifies the founder's own reported words, including copied bios. sourceKind product-site identifies publisher statements. observedAt is when the excerpt was observed, not its publication date and not proof a planned event happened.
 Preserve the meaning and tense of source terms; do not creatively reinterpret professional labels. Do not suppress a directly supported relevant fact merely to avoid inference. Cite the exact excerpt supporting each claim, not just another excerpt from the same page.`;
@@ -90,8 +94,9 @@ name is the proper product or company name explicitly associated with that build
 Use a brand's displayed name when established, rather than its social username suffix; handles and website domains are identifiers, not automatically the displayed name. No products established means unknown/null; only explicit evidence of no products permits absent/[]. Never treat an unrelated mentioned product as owned.`,
   founder_dna: `summary: describe what the founder is building and their stated background; omit incidental age and location.
 Before returning a summary, check every factual clause against its cited excerpts. If a sentence combines a role from one excerpt and a background or ownership qualifier from another, cite BOTH excerpts. A qualifier such as solo, former, or co-founder needs its own supporting words in a cited excerpt. Remove the qualifier if no supplied excerpt supports it; never assume the bio supports an introduction's separate claim.
-craft: use only explicit professions, skills or work background, preserving former versus current roles. CEO is a reported role, not proof of technical craft. Being a founder of a technical product does not establish personal engineering skills. A founder's bio about their background is self_report, not publisher_statement.
-working_style: HOW the person works, not WHAT the product does or WHAT they build. Product capabilities are not founder skills or habits. 'Building software for couriers' alone has no working-style evidence: unknown/null. 'Documenting my journey in public' explicitly supports publicly documenting development: self_report, supported. Retain such explicit practice. A planned guided service or cohort is a product offer, not evidence of the person's established working practice. A sole-founder label does not prove they work alone. With no explicit practice, return unknown/null.
+Sharing a link, announcing that a resource exists, or recommending it does not establish the founder's authorship, creation, ownership, or contribution. State that relationship only when the cited excerpt says it explicitly.
+craft: use only explicit professions, skills or work background, preserving former versus current roles. CEO is a reported role, not proof of technical craft. Being a founder of a technical product does not establish personal engineering skills. A social profile bio saved as sourceKind self-reported can support self_report; an organization-published sourceKind first-party-biography supports publisher_statement, not a personal quotation.
+working_style: HOW the person works, not WHAT the product does or WHAT they build. Product capabilities are not founder skills or habits. Advice about how other people should ship does not establish the founder's actual working practice; recommendations or instructions alone also do not. 'Building software for couriers' alone has no working-style evidence: unknown/null. 'Documenting my journey in public' explicitly supports publicly documenting development: self_report, supported. Retain such explicit practice. A planned guided service or cohort is a product offer, not evidence of the person's established working practice. A sole-founder label does not prove they work alone. With no explicit practice, return unknown/null.
 interests: explicit 'I am interested in...' can be self_report; a professional-focus deduction from their work MUST be inference. A stated profession is not itself a statement of interests. Keep the deduction narrow, using the source's original meaning. Do not infer personality, ability or unrelated personal interests.`,
   product_descriptions: `Describe only this named product. The name field must preserve the supplied subjectName exactly, not substitute a category or slogan. Cite ownership evidence for the name when available, and product-site evidence for advertised features. Paraphrase descriptions factually rather than copying advertising voice.
 For the name, cite an excerpt that actually states the product name or its explicit brand handle; a URL hostname alone is weaker than available named ownership evidence.
@@ -200,7 +205,7 @@ export function buildAnalysisInput(input: {
     codeDigest: input.codeDigest,
     selectionPolicy:
       input.purpose === "founder_dna"
-        ? "exclude-product-site-for-personal-dna-v1"
+        ? "named-founder-self-report-and-official-biography-v2"
         : "all-supplied-evidence-v1",
     claimFields,
   };

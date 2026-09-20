@@ -1,4 +1,4 @@
--- Every physically scoped v5 judgment must remain retained.
+-- Every physically scoped v5/v6 judgment must remain retained.
 CREATE OR REPLACE VIEW founder_dna_eligible_profiles AS
  SELECT p.* FROM founder_dna_release_profiles p
  JOIN enrichment_entities e ON e.id=p.entity_id AND e.kind='founder' AND e.status='active'
@@ -16,7 +16,7 @@ CREATE OR REPLACE VIEW founder_dna_eligible_profiles AS
  AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements_text(coalesce(portrait.validation_report->'productAnalysisIds','[]'::jsonb)) product(id)
    WHERE NOT EXISTS(SELECT 1 FROM enrichment_eligible_analyses pa JOIN enrichment_releases r ON r.id=pa.release_id AND r.status='approved' JOIN enrichment_founder_products relation ON relation.product_id=pa.entity_id AND relation.founder_id=p.entity_id
     WHERE pa.id::text=product.id AND pa.purpose='product_descriptions' AND pa.status='succeeded' AND founder_dna_sources_eligible(pa.evidence_ids) AND founder_dna_sources_eligible(jsonb_build_array(relation.evidence_id::text))))
- AND (portrait.validation_report->>'judgeRecipeVersion' IS DISTINCT FROM 'cited-founder-portrait-judge-v5' OR (
+ AND ((portrait.validation_report->>'judgeRecipeVersion' IS DISTINCT FROM 'cited-founder-portrait-judge-v5' AND portrait.validation_report->>'judgeRecipeVersion' IS DISTINCT FROM 'cited-founder-portrait-judge-v6') OR (
    jsonb_typeof(portrait.validation_report->'judgeExchanges')='array'
    AND jsonb_array_length(CASE WHEN jsonb_typeof(portrait.validation_report->'judgeExchanges')='array' THEN portrait.validation_report->'judgeExchanges' ELSE '[]'::jsonb END) BETWEEN 1 AND 15
    AND NOT EXISTS(

@@ -183,6 +183,7 @@ for (const purpose of ["founder_dna", "founder_portrait"] as const) {
           contentHash: stableDigest("Builds tools"),
           sourceUrl: "https://example.test/founder",
           extractorVersion: "fixture",
+          provenance: { sourceKind: "self-reported", observedAt: null },
         },
       ],
       model,

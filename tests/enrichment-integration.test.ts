@@ -232,6 +232,52 @@ test("legacy backfill and future founder insertion share durable intake and pres
   }
 });
 
+test("legacy intake labels only handle-bound founder posts as self-reported", async () => {
+  const { pg, db } = await fixture();
+  try {
+    await db.query(
+      "INSERT INTO founders VALUES('fixture_mismatch','Mismatch','Builds tools','I am unrelated','https://x.com/someone_else/status/456')",
+    );
+    await db.query(
+      "INSERT INTO founders VALUES('fixture_missing','Missing','Builds tools','I have no source',NULL)",
+    );
+    await db.query(
+      "INSERT INTO founders VALUES('fixture_whitespace','Whitespace','Builds tools','   ','https://x.com/fixture_whitespace/status/789')",
+    );
+    assert.deepEqual(await importLegacyIntake(db, "test"), { imported: 4 });
+    const rows = await db.query<{
+      legacy_key: string;
+      source_kind: string | null;
+      origin_evidence_id: string | null;
+    }>(
+      `SELECT entity.legacy_key,
+        artifact.metadata->>'sourceKind' AS source_kind,
+        origin.evidence_id::text AS origin_evidence_id
+       FROM enrichment_entities entity
+       JOIN enrichment_entity_evidence link ON link.entity_id=entity.id
+       JOIN enrichment_evidence evidence ON evidence.id=link.evidence_id
+       JOIN enrichment_artifacts artifact ON artifact.id=evidence.artifact_id
+       LEFT JOIN enrichment_index_origins origin ON origin.founder_id=entity.id
+       ORDER BY entity.legacy_key`,
+    );
+    assert.deepEqual(
+      rows.rows.map((row) => [
+        row.legacy_key,
+        row.source_kind,
+        Boolean(row.origin_evidence_id),
+      ]),
+      [
+        ["fixture_mismatch", null, false],
+        ["fixture_missing", null, false],
+        ["fixture_old", "self-reported", true],
+        ["fixture_whitespace", null, false],
+      ],
+    );
+  } finally {
+    await pg.close();
+  }
+});
+
 test("saved evidence produces durable analysis, unchanged input reuses, changed prompt re-derives without source calls", async () => {
   const { pg, db, store, release } = await fixture();
   try {
@@ -260,6 +306,7 @@ test("saved evidence produces durable analysis, unchanged input reuses, changed 
           contentHash: stableDigest(row.excerpt),
           sourceUrl: row.source_url,
           extractorVersion: "founder-row-v1",
+          provenance: { sourceKind: "self-reported", observedAt: null },
         },
       ],
       model: { provider: "synthetic", model: "fixture", revision: "1" },
