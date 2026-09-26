@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Founder } from "../lib/model";
+import { defaultWeftDependencies } from "../lib/weft";
 import {
   BULK_MAX_HYDRATIONS,
   BULK_MAX_SEARCHES,
@@ -107,6 +108,34 @@ function memoryStore(init?: {
   };
   return { record, store };
 }
+
+test("default disabled durable capture leaves hydrate-only intro queue unchanged", async (t) => {
+  const queued = [hit("capture_waiting")];
+  const { store, record } = memoryStore({ pending: queued });
+  t.mock.method(
+    defaultWeftDependencies,
+    "apiKey",
+    () => "synthetic-key-no-provider-call",
+  );
+  const previous = process.env.ENRICHMENT_ALLOW_PAID;
+  process.env.ENRICHMENT_ALLOW_PAID = "0";
+  try {
+    await assert.rejects(
+      runScan({
+        store,
+        maxSearches: 0,
+        maxHydrations: 1,
+        normalizePlaces: async () => new Map(),
+      }),
+      /durable_capture/,
+    );
+    assert.deepEqual(record.pending, queued);
+    assert.deepEqual(record.added, []);
+  } finally {
+    if (previous === undefined) delete process.env.ENRICHMENT_ALLOW_PAID;
+    else process.env.ENRICHMENT_ALLOW_PAID = previous;
+  }
+});
 
 test("imports every unknown intro instead of dropping a quota", () => {
   const hits = [

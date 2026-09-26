@@ -35,7 +35,7 @@ export function OnlineNow() {
     };
     void beat();
     const timer = window.setInterval(() => void beat(), 20_000);
-    capture("looking_for_founders");
+    capture("weft_founder_directory_presence_started", {});
     return () => {
       cancelled = true;
       window.clearInterval(timer);

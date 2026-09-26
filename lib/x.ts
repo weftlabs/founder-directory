@@ -1,7 +1,7 @@
 import { WeftError, type FetchResponse } from "@weft-labs/sdk";
 import { defaultWeftDependencies, type WeftDependencies } from "./weft";
 import { emptyPlace } from "./place";
-import { fetchWithRetry } from "./weft-retry";
+import { DurableCaptureError, fetchWithRetry } from "./weft-retry";
 import {
   categorize,
   extractGithub,
@@ -138,13 +138,15 @@ export async function searchIntroPage(
     ...X_SEARCH,
   });
   if (!response || response.status < 200 || response.status >= 300) {
-    return { hits: [], cursor: null };
+    throw new Error("Search provider unavailable; cursor must be retained");
   }
   let payload: Record<string, unknown>;
   try {
     payload = decodeBody(response);
   } catch {
-    return { hits: [], cursor: null };
+    throw new Error(
+      "Search provider returned invalid JSON; cursor must be retained",
+    );
   }
   const next =
     asString(payload.cursor) ??
@@ -244,6 +246,7 @@ export async function fetchProfile(
       },
     );
   } catch (error) {
+    if (error instanceof DurableCaptureError) throw error;
     if (error instanceof WeftError && [502, 504].includes(error.status)) {
       throw new ProfileUnavailableError(error.status);
     }

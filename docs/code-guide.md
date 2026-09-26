@@ -7,7 +7,7 @@ platform architecture specification.
 app/                  Next.js routes and presentation
   directory.tsx       page navigation and filters; in-memory synthetic preview
   site-header.tsx     shared product navigation
-  analytics.tsx       optional PostHog; $pageview/$pageleave on App Router nav
+  analytics.tsx       optional anonymous PostHog transport and safe page events
   online-now.tsx      Neon heartbeat for the online chip (~20s ping, 45s window)
   api/cron/discover/  search latest intros; queue leftover handles
   api/cron/hydrate/   enrich queued intros (Pro maxDuration 800s)
@@ -81,3 +81,46 @@ The database currently bootstraps its small schema on access; see the
 [Founder map](discovery.md) documents geographic coverage and local previews. `lib/geography.ts` keeps the city
 gazetteer on the server; `lib/discovery.ts` owns pure filtering and pagination.
 `lib/discovery-data.ts` sends only display fields to the client.
+
+## Products
+
+[Products](products.md) documents published descriptions, category rules and local
+previews. `lib/products.ts` owns pure display and navigation values;
+`lib/product-data.ts` owns the bounded read-only projection. The Products route
+and `app/products-view.tsx` render server components with standard GET filters.
+
+## Published Founder DNA profiles
+
+When Founder DNA is enabled, `/u/[handle]` reads a saved eligible profile through
+`lib/founder-dna-data.ts`. Page and image requests never collect sources or call a
+model. Hidden profiles cannot fall back to the legacy directory record. Missing
+and unavailable profiles have explicit states; the legacy route remains available
+when the feature is disabled.
+
+The private release CLI can select a validated inactive release for operator preview
+through the same release-scoped projection. It never changes the active pointer.
+Visitor requests cannot supply a release selector. Its coverage command is a
+read-only activation-time proof for the public directory and published product
+links; it does not run during a page request.
+
+The profile puts a playful roast before useful connections and products. “Why
+this fits” contains the approved source excerpts and factual claims. Categories
+are model inferences, and humor is interpretation. Source support does not mean
+independent verification.
+
+Each profile has a 1200×630 PNG at `/u/[handle]/share-image`, advertised through
+large-image social metadata with the canonical profile URL. The image URL carries
+the profile revision; stale revisions and hidden profiles return no image. Image
+responses use `no-store`. The renderer uses a bundled Latin font and initials, so
+it makes no remote image or font requests. Unsupported glyphs are normalized or
+use a handle fallback in the image; the HTML preserves the original text. Long
+roasts and names are fitted using the bundled font’s measured advance widths.
+When a roast needs shortening, the card shows an ellipsis and points to the full
+text on the profile.
+
+The share control lets visitors edit and copy a draft with the profile link, or
+download its image. Optional analytics record profile views, successful copies,
+download starts and connection interactions. The typed event catalog drops
+unknown properties and keeps handles, URLs, source text and copy text out of
+custom events. A download-start event does not establish a completed share. See
+the [product analytics contract](analytics.md).

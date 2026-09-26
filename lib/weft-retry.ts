@@ -10,6 +10,15 @@ const transient = (status: number) => status === 502 || status === 504;
 const hardStop =
   /balance|budget|policy|denied|denylist|price|cost|scope|auth|payment/;
 
+// A capture/configuration failure is not evidence that a profile does not exist.
+// Propagate this safe marker without retrying or exposing the underlying error.
+export class DurableCaptureError extends Error {
+  constructor() {
+    super("durable_capture_unavailable");
+    this.name = "DurableCaptureError";
+  }
+}
+
 function hasPayment(value: unknown, seen = new Set<object>()): boolean {
   if (!value || typeof value !== "object" || seen.has(value)) return false;
   seen.add(value);
@@ -65,6 +74,7 @@ export async function fetchWithRetry(
         return response;
       }
     } catch (error) {
+      if (error instanceof DurableCaptureError) throw error;
       if (error instanceof WeftError)
         console.warn("Weft request failure", {
           status: error.status,

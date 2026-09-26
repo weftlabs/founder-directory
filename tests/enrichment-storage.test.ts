@@ -1,0 +1,1332 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { createHash, randomUUID } from "node:crypto";
+import { PGlite } from "@electric-sql/pglite";
+import {
+  migrateEnrichment,
+  type Database,
+  type Sql,
+} from "../lib/enrichment/db";
+import { EnrichmentStore } from "../lib/enrichment/store";
+import { WorkerStore } from "../lib/enrichment/worker-store";
+
+async function fixture() {
+  const pg = new PGlite();
+  const adapt = (client: Pick<PGlite, "query" | "exec">): Sql => ({
+    async query<T>(sql: string, values?: unknown[]) {
+      if (!values && sql.includes(";")) {
+        await client.exec(sql);
+        return { rows: [] as T[] };
+      }
+      return client.query<T>(sql, values);
+    },
+  });
+  const db: Database = {
+    ...adapt(pg),
+    transaction: (fn) => pg.transaction((tx) => fn(adapt(tx))),
+  };
+  await migrateEnrichment(db);
+  await migrateEnrichment(db);
+  return { pg, db, store: new EnrichmentStore(db) };
+}
+test("saved provenance reaches evidence inputs and rejects caller alterations", async () => {
+  const { pg, db, store } = await fixture();
+  try {
+    const provenance = {
+      sourceKind: "founder_bio",
+      observedAt: "2026-01-01T00:00:00Z",
+    };
+    const raw = await store.putArtifact({
+      kind: "legacy_import",
+      body: Buffer.from("Synthetic founder"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      importBatch: "test",
+      metadata: provenance,
+    });
+    const id = await store.addEvidence({
+      artifactId: raw.id,
+      extractorVersion: "v1",
+      locator: "$",
+      payload: {},
+      excerpt: "Synthetic founder",
+    });
+    const entityId = await store.createEntity("founder", "provenance");
+    await store.linkEvidence(entityId, id, "source");
+    const releaseId = await store.createRelease({
+      stages: ["dna"],
+      recipes: { dna: "recipe" },
+    });
+    await store.approveRelease(releaseId, raw.id, {
+      actor: "test",
+      reason: "offline",
+    });
+    await store.promoteRelease("test", releaseId, "initial");
+    await store.intake("test", entityId);
+    const evidence = await new WorkerStore(db).evidence(entityId);
+    assert.deepEqual(evidence[0].provenance, provenance);
+    const trusted = {
+      entityId,
+      releaseId,
+      generation: 0,
+      purpose: "dna",
+      recipeDigest: "recipe",
+      evidence,
+    };
+    await store.assertAnalysisInputs(trusted);
+    for (const forged of [
+      { ...provenance, sourceKind: "verified_fact" },
+      { ...provenance, observedAt: "2030-01-01" },
+      { sourceKind: null, observedAt: null },
+    ]) {
+      await assert.rejects(
+        store.assertAnalysisInputs({
+          ...trusted,
+          evidence: [{ ...evidence[0], provenance: forged }],
+        }),
+        /evidence_provenance_mismatch/,
+      );
+    }
+    // Old immutable manifests have no provenance; replay must not enrich them silently.
+    const { provenance: _provenance, ...legacy } = evidence[0];
+    void _provenance;
+    await store.assertAnalysisInputs({ ...trusted, evidence: [legacy] });
+    const unknown = await store.putArtifact({
+      kind: "legacy_import",
+      body: Buffer.from("Unknown source"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      importBatch: "test",
+      metadata: { sourceKind: { forged: "nested" }, observedAt: 5 },
+    });
+    const unknownId = await store.addEvidence({
+      artifactId: unknown.id,
+      extractorVersion: "v1",
+      locator: "$",
+      payload: {},
+      excerpt: "Unknown source",
+    });
+    await store.linkEvidence(entityId, unknownId, "source");
+    const unknownEvidence = await new WorkerStore(db).evidence(
+      entityId,
+      unknown.id,
+    );
+    assert.deepEqual(unknownEvidence[0].provenance, {
+      sourceKind: null,
+      observedAt: null,
+    });
+    await store.assertAnalysisInputs({ ...trusted, evidence: unknownEvidence });
+  } finally {
+    await pg.close();
+  }
+});
+
+test("scoped stage claims never consume another scope's work", async () => {
+  const { pg, db, store } = await fixture();
+  try {
+    const evaluation = await store.putArtifact({
+      kind: "legacy_import",
+      body: Buffer.from("synthetic evaluation"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      importBatch: "test",
+    });
+    const release = await store.createRelease({ stages: ["collect"] });
+    await store.approveRelease(release, evaluation.id, {
+      actor: "test",
+      reason: "approved",
+    });
+    const founders: Record<string, string> = {};
+    for (const scope of ["first", "second"]) {
+      await store.promoteRelease(scope, release, "initial");
+      founders[scope] = await store.createEntity("founder", scope);
+      await store.intake(scope, founders[scope]);
+      await store.reconcileTargets(scope);
+    }
+    assert.equal(await store.claimStage(60, "missing"), null);
+    const second = await store.claimStage(60, "second");
+    assert.equal(second?.entityId, founders.second);
+    assert.equal(await store.claimStage(60, "second"), null);
+    assert.equal(
+      (
+        await db.query<{ status: string }>(
+          "SELECT status FROM enrichment_stage_work WHERE entity_id=$1",
+          [founders.first],
+        )
+      ).rows[0].status,
+      "pending",
+    );
+    const first = await store.claimStage(60, "first");
+    assert.equal(first?.entityId, founders.first);
+  } finally {
+    await pg.close();
+  }
+});
+test("unknown products do not block founder DNA and dispatch needs a current sufficient lease", async () => {
+  const { pg, db, store } = await fixture();
+  try {
+    const evaluation = await store.putArtifact({
+      kind: "legacy_import",
+      body: Buffer.from("synthetic evaluation"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      importBatch: "test",
+    });
+    const stages = [
+      "collection",
+      "extraction",
+      "product_discovery",
+      "product_descriptions",
+      "founder_dna",
+      "embeddings",
+    ];
+    const release = await store.createRelease({ stages });
+    await store.approveRelease(release, evaluation.id, {
+      actor: "test",
+      reason: "approved",
+    });
+    await assert.rejects(() =>
+      store.createRelease({
+        stages: ["one", "two"],
+        dependencies: { one: ["two"], two: ["one"] },
+      }),
+    );
+    await store.promoteRelease("test", release, "initial");
+    const entityId = await store.createEntity("founder", "independent-dna");
+    await store.intake("test", entityId);
+    await store.reconcileTargets("test");
+    const collection = await store.claimStage(900, "test");
+    assert.equal(collection?.stage, "collection");
+    await store.assertStageLease(collection!.id, collection!.leaseToken);
+    await assert.rejects(() =>
+      store.assertStageLease(collection!.id, randomUUID()),
+    );
+    await db.query(
+      "UPDATE enrichment_stage_work SET lease_until=now()+interval '20 seconds' WHERE id=$1",
+      [collection!.id],
+    );
+    await assert.rejects(() =>
+      store.assertStageLease(collection!.id, collection!.leaseToken),
+    );
+    await db.query(
+      "UPDATE enrichment_stage_work SET lease_until=now()+interval '900 seconds' WHERE id=$1",
+      [collection!.id],
+    );
+    await store.finishStage({ ...collection!, status: "succeeded" });
+    const extraction = await store.claimStage(900, "test");
+    assert.equal(extraction?.stage, "extraction");
+    await store.finishStage({ ...extraction!, status: "succeeded" });
+    await db.query(
+      "UPDATE enrichment_stage_work SET status='unavailable',reason='unknown product evidence' WHERE entity_id=$1 AND stage='product_discovery'",
+      [entityId],
+    );
+    const dna = await store.claimStage(900, "test");
+    assert.equal(dna?.stage, "founder_dna");
+    await store.assertStageLease(dna!.id, dna!.leaseToken);
+    assert.equal(await store.claimStage(900, "test"), null);
+    await db.query(
+      "UPDATE enrichment_targets SET generation=generation+1 WHERE entity_id=$1",
+      [entityId],
+    );
+    await assert.rejects(() =>
+      store.assertStageLease(dna!.id, dna!.leaseToken),
+    );
+  } finally {
+    await pg.close();
+  }
+});
+test("database export restores exact source bytes and lineage in a fresh engine", async () => {
+  const { pg, store } = await fixture();
+  const body = Buffer.from(Array.from({ length: 65536 }, (_, i) => i % 256));
+  const artifact = await store.putArtifact({
+    kind: "legacy_import",
+    body,
+    contentType: "application/octet-stream",
+    redactionVersion: "none",
+    importBatch: "synthetic-restore",
+  });
+  const evidence = await store.addEvidence({
+    artifactId: artifact.id,
+    extractorVersion: "v1",
+    locator: "bytes",
+    payload: { length: body.length },
+    excerpt: "synthetic bytes",
+  });
+  const backup = await pg.dumpDataDir();
+  await pg.close();
+  const restored = new PGlite({ loadDataDir: backup });
+  try {
+    const row = (
+      await restored.query<{
+        body: Uint8Array;
+        sha256: string;
+        artifact_id: string;
+      }>(
+        "SELECT a.body,a.sha256,e.artifact_id FROM enrichment_artifacts a JOIN enrichment_evidence e ON e.artifact_id=a.id WHERE e.id=$1",
+        [evidence],
+      )
+    ).rows[0];
+    assert.deepEqual(Buffer.from(row.body), body);
+    assert.equal(row.sha256, createHash("sha256").update(body).digest("hex"));
+    assert.equal(row.artifact_id, artifact.id);
+  } finally {
+    await restored.close();
+  }
+});
+test("durable request exclusion, exact reservations and raw response survive repository restart", async () => {
+  const { pg, db, store } = await fixture();
+  try {
+    const budgetId = randomUUID();
+    await store.createBudget({
+      id: budgetId,
+      scope: "test",
+      currency: "USD",
+      capMicros: "100",
+    });
+    const request = await store.planCollection({
+      scope: "test",
+      fingerprint: "same",
+      generation: 0,
+      operation: "read",
+      args: {},
+      policyId: "test-only",
+    });
+    const results = await Promise.allSettled([
+      store.reserveAttempt({
+        requestId: request.id,
+        budgetId,
+        capMicros: "70",
+      }),
+      store.reserveAttempt({
+        requestId: request.id,
+        budgetId,
+        capMicros: "70",
+      }),
+    ]);
+    assert.equal(results.filter((r) => r.status === "fulfilled").length, 1);
+    const attempt = results.find((r) => r.status === "fulfilled")!;
+    assert.equal(attempt.status, "fulfilled");
+    if (attempt.status !== "fulfilled") return;
+    await store.markDispatched(attempt.value.id);
+    await store.markUncertain(attempt.value.id, "worker restart");
+    await assert.rejects(() =>
+      new EnrichmentStore(db).reserveAttempt({
+        requestId: request.id,
+        budgetId,
+        capMicros: "1",
+      }),
+    );
+    const raw = Buffer.from("{malformed paid response");
+    const artifact = await store.captureResponse({
+      attemptId: attempt.value.id,
+      body: raw,
+      contentType: "application/json",
+      redactionVersion: "test",
+      paymentState: "settled",
+      settledMicros: "50",
+    });
+    assert.deepEqual(
+      Buffer.from(
+        (await new EnrichmentStore(db).getReusableArtifact(request.id))!.body,
+      ),
+      raw,
+    );
+    await assert.rejects(() =>
+      db.query("UPDATE enrichment_artifacts SET body=$2 WHERE id=$1", [
+        artifact.id,
+        Buffer.from("changed"),
+      ]),
+    );
+    assert.equal(
+      (
+        await db.query<{ committed_micros: string }>(
+          "SELECT committed_micros::text FROM enrichment_budgets",
+        )
+      ).rows[0].committed_micros,
+      "50",
+    );
+    const next = await store.planCollection({
+      scope: "test",
+      fingerprint: "next",
+      generation: 0,
+      operation: "read",
+      args: {},
+      policyId: "test-only",
+    });
+    await assert.rejects(() =>
+      store.reserveAttempt({ requestId: next.id, budgetId, capMicros: "51" }),
+    );
+  } finally {
+    await pg.close();
+  }
+});
+test("paid cap breach preserves body and blocks further budget use", async () => {
+  const { pg, db, store } = await fixture();
+  try {
+    const budgetId = randomUUID();
+    await store.createBudget({
+      id: budgetId,
+      scope: "test",
+      currency: "USD",
+      capMicros: "100",
+    });
+    const req = await store.planCollection({
+      scope: "test",
+      fingerprint: "breach",
+      generation: 0,
+      operation: "read",
+      args: {},
+      policyId: "test-only",
+    });
+    const attempt = await store.reserveAttempt({
+      requestId: req.id,
+      budgetId,
+      capMicros: "100",
+    });
+    await store.markDispatched(attempt.id);
+    const body = Buffer.from("paid body");
+    const result = await store.captureResponse({
+      attemptId: attempt.id,
+      body,
+      contentType: "text/plain",
+      redactionVersion: "none",
+      paymentState: "settled",
+      settledMicros: "101",
+    });
+    assert.deepEqual(
+      Buffer.from((await store.getArtifact(result.id))!.body),
+      body,
+    );
+    assert.equal(
+      (
+        await db.query<{ committed_micros: string }>(
+          "SELECT committed_micros::text FROM enrichment_budgets",
+        )
+      ).rows[0].committed_micros,
+      "101",
+    );
+  } finally {
+    await pg.close();
+  }
+});
+
+test("captured pending payment reconciles once without repurchase or loss of bytes", async () => {
+  const { pg, db, store } = await fixture();
+  try {
+    const budgetId = randomUUID();
+    await store.createBudget({
+      id: budgetId,
+      scope: "test",
+      currency: "USD",
+      capMicros: "100",
+    });
+    for (const [index, paymentState] of ["pending", "uncertain"].entries()) {
+      const request = await store.planCollection({
+        scope: "test",
+        fingerprint: `pending-${index}`,
+        generation: 0,
+        operation: "read",
+        args: {},
+        policyId: "test",
+      });
+      const attempt = await store.reserveAttempt({
+        requestId: request.id,
+        budgetId,
+        capMicros: "50",
+      });
+      await store.markDispatched(attempt.id);
+      const artifact = await store.captureResponse({
+        attemptId: attempt.id,
+        body: Buffer.from("captured"),
+        contentType: "text/plain",
+        redactionVersion: "none",
+        paymentState: paymentState as "pending" | "uncertain",
+      });
+      const resolution = {
+        paymentState:
+          index === 0 ? ("settled" as const) : ("not_charged" as const),
+        settledMicros: index === 0 ? "20" : "0",
+        actor: "operator",
+        evidence: "definitive provider lookup",
+      };
+      await store.reconcileCapturedPayment(attempt.id, resolution);
+      await store.reconcileCapturedPayment(attempt.id, resolution);
+      await assert.rejects(() =>
+        store.reconcileCapturedPayment(attempt.id, {
+          ...resolution,
+          paymentState: "settled",
+          settledMicros: "21",
+        }),
+      );
+      await assert.rejects(() =>
+        store.reserveAttempt({
+          requestId: request.id,
+          budgetId,
+          capMicros: "1",
+        }),
+      );
+      assert.deepEqual(
+        Buffer.from((await store.getArtifact(artifact.id))!.body),
+        Buffer.from("captured"),
+      );
+    }
+    assert.equal(
+      (
+        await db.query<{ committed_micros: string }>(
+          "SELECT committed_micros::text FROM enrichment_budgets",
+        )
+      ).rows[0].committed_micros,
+      "20",
+    );
+  } finally {
+    await pg.close();
+  }
+});
+test("1001 campaign members stay frozen while intake and release reconciliation resume", async () => {
+  const { pg, db, store } = await fixture();
+  try {
+    const evaluation = await store.putArtifact({
+      kind: "legacy_import",
+      body: Buffer.from("synthetic evaluation"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      importBatch: "test",
+    });
+    const release = await store.createRelease({
+      stages: ["collect", "extract", "dna", "embedding"],
+    });
+    await store.approveRelease(release, evaluation.id, {
+      actor: "test",
+      reason: "synthetic approval",
+    });
+    await store.promoteRelease("test", release, "initial");
+    const members = Array.from({ length: 1001 }, () => randomUUID());
+    await db.query(
+      "INSERT INTO enrichment_entities(id,kind) SELECT unnest($1::uuid[]),'founder'",
+      [members],
+    );
+    await db.query(
+      "INSERT INTO enrichment_targets(entity_id,scope,release_id,revision) SELECT unnest($1::uuid[]),'test',$2,1",
+      [members, release],
+    );
+    const campaign = await store.createCampaign({
+      scope: "test",
+      releaseId: release,
+      entityIds: members,
+      mode: "rederive",
+    });
+    const newcomer = await store.createEntity("founder", "new-arrival");
+    await store.intake("test", newcomer);
+    await new EnrichmentStore(db).reconcileTargets("test");
+    await store.reconcileTargets("test");
+    assert.equal(
+      (
+        await db.query<{ count: number }>(
+          "SELECT count(*)::int AS count FROM enrichment_campaign_members WHERE campaign_id=$1",
+          [campaign],
+        )
+      ).rows[0].count,
+      1001,
+    );
+    assert.equal(
+      (
+        await db.query<{ count: number }>(
+          "SELECT count(*)::int AS count FROM enrichment_stage_work",
+        )
+      ).rows[0].count,
+      4008,
+    );
+    const next = await store.createRelease({
+      stages: ["collect", "extract", "dna", "embedding"],
+    });
+    await store.approveRelease(next, evaluation.id, {
+      actor: "test",
+      reason: "next",
+    });
+    await store.promoteRelease("test", next, "new recipe");
+    await store.reconcileTargets("test");
+    assert.equal(
+      (
+        await db.query<{ count: number }>(
+          "SELECT count(*)::int AS count FROM enrichment_targets WHERE release_id=$1",
+          [next],
+        )
+      ).rows[0].count,
+      1002,
+    );
+  } finally {
+    await pg.close();
+  }
+});
+test("publication rejects stale release and suppression removes shared-vector association only", async () => {
+  const { pg, db, store } = await fixture();
+  try {
+    const artifact = await store.putArtifact({
+      kind: "legacy_import",
+      body: Buffer.from("{}"),
+      contentType: "application/json",
+      redactionVersion: "none",
+      importBatch: "test",
+    });
+    const release = await store.createRelease({ stages: ["dna"] });
+    await store.approveRelease(release, artifact.id, {
+      actor: "test",
+      reason: "approved",
+    });
+    await store.promoteRelease("test", release, "start");
+    const first = await store.createEntity("founder", "one"),
+      second = await store.createEntity("founder", "two");
+    await store.intake("test", first);
+    await store.intake("test", second);
+    const run = (entityId: string) =>
+      store.saveAnalysis({
+        entityId,
+        releaseId: release,
+        generation: 0,
+        purpose: "dna",
+        inputArtifactId: artifact.id,
+        inputDigest: "input",
+        recipeDigest: "recipe",
+        evidenceIds: [],
+        output: { description: "same" },
+        validationReport: { valid: true },
+        status: "succeeded",
+      });
+    const a = await run(first),
+      b = await run(second);
+    assert.equal(await store.publishAnalysis(a), true);
+    const vector = await store.saveEmbedding({
+      scope: "test",
+      text: "same",
+      templateVersion: "v1",
+      model: "synthetic",
+      modelVersion: "v1",
+      distance: "cosine",
+      vector: [1, 0],
+    });
+    assert.equal(
+      await store.saveEmbedding({
+        scope: "test",
+        text: "same",
+        templateVersion: "v1",
+        model: "synthetic",
+        modelVersion: "v1",
+        distance: "cosine",
+        vector: [1, 0],
+      }),
+      vector,
+    );
+    await store.linkEmbedding(first, a, vector, "dna");
+    await store.linkEmbedding(second, b, vector, "dna");
+    await store.suppressEntity(first, "test withdrawal");
+    assert.equal(await store.publishAnalysis(a), false);
+    assert.equal(
+      (await db.query("SELECT * FROM enrichment_analysis_embeddings")).rows
+        .length,
+      1,
+    );
+    const next = await store.createRelease({ stages: ["dna"] });
+    await store.approveRelease(next, artifact.id, {
+      actor: "test",
+      reason: "approved",
+    });
+    await store.promoteRelease("test", next, "upgrade");
+    await store.reconcileTargets("test");
+    assert.equal(await store.publishAnalysis(b), false);
+  } finally {
+    await pg.close();
+  }
+});
+
+test("required stages stay ordered; expired work blocks and withdrawal prevents replay", async () => {
+  const { pg, db, store } = await fixture();
+  try {
+    const raw = await store.putArtifact({
+      kind: "legacy_import",
+      body: Buffer.from("synthetic source"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      importBatch: "test",
+    });
+    const evidence = await store.addEvidence({
+      artifactId: raw.id,
+      extractorVersion: "v1",
+      locator: "$",
+      payload: { text: "synthetic source" },
+      excerpt: "synthetic source",
+    });
+    assert.equal(
+      await store.addEvidence({
+        artifactId: raw.id,
+        extractorVersion: "v1",
+        locator: "$",
+        payload: { text: "synthetic source" },
+        excerpt: "synthetic source",
+      }),
+      evidence,
+    );
+    await assert.rejects(() =>
+      store.addEvidence({
+        artifactId: raw.id,
+        extractorVersion: "v1",
+        locator: "$",
+        payload: { text: "changed" },
+        excerpt: "changed",
+      }),
+    );
+    const release = await store.createRelease({
+      stages: ["collect", "extract", "dna"],
+      recipes: { dna: "recipe" },
+    });
+    await store.approveRelease(release, raw.id, {
+      actor: "test",
+      reason: "offline",
+    });
+    await store.promoteRelease("test", release, "initial");
+    const entityId = await store.createEntity("founder", "ordered");
+    await store.linkEvidence(entityId, evidence, "source");
+    const product = await store.createEntity("product", "synthetic-product");
+    await store.linkProduct(entityId, product, evidence);
+    await store.linkProduct(entityId, product, evidence);
+    await store.intake("test", entityId);
+    await store.intake("test", entityId);
+    const trusted = {
+      entityId,
+      releaseId: release,
+      generation: 0,
+      purpose: "dna",
+      recipeDigest: "recipe",
+      evidence: [
+        {
+          id: evidence,
+          artifactId: raw.id,
+          contentHash: createHash("sha256")
+            .update(JSON.stringify("synthetic source"))
+            .digest("hex"),
+          text: "synthetic source",
+          sourceUrl: null,
+          extractorVersion: "v1",
+        },
+      ],
+    };
+    await store.assertAnalysisInputs(trusted);
+    await assert.rejects(() =>
+      store.assertAnalysisInputs({
+        ...trusted,
+        evidence: [
+          { ...trusted.evidence[0], sourceUrl: "https://example.com/invented" },
+        ],
+      }),
+    );
+    await assert.rejects(() =>
+      store.assertAnalysisInputs({
+        ...trusted,
+        evidence: [{ ...trusted.evidence[0], extractorVersion: "invented-v2" }],
+      }),
+    );
+    await assert.rejects(() =>
+      store.assertAnalysisInputs({
+        ...trusted,
+        evidence: [{ ...trusted.evidence[0], text: "invented source" }],
+      }),
+    );
+    await store.reconcileTargets("test");
+    const first = await store.claimStage();
+    assert.equal(first?.stage, "collect");
+    assert.equal(await store.claimStage(), null);
+    await assert.rejects(() =>
+      store.finishStage({
+        id: first!.id,
+        leaseToken: first!.leaseToken,
+        status: "not_applicable",
+        reason: "unsupported",
+      }),
+    );
+    await store.finishStage({
+      id: first!.id,
+      leaseToken: first!.leaseToken,
+      status: "succeeded",
+    });
+    const second = await store.claimStage();
+    assert.equal(second?.stage, "extract");
+    await db.query(
+      "UPDATE enrichment_stage_work SET lease_until=now()-interval '1 second' WHERE id=$1",
+      [second!.id],
+    );
+    await store.recoverExpiredLeases();
+    assert.equal(await store.claimStage(), null);
+    const id = randomUUID();
+    const input = {
+      id,
+      entityId,
+      releaseId: release,
+      generation: 0,
+      purpose: "dna",
+      inputArtifactId: raw.id,
+      inputDigest: "input",
+      recipeDigest: "recipe",
+      evidenceIds: [evidence],
+      output: { description: "synthetic" },
+      validationReport: { valid: true },
+      status: "succeeded" as const,
+    };
+    assert.equal(await store.saveAnalysis(input), id);
+    assert.equal(await store.saveAnalysis(input), id);
+    await assert.rejects(() =>
+      store.saveAnalysis({ ...input, output: { description: "changed" } }),
+    );
+    assert.equal(await store.publishAnalysis(id), true);
+    await store.withdrawArtifact(raw.id, "test", "withdrawn");
+    assert.equal(
+      (
+        await db.query<{ status: string }>(
+          "SELECT status FROM enrichment_stage_work WHERE id=$1",
+          [first!.id],
+        )
+      ).rows[0].status,
+      "blocked",
+    );
+    await assert.rejects(() => store.assertAnalysisInputs(trusted));
+    assert.equal(await store.getArtifact(raw.id), null);
+    assert.equal(await store.publishAnalysis(id), false);
+    assert.equal(
+      await store.findSuccessfulAnalysis({
+        entityId,
+        purpose: "dna",
+        inputDigest: "input",
+        recipeDigest: "recipe",
+      }),
+      null,
+    );
+    assert.equal(
+      (await db.query("SELECT * FROM enrichment_profiles")).rows.length,
+      0,
+    );
+  } finally {
+    await pg.close();
+  }
+});
+
+test("withdrawal physically clears derived payloads and late completions without losing accounting", async () => {
+  const { pg, db, store } = await fixture();
+  try {
+    const entityId = await store.createEntity("founder", "purge-test");
+    const source = await store.putArtifact({
+      kind: "legacy_import",
+      body: Buffer.from("private source"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      importBatch: "test",
+    });
+    const evidence = await store.addEvidence({
+      artifactId: source.id,
+      extractorVersion: "v1",
+      locator: "$",
+      payload: { text: "private source" },
+      excerpt: "private source",
+      sourceUrl: "https://example.com/source",
+    });
+    await store.linkEvidence(entityId, evidence, "source");
+    const release = await store.createRelease({ stages: ["dna"] });
+    await store.approveRelease(release, source.id, {
+      actor: "test",
+      reason: "synthetic",
+    });
+    await store.promoteRelease("test", release, "start");
+    await store.intake("test", entityId);
+    const budgetId = randomUUID();
+    await store.createBudget({
+      id: budgetId,
+      scope: "test",
+      currency: "USD",
+      capMicros: "100",
+    });
+    const request = await store.planCollection({
+      scope: "test",
+      fingerprint: "generation",
+      generation: 0,
+      operation: "generate",
+      args: { prompt: "private source" },
+      policyId: "test-only",
+    });
+    const attempt = await store.reserveAttempt({
+      requestId: request.id,
+      budgetId,
+      capMicros: "100",
+    });
+    const requestArtifact = await store.putArtifact({
+      kind: "generation_request",
+      body: Buffer.from("private prompt"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      attemptId: attempt.id,
+    });
+    await store.markDispatched(attempt.id);
+    const response = await store.captureResponse({
+      attemptId: attempt.id,
+      kind: "generation_response",
+      body: Buffer.from("private output"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      paymentState: "settled",
+      settledMicros: "50",
+    });
+    const runId = randomUUID();
+    const manifest = await store.putArtifact({
+      kind: "manifest",
+      body: Buffer.from("private context"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      runId,
+    });
+    const run = {
+      id: runId,
+      entityId,
+      releaseId: release,
+      generation: 0,
+      purpose: "dna",
+      inputArtifactId: manifest.id,
+      inputDigest: "input",
+      recipeDigest: "recipe",
+      evidenceIds: [evidence],
+      output: { description: "private output" },
+      validationReport: {
+        attemptId: attempt.id,
+        responseArtifactId: response.id,
+      },
+      status: "succeeded" as const,
+    };
+    await store.saveAnalysis(run);
+    await store.publishAnalysis(runId);
+    const vector = await store.saveEmbedding({
+      scope: "test",
+      text: "private output",
+      templateVersion: "v1",
+      model: "synthetic",
+      modelVersion: "v1",
+      distance: "cosine",
+      vector: [1, 0],
+    });
+    await store.linkEmbedding(entityId, runId, vector, "dna");
+    await store.withdrawArtifact(
+      source.id,
+      "test",
+      "source permission withdrawn",
+    );
+    for (const id of [source.id, manifest.id, requestArtifact.id, response.id])
+      assert.equal(await store.getArtifact(id), null);
+    assert.deepEqual(
+      (
+        await db.query<{ payload: unknown; excerpt: string }>(
+          "SELECT payload,excerpt FROM enrichment_evidence WHERE id=$1",
+          [evidence],
+        )
+      ).rows[0],
+      { payload: {}, excerpt: "" },
+    );
+    assert.equal(
+      (await db.query("SELECT * FROM enrichment_embeddings")).rows.length,
+      0,
+    );
+    assert.equal(await store.findAnalysis(runId), null);
+    assert.deepEqual(
+      (
+        await db.query<{ args: unknown }>(
+          "SELECT args FROM enrichment_collection_requests WHERE id=$1",
+          [request.id],
+        )
+      ).rows[0].args,
+      {},
+    );
+    assert.equal(
+      (
+        await db.query<{ committed_micros: string }>(
+          "SELECT committed_micros::text FROM enrichment_budgets",
+        )
+      ).rows[0].committed_micros,
+      "50",
+    );
+    const lateId = randomUUID();
+    const lateManifest = await store.putArtifact({
+      kind: "manifest",
+      body: Buffer.from("late private context"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      runId: lateId,
+    });
+    await store.saveAnalysis({
+      ...run,
+      id: lateId,
+      inputArtifactId: lateManifest.id,
+    });
+    assert.equal(await store.getArtifact(lateManifest.id), null);
+    assert.equal(await store.findAnalysis(lateId), null);
+  } finally {
+    await pg.close();
+  }
+});
+
+test("profile withdrawal purges linked website captures and dependent analyses without erasing unrelated accounting", async () => {
+  const { pg, db, store } = await fixture();
+  try {
+    const entityId = await store.createEntity("founder", "website-withdrawal");
+    const release = await store.createRelease({ stages: ["dna"] });
+    const budgetId = randomUUID();
+    await store.createBudget({
+      id: budgetId,
+      scope: "test",
+      currency: "USD",
+      capMicros: "100",
+    });
+    const unrelatedBudgetId = randomUUID();
+    await store.createBudget({
+      id: unrelatedBudgetId,
+      scope: "other",
+      currency: "USD",
+      capMicros: "80",
+    });
+    const capture = async (
+      scope: string,
+      budget: string,
+      fingerprint: string,
+      body: string,
+      metadata: Record<string, unknown>,
+      settledMicros: string,
+    ) => {
+      const request = await store.planCollection({
+        scope,
+        fingerprint,
+        generation: 0,
+        operation: "website",
+        args: { url: `https://example.com/${fingerprint}`, body },
+        policyId: "test-only",
+      });
+      const attempt = await store.reserveAttempt({
+        requestId: request.id,
+        budgetId: budget,
+        capMicros: settledMicros,
+      });
+      const requestArtifact = await store.putArtifact({
+        kind: "tool_request",
+        body: Buffer.from(`request ${body}`),
+        contentType: "text/plain",
+        redactionVersion: "none",
+        attemptId: attempt.id,
+      });
+      await store.markDispatched(attempt.id);
+      const response = await store.captureResponse({
+        attemptId: attempt.id,
+        kind: "source_response",
+        body: Buffer.from(body),
+        contentType: "text/plain",
+        redactionVersion: "none",
+        paymentState: "settled",
+        settledMicros,
+        metadata,
+      });
+      return { request, requestArtifact, response, attempt };
+    };
+    const profile = await store.putArtifact({
+      kind: "legacy_import",
+      body: Buffer.from("private profile"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      importBatch: "profile",
+    });
+    const website = await capture(
+      "test",
+      budgetId,
+      "website",
+      "private website",
+      {
+        sourceKind: "product-site",
+        sourceProfileArtifactId: profile.id,
+      },
+      "40",
+    );
+    const child = await store.putArtifact({
+      kind: "legacy_import",
+      body: Buffer.from("private child website"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      importBatch: "child-website",
+      metadata: { sourceProfileArtifactId: website.response.id },
+    });
+    const evidence = await store.addEvidence({
+      artifactId: website.response.id,
+      extractorVersion: "v1",
+      locator: "$",
+      payload: { text: "private website" },
+      excerpt: "private website excerpt",
+      sourceUrl: "https://example.com/website",
+    });
+    await store.linkEvidence(entityId, evidence, "product_site");
+    const input = await store.putArtifact({
+      kind: "manifest",
+      body: Buffer.from("private analysis input"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      importBatch: "analysis-input",
+    });
+    const generated = await store.putArtifact({
+      kind: "generation_response",
+      body: Buffer.from("private generated"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      importBatch: "generated",
+    });
+    const loopLeft = randomUUID();
+    const loopRight = randomUUID();
+    for (const [id, batch, body, source] of [
+      [loopLeft, "loop-left", "private loop left", loopRight],
+      [loopRight, "loop-right", "private loop right", loopLeft],
+    ] as const) {
+      const bytes = Buffer.from(body);
+      await db.query(
+        "INSERT INTO enrichment_artifacts(id,kind,import_batch,sha256,body,byte_length,content_type,redaction_version,metadata) VALUES($1,'legacy_import',$2,$3,$4,$5,'text/plain','none',$6)",
+        [
+          id,
+          batch,
+          createHash("sha256").update(bytes).digest("hex"),
+          bytes,
+          bytes.byteLength,
+          JSON.stringify({ sourceProfileArtifactId: source }),
+        ],
+      );
+    }
+    const cited = randomUUID();
+    const downstream = randomUUID();
+    await store.saveAnalysis({
+      id: cited,
+      entityId,
+      releaseId: release,
+      generation: 0,
+      purpose: "product_descriptions",
+      inputArtifactId: input.id,
+      inputDigest: "website-input",
+      recipeDigest: "recipe",
+      evidenceIds: [evidence],
+      output: { description: "private cited output" },
+      validationReport: {
+        attemptId: website.attempt.id,
+        generationResponseArtifactId: generated.id,
+        judgeResponseArtifactId: loopLeft,
+        reusedFromRunId: downstream,
+      },
+      status: "succeeded",
+    });
+    await store.saveAnalysis({
+      id: downstream,
+      entityId,
+      releaseId: release,
+      generation: 0,
+      purpose: "founder_portrait",
+      inputArtifactId: generated.id,
+      inputDigest: "generated-input",
+      recipeDigest: "recipe",
+      evidenceIds: [],
+      output: { description: "private downstream output" },
+      validationReport: { reusedFromRunId: cited },
+      status: "succeeded",
+    });
+    const unrelatedProfile = await store.putArtifact({
+      kind: "legacy_import",
+      body: Buffer.from("unrelated profile"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      importBatch: "unrelated-profile",
+    });
+    const unrelated = await capture(
+      "other",
+      unrelatedBudgetId,
+      "unrelated",
+      "unrelated website",
+      { sourceProfileArtifactId: unrelatedProfile.id },
+      "25",
+    );
+    const unrelatedEvidence = await store.addEvidence({
+      artifactId: unrelated.response.id,
+      extractorVersion: "v1",
+      locator: "$",
+      payload: { text: "unrelated website" },
+      excerpt: "unrelated website excerpt",
+    });
+    await store.linkEvidence(entityId, unrelatedEvidence, "other_site");
+    const unrelatedInput = await store.putArtifact({
+      kind: "manifest",
+      body: Buffer.from("unrelated analysis"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      importBatch: "unrelated-analysis",
+    });
+    const unrelatedRun = randomUUID();
+    await store.saveAnalysis({
+      id: unrelatedRun,
+      entityId,
+      releaseId: release,
+      generation: 0,
+      purpose: "dna",
+      inputArtifactId: unrelatedInput.id,
+      inputDigest: "unrelated-input",
+      recipeDigest: "recipe",
+      evidenceIds: [unrelatedEvidence],
+      output: { description: "unrelated output" },
+      validationReport: { valid: true },
+      status: "succeeded",
+    });
+    const sharedEmbeddingRequest = await store.planCollection({
+      scope: "other",
+      fingerprint: "shared-embedding",
+      generation: 0,
+      operation: "embed",
+      args: { text: "shared embedding" },
+      policyId: "test-only",
+    });
+    const sharedEmbeddingAttempt = await store.reserveAttempt({
+      requestId: sharedEmbeddingRequest.id,
+      budgetId: unrelatedBudgetId,
+      capMicros: "1",
+    });
+    await store.markDispatched(sharedEmbeddingAttempt.id);
+    const sharedEmbeddingArtifact = await store.captureResponse({
+      attemptId: sharedEmbeddingAttempt.id,
+      body: Buffer.from("shared embedding response"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      paymentState: "not_charged",
+    });
+    const sharedEmbedding = await store.saveEmbedding({
+      scope: "test",
+      text: "shared embedding",
+      templateVersion: "v1",
+      model: "synthetic",
+      modelVersion: "v1",
+      distance: "cosine",
+      vector: [1, 0],
+      attemptId: sharedEmbeddingAttempt.id,
+    });
+    await store.linkEmbedding(entityId, cited, sharedEmbedding, "dna");
+    await store.linkEmbedding(entityId, unrelatedRun, sharedEmbedding, "dna");
+    await store.withdrawArtifact(profile.id, "test", "profile withdrawn");
+    for (const id of [
+      profile.id,
+      website.response.id,
+      website.requestArtifact.id,
+      child.id,
+      input.id,
+      generated.id,
+      loopLeft,
+      loopRight,
+    ])
+      assert.equal(await store.getArtifact(id), null, id);
+    assert.deepEqual(
+      (
+        await db.query<{ payload: unknown; excerpt: string; body: string }>(
+          "SELECT e.payload,e.excerpt,convert_from(a.body,'UTF8') AS body FROM enrichment_evidence e JOIN enrichment_artifacts a ON a.id=e.artifact_id WHERE e.id=$1",
+          [evidence],
+        )
+      ).rows[0],
+      { payload: {}, excerpt: "", body: "" },
+    );
+    assert.equal(await store.findAnalysis(cited), null);
+    assert.equal(await store.findAnalysis(downstream), null);
+    assert.equal(
+      (
+        await db.query<{ output: unknown }>(
+          "SELECT output FROM enrichment_analysis_runs WHERE id=$1",
+          [cited],
+        )
+      ).rows[0].output,
+      null,
+    );
+    assert.equal(
+      (await store.getArtifact(unrelated.response.id))?.sha256,
+      createHash("sha256").update("unrelated website").digest("hex"),
+    );
+    assert.equal(
+      (await store.getArtifact(unrelated.requestArtifact.id))?.sha256,
+      createHash("sha256").update("request unrelated website").digest("hex"),
+    );
+    assert.equal(
+      (await store.getArtifact(unrelatedProfile.id))?.sha256,
+      createHash("sha256").update("unrelated profile").digest("hex"),
+    );
+    assert.equal(
+      (
+        await db.query<{ excerpt: string }>(
+          "SELECT excerpt FROM enrichment_evidence WHERE id=$1",
+          [unrelatedEvidence],
+        )
+      ).rows[0].excerpt,
+      "unrelated website excerpt",
+    );
+    assert.deepEqual(
+      (
+        await db.query<{ args: unknown }>(
+          "SELECT args FROM enrichment_collection_requests WHERE id=$1",
+          [website.request.id],
+        )
+      ).rows[0].args,
+      {},
+    );
+    assert.deepEqual(
+      (
+        await db.query<{ args: unknown }>(
+          "SELECT args FROM enrichment_collection_requests WHERE id=$1",
+          [unrelated.request.id],
+        )
+      ).rows[0].args,
+      { url: "https://example.com/unrelated", body: "unrelated website" },
+    );
+    assert.deepEqual(
+      (
+        await db.query<{ committed_micros: string }>(
+          "SELECT committed_micros::text FROM enrichment_budgets WHERE id=$1",
+          [budgetId],
+        )
+      ).rows[0].committed_micros,
+      "40",
+    );
+    assert.equal(
+      (
+        await db.query<{ settled_micros: string; payment_state: string }>(
+          "SELECT settled_micros::text,payment_state FROM enrichment_collection_attempts WHERE id=$1",
+          [website.attempt.id],
+        )
+      ).rows[0].settled_micros,
+      "40",
+    );
+    assert.equal(
+      (
+        await db.query<{ committed_micros: string }>(
+          "SELECT committed_micros::text FROM enrichment_budgets WHERE id=$1",
+          [unrelatedBudgetId],
+        )
+      ).rows[0].committed_micros,
+      "25",
+    );
+    assert.equal(
+      (await store.getArtifact(sharedEmbeddingArtifact.id))?.sha256,
+      createHash("sha256").update("shared embedding response").digest("hex"),
+    );
+    assert.equal(
+      (
+        await db.query<{ output: { description: string } }>(
+          "SELECT output FROM enrichment_analysis_runs WHERE id=$1",
+          [unrelatedRun],
+        )
+      ).rows[0].output.description,
+      "unrelated output",
+    );
+    assert.equal(
+      (
+        await db.query("SELECT id FROM enrichment_embeddings WHERE id=$1", [
+          sharedEmbedding,
+        ])
+      ).rows.length,
+      1,
+    );
+  } finally {
+    await pg.close();
+  }
+});

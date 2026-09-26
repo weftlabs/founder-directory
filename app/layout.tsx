@@ -91,13 +91,18 @@ const jsonLd = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html
+      lang="en"
+      data-directory-preview={
+        process.env.DIRECTORY_PREVIEW === "1" ? "1" : undefined
+      }
+    >
       <body>
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
         />
-        <Analytics />
+        <Analytics preview={process.env.DIRECTORY_PREVIEW === "1"} />
         {children}
         <SiteFooter />
       </body>

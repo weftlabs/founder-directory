@@ -1,0 +1,362 @@
+// Layer: orchestration. Owns known-profile-URL capture and fail-closed text selection.
+// Transport/storage failures propagate; unusable archived responses are unavailable.
+import "../assert-server";
+import { isIP } from "node:net";
+import type { WeftTransport } from "../weft";
+import type {
+  CapturedArtifact,
+  CollectionInput,
+  CollectionStore,
+} from "./collection";
+import { collectWeft } from "./weft-transport";
+import { collectResponse } from "./collection";
+
+// Limit decoded response bytes, independent of Content-Length or compression.
+export const WEBSITE_RESPONSE_LIMIT_BYTES = 2 * 1024 * 1024;
+
+async function readWebsiteResponse(response: Response) {
+  const limitBytes = WEBSITE_RESPONSE_LIMIT_BYTES;
+  const reader = response.body?.getReader();
+  const chunks: Uint8Array[] = [];
+  let observedBytes = 0;
+  let status: "complete" | "size_limit" = "complete";
+  if (reader) {
+    try {
+      while (true) {
+        const next = await reader.read();
+        if (next.done) break;
+        const remaining = limitBytes - observedBytes;
+        observedBytes += next.value.byteLength;
+        // Copy only the retained prefix; a subarray would hold the whole chunk.
+        chunks.push(next.value.slice(0, Math.max(0, remaining)));
+        if (observedBytes > limitBytes) {
+          status = "size_limit";
+          // Cancellation failure must not erase the explicit size-limit result.
+          await reader.cancel().catch(() => undefined);
+          break;
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+  return {
+    body: Buffer.concat(chunks),
+    capture: { status, limitBytes, observedBytes },
+  };
+}
+
+export const WEBSITE_OPERATION = "exa-contents";
+// Manually reviewed official free endpoint, not a discovered catalog operation.
+export const JINA_WEBSITE_OPERATION = "local-reviewed-jina-reader";
+export type WebsiteProvider = "exa" | "jina";
+export type WebsiteInput = Omit<
+  CollectionInput,
+  "args" | "capMicros" | "operation"
+> & {
+  /** Caller must take this URL from the saved X profile, never model output. */
+  websiteUrl: string;
+  provider?: WebsiteProvider;
+  sourceProfileArtifactId: string;
+  maxCostUsd: string;
+  maxExcerptChars?: number;
+};
+export type WebsiteResult =
+  | {
+      status: "captured";
+      artifact: CapturedArtifact;
+      text: string;
+      provenance: {
+        sourceKind: "product-site";
+        sourceProfileArtifactId: string;
+        requestedUrl: string;
+        returnedUrl: string;
+        publishedDate: string | null;
+        crawlDate: string | null;
+        extractorVersion: "exa-text-v1" | "jina-text-v2";
+        originalChars: number;
+        truncated: boolean;
+      };
+    }
+  | { status: "unavailable"; reason: string; artifact?: CapturedArtifact };
+
+/** Conservative URL syntax gate, not a DNS/redirect safety guarantee by a provider. */
+export function publicWebsiteUrl(value: string): string | null {
+  try {
+    const url = new URL(value);
+    const host = url.hostname.replace(/\.$/, "");
+    if (
+      !/^https?:$/.test(url.protocol) ||
+      url.username ||
+      url.password ||
+      url.port ||
+      isIP(host) ||
+      host.includes(":") ||
+      !host.includes(".") ||
+      /(?:^|\.)(localhost|local|internal|test|invalid|onion)$/.test(host) ||
+      !/^[a-z0-9.-]+$/.test(host) ||
+      host
+        .split(".")
+        .some((part) => !part || part.startsWith("-") || part.endsWith("-"))
+    )
+      return null;
+    for (const key of url.searchParams.keys()) {
+      if (/key|token|secret|auth|signature|credential|password/i.test(key))
+        return null;
+    }
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function object(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+/** Uses durable capture for both acquire and replay; never retries paid failures. */
+export async function collectWebsite(
+  store: CollectionStore,
+  client: WeftTransport,
+  input: WebsiteInput,
+  enabled: () => boolean,
+  now: () => Date = () => new Date(),
+  freeFetch: typeof fetch = fetch,
+): Promise<WebsiteResult> {
+  const requestedUrl = publicWebsiteUrl(input.websiteUrl);
+  const provider = input.provider ?? "exa";
+  if (!["exa", "jina"].includes(provider))
+    throw new Error("invalid_website_provider");
+  if (provider === "jina" && input.maxCostUsd !== "0")
+    throw new Error("jina_requires_zero_cap");
+  if (!requestedUrl || !input.sourceProfileArtifactId?.trim())
+    return { status: "unavailable", reason: "missing_public_profile_website" };
+  const limit = input.maxExcerptChars ?? 24000;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100000)
+    throw new Error("invalid_website_excerpt_limit");
+  const captureStore: CollectionStore = {
+    planCollection: (value) => store.planCollection(value),
+    getReusableArtifact: (id) => store.getReusableArtifact(id),
+    reserveAttempt: (value) => store.reserveAttempt(value),
+    markDispatched: (id) => store.markDispatched(id),
+    markUncertain: (id, reason) => store.markUncertain(id, reason),
+    captureResponse: (value) =>
+      store.captureResponse({
+        ...value,
+        metadata: {
+          ...value.metadata,
+          sourceKind: "product-site",
+          websiteProvider: provider,
+          observedAt: now().toISOString(),
+          requestedUrl,
+          sourceProfileArtifactId: input.sourceProfileArtifactId,
+        },
+      }),
+  };
+  const collection = {
+    scope: input.scope,
+    budgetId: input.budgetId,
+    generation: input.generation,
+    mode: input.mode,
+    policy: input.policy,
+    operation: provider === "jina" ? JINA_WEBSITE_OPERATION : WEBSITE_OPERATION,
+  };
+  const headers = {
+    Accept: "application/json",
+    "X-No-Cache": "true",
+    "X-Robots-Txt": "FounderDirectory",
+    DNT: "true",
+  };
+  const readerUrl = `https://r.jina.ai/${requestedUrl}`;
+  const artifact =
+    provider === "jina"
+      ? await collectResponse(
+          captureStore,
+          {
+            ...collection,
+            capMicros: "0",
+            args: {
+              url: readerUrl,
+              method: "GET",
+              headers,
+              transport: "direct-anonymous-http-v1",
+              maxResponseBytes: WEBSITE_RESPONSE_LIMIT_BYTES,
+              redirect: "manual",
+              credentials: "omit",
+            },
+          },
+          async () => {
+            // This free endpoint is not a paid gateway route. Never send account
+            // credentials or follow an outer redirect to a different host.
+            const response = await freeFetch(readerUrl, {
+              method: "GET",
+              headers,
+              redirect: "manual",
+              credentials: "omit",
+              signal: AbortSignal.timeout(60000),
+            });
+            return {
+              ...(await readWebsiteResponse(response)),
+              status: response.status,
+              contentType:
+                response.headers.get("content-type") ??
+                "application/octet-stream",
+              paymentStatus: "not_required",
+              paidUsd: "0",
+              heldUsd: "0",
+            };
+          },
+          { enabled },
+        )
+      : await collectWeft(
+          captureStore,
+          client,
+          collection,
+          {
+            url: "https://api.exa.ai/contents",
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ urls: [requestedUrl], text: true }),
+            operationId: WEBSITE_OPERATION,
+            accessMethodId: "exa-contents-x402-base",
+            maxCostUsd: input.maxCostUsd,
+          },
+          enabled,
+        );
+  return parseWebsiteArtifact(artifact, input);
+}
+
+/** Pure re-extraction from an archived provider response. No store or transport. */
+export function parseWebsiteArtifact(
+  artifact: CapturedArtifact,
+  input: Pick<
+    WebsiteInput,
+    "websiteUrl" | "sourceProfileArtifactId" | "maxExcerptChars" | "provider"
+  >,
+): WebsiteResult {
+  const requestedUrl = publicWebsiteUrl(input.websiteUrl);
+  if (!requestedUrl || !input.sourceProfileArtifactId?.trim())
+    return {
+      status: "unavailable",
+      reason: "missing_public_profile_website",
+      artifact,
+    };
+  const limit = input.maxExcerptChars ?? 24000;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100000)
+    throw new Error("invalid_website_excerpt_limit");
+  const unavailable = (reason: string): WebsiteResult => ({
+    status: "unavailable",
+    reason,
+    artifact,
+  });
+  const provider = input.provider ?? "exa";
+  if (object(artifact.metadata.capture)?.status === "size_limit")
+    return unavailable("website_response_size_limit");
+  if (
+    !["exa", "jina"].includes(provider) ||
+    (artifact.metadata.websiteProvider !== undefined &&
+      artifact.metadata.websiteProvider !== provider)
+  )
+    return unavailable("website_provider_mismatch");
+  if (
+    typeof artifact.metadata.status !== "number" ||
+    artifact.metadata.status < 200 ||
+    artifact.metadata.status >= 300
+  )
+    return unavailable("website_http_failure");
+  let payload: Record<string, unknown> | null;
+  try {
+    payload = object(JSON.parse(Buffer.from(artifact.body).toString("utf8")));
+  } catch {
+    return unavailable("malformed_website_response");
+  }
+  if (provider === "jina") {
+    const data = object(payload?.data);
+    if (payload?.code !== 200) return unavailable("website_url_failed");
+    if (
+      !data ||
+      typeof data.url !== "string" ||
+      publicWebsiteUrl(data.url) !== requestedUrl
+    )
+      return unavailable("website_url_mismatch");
+    if (typeof data.content !== "string" || !data.content.trim())
+      return unavailable("missing_website_text");
+    // These are source page fields, not a generated summary. Keep field labels
+    // so later analysis can distinguish page identity from its body content.
+    const text = [
+      typeof data.title === "string" && data.title.trim()
+        ? `Title: ${data.title.trim()}`
+        : null,
+      typeof data.description === "string" && data.description.trim()
+        ? `Description: ${data.description.trim()}`
+        : null,
+      `Content:\n${data.content.trim()}`,
+    ]
+      .filter((part): part is string => part !== null)
+      .join("\n");
+    return {
+      status: "captured",
+      artifact,
+      text: text.slice(0, limit),
+      provenance: {
+        sourceKind: "product-site",
+        sourceProfileArtifactId: input.sourceProfileArtifactId,
+        requestedUrl,
+        returnedUrl: data.url,
+        publishedDate:
+          typeof data.publishedTime === "string" ? data.publishedTime : null,
+        crawlDate: typeof data.timestamp === "string" ? data.timestamp : null,
+        extractorVersion: "jina-text-v2",
+        originalChars: text.length,
+        truncated: text.length > limit,
+      },
+    };
+  }
+  if (
+    !payload ||
+    !Array.isArray(payload.statuses) ||
+    !Array.isArray(payload.results)
+  )
+    return unavailable("missing_website_results");
+  const matches = (value: unknown) =>
+    typeof value === "string" && publicWebsiteUrl(value) === requestedUrl;
+  const statuses = payload.statuses
+    .map(object)
+    .filter((item) => item && matches(item.id));
+  if (statuses.length !== 1 || statuses[0]?.status !== "success")
+    return unavailable("website_url_failed");
+  // Exact association only: a redirect to another path/domain requires separate review.
+  const results = payload.results
+    .map(object)
+    .filter(
+      (item) =>
+        item &&
+        matches(item.url) &&
+        (item.id === undefined || matches(item.id)),
+    );
+  if (results.length !== 1) return unavailable("website_url_mismatch");
+  const result = results[0]!;
+  if (typeof result.text !== "string" || !result.text.trim())
+    return unavailable("missing_website_text");
+  const text = result.text.trim();
+  return {
+    status: "captured",
+    artifact,
+    text: text.slice(0, limit),
+    provenance: {
+      sourceKind: "product-site",
+      sourceProfileArtifactId: input.sourceProfileArtifactId,
+      requestedUrl,
+      returnedUrl: result.url as string,
+      publishedDate:
+        typeof result.publishedDate === "string" ? result.publishedDate : null,
+      crawlDate: typeof result.crawlDate === "string" ? result.crawlDate : null,
+      extractorVersion: "exa-text-v1",
+      originalChars: text.length,
+      truncated: text.length > limit,
+    },
+  };
+}

@@ -71,14 +71,19 @@ function inspectClient(file, chain = []) {
   const next = [...chain, file];
   const trail = next.map((p) => relative(root, p)).join(" -> ");
   if (
-    /process\.env\.(?:WEFT_API_KEY|DATABASE_URL|CRON_SECRET)/.test(source.text)
+    /process\.env\.(?:WEFT_API_KEY|DATABASE_URL|CRON_SECRET|ENRICHMENT_DATABASE_URL|ENRICHMENT_CAPTURE_CONFIG)/.test(
+      source.text,
+    )
   )
     errors.push(`${trail}: server credentials reachable from client`);
   const inspectImport = (specifier) => {
     if (
-      ["@weft-labs/sdk", "@neondatabase/serverless", "server-only"].includes(
-        specifier,
-      )
+      [
+        "@weft-labs/sdk",
+        "@neondatabase/serverless",
+        "pg",
+        "server-only",
+      ].includes(specifier)
     )
       errors.push(`${trail}: server dependency ${specifier}`);
     if (!specifier.startsWith(".") && !specifier.startsWith("@/")) return;

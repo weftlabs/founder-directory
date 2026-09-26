@@ -1,4 +1,8 @@
 import "./assert-server";
+import { directoryDatabaseUrl } from "./founder-database-config";
+export { directoryDatabaseUrl } from "./founder-database-config";
+import { withIndexingOrigin } from "./enrichment/origin";
+import type { Sql } from "./enrichment/db";
 import { neon } from "@neondatabase/serverless";
 import type { DirectoryFilters, LocationOption } from "./directory-filters";
 import {
@@ -14,9 +18,7 @@ import { isPresenceSessionId } from "./presence";
 import type { TrendHit } from "./x";
 
 function sql() {
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error("DATABASE_URL is not set");
-  return neon(url);
+  return neon(directoryDatabaseUrl());
 }
 
 export async function ensureSchema() {
@@ -109,12 +111,50 @@ function toFounder(row: Row): Founder {
   };
 }
 
+export function foundationReadEnabled(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  return env.ENRICHMENT_READ_ORIGINS === "1" || env.FOUNDER_DNA_ENABLED === "1";
+}
+
+// Eligibility belongs in SQL so hidden founders cannot affect pages or facets.
+function visibilityClauses(readOrigins: boolean): string[] {
+  return readOrigins
+    ? [
+        `NOT EXISTS (SELECT 1 FROM enrichment_entities entity
+         WHERE entity.kind='founder' AND entity.status='suppressed'
+         AND lower(entity.legacy_key)=lower(founders.handle))`,
+      ]
+    : [];
+}
+
+/** Distinct public handles once foundation reads are enabled. DNA coverage must not approximate this clause. */
+export function publicDirectoryHandleSql(): string {
+  return `SELECT DISTINCT lower(founders.handle) AS handle FROM founders ${whereSql(visibilityClauses(true))}`;
+}
+
+function directoryDatabase(): Sql {
+  const db = sql();
+  return {
+    async query<T>(text: string, values?: unknown[]) {
+      return { rows: (await db.query(text, values)) as T[] };
+    },
+  };
+}
+
+export async function readFounders(
+  db: Sql,
+  readOrigins: boolean,
+): Promise<Founder[]> {
+  const { rows } = await db.query<Row>(
+    `SELECT * FROM founders ${whereSql(visibilityClauses(readOrigins))} ORDER BY updated_at DESC`,
+  );
+  return rows.map(toFounder);
+}
+
 export async function listFounders(): Promise<Founder[]> {
   await ensureSchema();
-  const rows = (await sql()`
-    SELECT * FROM founders ORDER BY updated_at DESC
-  `) as Row[];
-  return rows.map(toFounder);
+  return readFounders(directoryDatabase(), foundationReadEnabled());
 }
 
 type Bind = { values: unknown[]; ph: (value: unknown) => string };
@@ -158,14 +198,15 @@ function whereSql(clauses: string[]): string {
   return clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
 }
 
-async function query<T>(text: string, values: unknown[] = []): Promise<T> {
-  return (await sql().query(text, values)) as unknown as T;
-}
-
-async function inferCountry(city: string, country: string): Promise<string> {
+async function inferCountry(
+  db: Sql,
+  readOrigins: boolean,
+  city: string,
+  country: string,
+): Promise<string> {
   if (!city || country) return country;
-  const rows = await query<{ country: string | null }[]>(
-    `SELECT DISTINCT country FROM founders WHERE city = $1`,
+  const { rows } = await db.query<{ country: string | null }>(
+    `SELECT DISTINCT country FROM founders ${whereSql(["city = $1", ...visibilityClauses(readOrigins)])}`,
     [city],
   );
   const countries = new Set(rows.map((row) => row.country));
@@ -178,15 +219,33 @@ export async function listDirectoryPage(
   if (input.cursor && !decodeDirectoryCursor(input.cursor))
     return emptyDirectoryPage();
   await ensureSchema();
+  return readDirectoryPage(directoryDatabase(), input, foundationReadEnabled());
+}
+
+export async function readDirectoryPage(
+  db: Sql,
+  input: DirectoryFilters & { cursor?: string | null },
+  readOrigins: boolean,
+): Promise<DirectoryPage> {
+  if (input.cursor && !decodeDirectoryCursor(input.cursor))
+    return emptyDirectoryPage();
+  const visibility = visibilityClauses(readOrigins);
+  const query = async <T>(text: string, values?: unknown[]) =>
+    (await db.query(text, values)).rows as T;
   const filters: DirectoryFilters = {
     q: input.q ?? "",
     category: input.category ?? "",
-    country: await inferCountry(input.city ?? "", input.country ?? ""),
+    country: await inferCountry(
+      db,
+      readOrigins,
+      input.city ?? "",
+      input.country ?? "",
+    ),
     city: input.city ?? "",
   };
   const cursor = input.cursor ? decodeDirectoryCursor(input.cursor) : null;
   const list = bind();
-  const listWhere = filterClauses(filters, list.ph, "rows");
+  const listWhere = [...visibility, ...filterClauses(filters, list.ph, "rows")];
   if (cursor) {
     listWhere.push(
       `(updated_at, handle) < (${list.ph(cursor.updatedAt)}::timestamptz, ${list.ph(cursor.handle)})`,
@@ -202,14 +261,17 @@ export async function listDirectoryPage(
         list.values,
       ),
       query<{ n: number }[]>(
-        `SELECT COUNT(*)::int AS n FROM founders ${whereSql(filterClauses(filters, count.ph, "rows"))}`,
+        `SELECT COUNT(*)::int AS n FROM founders ${whereSql([...visibility, ...filterClauses(filters, count.ph, "rows")])}`,
         count.values,
       ),
-      query<{ category: string }[]>(`SELECT DISTINCT category FROM founders`),
+      query<{ category: string }[]>(
+        `SELECT DISTINCT category FROM founders ${whereSql(visibility)}`,
+      ),
       query<{ value: string; label: string; count: number }[]>(
         `SELECT country AS value, country AS label, COUNT(*)::int AS count
        FROM founders
        ${whereSql([
+         ...visibility,
          ...filterClauses(filters, countries.ph, "facets"),
          `country IS NOT NULL`,
          `country <> ''`,
@@ -221,6 +283,7 @@ export async function listDirectoryPage(
         `SELECT city AS value, COALESCE(country, '') AS country, COUNT(*)::int AS count
        FROM founders
        ${whereSql([
+         ...visibility,
          ...filterClauses(filters, cities.ph, "cities"),
          `city IS NOT NULL`,
          `city <> ''`,
@@ -271,10 +334,21 @@ export async function listDirectoryPage(
 
 export async function getFounder(handle: string): Promise<Founder | null> {
   await ensureSchema();
-  const rows = (await sql()`
-    SELECT * FROM founders WHERE lower(handle) = ${handle.toLowerCase()} LIMIT 1
-  `) as Row[];
-  return rows[0] ? toFounder(rows[0]) : null;
+  return readFounder(directoryDatabase(), handle, foundationReadEnabled());
+}
+
+export async function readFounder(
+  db: Sql,
+  handle: string,
+  readOrigins: boolean,
+): Promise<Founder | null> {
+  const { rows } = await db.query<Row>(
+    "SELECT * FROM founders WHERE lower(handle) = $1 LIMIT 1",
+    [handle.toLowerCase()],
+  );
+  if (!rows[0]) return null;
+  const founder = toFounder(rows[0]);
+  return readOrigins ? withIndexingOrigin(db, founder) : founder;
 }
 
 export async function existingHandles(): Promise<Set<string>> {

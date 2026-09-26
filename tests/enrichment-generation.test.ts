@@ -1,0 +1,410 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import type { CollectionStore } from "../lib/enrichment/collection";
+import type { RenderedAnalysisRequest } from "../lib/enrichment/contracts";
+import { weftGeneration } from "../lib/enrichment/generation";
+import { prepareAnalysis } from "../lib/enrichment/analysis";
+import { stableDigest } from "../lib/enrichment/contracts";
+import { buildAnalysisInput } from "../lib/enrichment/recipes";
+import { founderPortraitRecipe } from "../lib/enrichment/founder-portrait";
+import { parseFounderDnaProfile } from "../lib/founder-dna";
+import { founderDnaFixture } from "./fixtures/founder-dna";
+import type { WeftTransport } from "../lib/weft";
+
+function fixture(
+  provider = "weft/openrouter",
+  operation = "openrouter-chat-completions",
+) {
+  const events: string[] = [];
+  const requests: Parameters<WeftTransport["fetch"]>[0][] = [];
+  const plans: Parameters<CollectionStore["planCollection"]>[0][] = [];
+  const store: CollectionStore = {
+    async planCollection(input) {
+      plans.push(input);
+      events.push("plan");
+      return { id: "request" };
+    },
+    async getReusableArtifact() {
+      return null;
+    },
+    async reserveAttempt() {
+      events.push("reserve");
+      return { id: "attempt", clientKey: "durable-key", requestId: "request" };
+    },
+    async markDispatched() {
+      events.push("dispatch");
+    },
+    async markUncertain() {
+      events.push("uncertain");
+    },
+    async captureResponse(input) {
+      events.push("archive");
+      return {
+        id: "artifact",
+        body: input.body,
+        metadata: input.metadata ?? {},
+      };
+    },
+  };
+  const client: WeftTransport = {
+    async fetch(request, options) {
+      requests.push(request);
+      events.push("fetch");
+      assert.equal(options?.idempotencyKey, "durable-key");
+      return {
+        status: 200,
+        headers: { "content-type": "application/json" },
+        bodyBase64: Buffer.from(
+          JSON.stringify({
+            choices: [{ finish_reason: "stop", message: { content: "{}" } }],
+            usage: { total_tokens: 12 },
+          }),
+        ).toString("base64"),
+        paidUsd: "0.001",
+        heldUsd: "0",
+        paymentStatus: "settled",
+        txHash: "synthetic-transaction",
+        artifactId: 1,
+        merchant: {
+          address: "synthetic-merchant",
+          settlementCount: 1,
+          firstSeenAt: new Date(0),
+          disputeCount: 0,
+        },
+      };
+    },
+  };
+  const request: RenderedAnalysisRequest = {
+    recipe: {
+      purpose: "founder_dna",
+      schemaVersion: "1",
+      parserVersion: "1",
+      promptVersion: "1",
+      template: "synthetic",
+      provider,
+      model: "synthetic-model",
+      modelRevision: "synthetic-revision",
+      parameters: {
+        temperature: 0,
+        max_tokens: 1800,
+        provider: { require_parameters: true },
+      },
+      responseSchema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {},
+      },
+      toolDefinitions: [],
+      codeDigest: "fixture",
+      selectionPolicy: "fixture",
+    },
+    messages: [{ role: "user", content: "Synthetic evidence" }],
+    context: [],
+    evidence: [],
+  };
+  const execute = weftGeneration(store, client, {
+    scope: "fixture",
+    budgetId: "budget",
+    maxCostUsd: "0.03",
+    policy: {
+      id: "policy",
+      scope: "fixture",
+      operation,
+      storageVerified: true,
+      retentionApproved: true,
+    },
+    enabled: () => true,
+  });
+  return {
+    events,
+    requests,
+    plans,
+    store,
+    client,
+    request,
+    run: () =>
+      execute({ runId: "run", request, requestBytes: Buffer.from("fixture") }),
+  };
+}
+
+test("OpenRouter route preserves model revision, schema and parameters through durable capture", async () => {
+  const f = fixture();
+  const result = await f.run();
+  assert.deepEqual(f.events, [
+    "plan",
+    "reserve",
+    "dispatch",
+    "fetch",
+    "archive",
+  ]);
+  assert.equal(
+    f.requests[0].url,
+    "https://openrouter.mpp.tempo.xyz/v1/chat/completions",
+  );
+  assert.equal(f.requests[0].operationId, "openrouter-chat-completions");
+  assert.equal(f.requests[0].accessMethodId, "mpp-access-23-0-0");
+  assert.equal(f.requests[0].maxCostUsd, "0.03");
+  assert.deepEqual(JSON.parse(String(f.requests[0].body)), {
+    ...(f.request.recipe.parameters as object),
+    model: "synthetic-revision",
+    messages: f.request.messages,
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "founder_analysis",
+        strict: true,
+        schema: f.request.recipe.responseSchema,
+      },
+    },
+  });
+  assert.equal(result.responseArtifactId, "artifact");
+  assert.equal(result.attemptId, "attempt");
+  assert.deepEqual(result.usage, { total_tokens: 12 });
+  assert.equal(result.finishReason, "stop");
+});
+
+for (const purpose of ["founder_dna", "founder_portrait"] as const) {
+  test(`${purpose} disables DeepSeek Flash thinking in both recipe identity and captured request`, async () => {
+    const model = {
+      provider: "weft/openrouter",
+      model: "deepseek/deepseek-v4.1-flash",
+      revision: null,
+    };
+    const input = buildAnalysisInput({
+      entityId: "synthetic-founder",
+      releaseId: "synthetic-release",
+      generation: 0,
+      purpose: "founder_dna",
+      evidence: [
+        {
+          id: "synthetic-evidence",
+          artifactId: "synthetic-artifact",
+          text: "Builds tools",
+          contentHash: stableDigest("Builds tools"),
+          sourceUrl: "https://example.test/founder",
+          extractorVersion: "fixture",
+          provenance: { sourceKind: "self-reported", observedAt: null },
+        },
+      ],
+      model,
+      codeDigest: "fixture",
+    });
+    if (purpose === "founder_portrait")
+      input.recipe = founderPortraitRecipe(model, "fixture");
+    const base =
+      purpose === "founder_dna"
+        ? { temperature: 0, max_tokens: 1800 }
+        : { temperature: 0.5, max_tokens: 2400 };
+    assert.deepEqual(input.recipe.parameters, {
+      ...base,
+      reasoning: { enabled: false },
+      provider: { require_parameters: true },
+    });
+    const prepared = prepareAnalysis(input);
+    const previous = prepareAnalysis({
+      ...input,
+      recipe: { ...input.recipe, parameters: base },
+    });
+    assert.notEqual(stableDigest(input.recipe), stableDigest(previous.recipe));
+    assert.notEqual(prepared.recipeDigest, previous.recipeDigest);
+    assert.equal(prepared.inputDigest, previous.inputDigest);
+    const f = fixture();
+    Object.assign(f.request, prepared.request);
+    await f.run();
+    const body = JSON.parse(String(f.requests[0].body));
+    assert.equal(body.model, model.model);
+    assert.deepEqual(body.reasoning, { enabled: false });
+    assert.deepEqual(body.provider, { require_parameters: true });
+    assert.equal(body.max_tokens, base.max_tokens);
+    assert.equal(body.response_format.type, "json_schema");
+    assert.equal(f.requests.length, 1);
+    assert.equal(f.events.at(-1), "archive");
+  });
+}
+
+test("DeepSeek thinking policy matches only the actual OpenRouter Flash model", () => {
+  for (const model of [
+    {
+      provider: "weft/blockrun",
+      model: "deepseek/deepseek-v4.1-flash",
+      revision: null,
+    },
+    { provider: "weft/openrouter", model: "another-model", revision: null },
+    {
+      provider: "weft/openrouter",
+      model: "deepseek/deepseek-v4.1-flash",
+      revision: "another-revision",
+    },
+  ]) {
+    const dna = buildAnalysisInput({
+      entityId: "f",
+      releaseId: "r",
+      generation: 0,
+      purpose: "founder_dna",
+      evidence: [],
+      model,
+      codeDigest: "fixture",
+    });
+    assert.deepEqual(dna.recipe.parameters, {
+      temperature: 0,
+      max_tokens: 1800,
+    });
+    assert.deepEqual(founderPortraitRecipe(model, "fixture").parameters, {
+      temperature: 0.5,
+      max_tokens: 2400,
+    });
+  }
+});
+
+test("captured portrait schema separates local fact references from source UUIDs", async () => {
+  const f = fixture();
+  f.request.recipe = founderPortraitRecipe(
+    { provider: "weft/openrouter", model: "synthetic", revision: null },
+    "fixture",
+  );
+  await f.run();
+  const schema = JSON.parse(String(f.requests[0].body)).response_format
+    .json_schema.schema;
+  const factIdSchemas = [
+    schema.properties.facts.items.properties.id,
+    schema.properties.factIds.items,
+    schema.properties.roast.properties.lines.items.properties.factIds.items,
+  ];
+  const validIds = Array.from({ length: 8 }, (_, i) => `f${i + 1}`);
+  const sourceId = "11111111-2222-4333-8444-555555555555";
+  for (const idSchema of factIdSchemas) {
+    assert.equal(idSchema.type, "string");
+    assert.deepEqual(idSchema.enum, validIds);
+    assert.equal(idSchema.enum.includes(sourceId), false);
+    assert.equal(idSchema.enum.includes("f9"), false);
+    assert.ok(validIds.every((id) => idSchema.enum.includes(id)));
+  }
+  // Source references keep their separate shape; they are not local fact IDs.
+  assert.deepEqual(schema.properties.facts.items.properties.evidenceIds.items, {
+    type: "string",
+  });
+});
+
+test("portrait runtime still rejects source IDs and absent facts in either reference field", () => {
+  const profile = founderDnaFixture();
+  profile.facts[0].id = "f1";
+  profile.portrait.factIds = ["f1"];
+  profile.portrait.roast.lines[0].factIds = ["f1"];
+  assert.equal(parseFounderDnaProfile(profile).facts[0].id, "f1");
+  for (const field of ["portrait", "roast"] as const) {
+    for (const invalid of [profile.sources[0].id, "f8"]) {
+      const broken = structuredClone(profile);
+      if (field === "portrait") broken.portrait.factIds = [invalid];
+      else broken.portrait.roast.lines[0].factIds = [invalid];
+      assert.throws(
+        () => parseFounderDnaProfile(broken),
+        /invalid_dna_reference/,
+      );
+    }
+  }
+});
+
+test("BlockRun uses its own reviewed route and matching policy", async () => {
+  const f = fixture("weft/blockrun", "blockrun-chat-completions");
+  await f.run();
+  assert.equal(f.plans[0].operation, "blockrun-chat-completions");
+  assert.equal(f.requests[0].operationId, "blockrun-chat-completions");
+  assert.equal(
+    f.requests[0].url,
+    "https://blockrun.ai/api/v1/chat/completions",
+  );
+  assert.equal(f.requests[0].accessMethodId, "blockrun-chat-x402-base");
+  assert.equal(
+    JSON.parse(String(f.requests[0].body)).model,
+    "synthetic-revision",
+  );
+});
+
+test("an exact rendered schema takes precedence without changing the recipe schema", async () => {
+  const f = fixture();
+  const recipeSchema = f.request.recipe.responseSchema;
+  const responseSchema = {
+    type: "object",
+    properties: {
+      evidenceIds: {
+        type: "array",
+        items: { type: "string", enum: ["synthetic-evidence"] },
+      },
+    },
+  };
+  Object.assign(f.request, { responseSchema });
+  await f.run();
+  assert.deepEqual(
+    JSON.parse(String(f.requests[0].body)).response_format.json_schema.schema,
+    responseSchema,
+  );
+  assert.equal(f.request.recipe.responseSchema, recipeSchema);
+});
+
+test("unknown providers and mismatched route policies fail before reservation or transport", async () => {
+  for (const [provider, operation, error] of [
+    [
+      "weft/unknown",
+      "openrouter-chat-completions",
+      /unsupported_model_provider/,
+    ],
+    ["toString", "openrouter-chat-completions", /unsupported_model_provider/],
+    [
+      "weft/blockrun",
+      "openrouter-chat-completions",
+      /collection_policy_not_approved/,
+    ],
+    [
+      "weft/openrouter",
+      "blockrun-chat-completions",
+      /collection_policy_not_approved/,
+    ],
+  ] as const) {
+    const f = fixture(provider, operation);
+    await assert.rejects(f.run(), error);
+    assert.deepEqual(f.events, []);
+  }
+});
+
+test("ambiguous transport error is recorded once without provider fallback", async () => {
+  const f = fixture();
+  let calls = 0;
+  f.client.fetch = async () => {
+    calls++;
+    throw new Error("ambiguous payment");
+  };
+  await assert.rejects(f.run(), /collection_uncertain/);
+  assert.equal(calls, 1);
+  assert.deepEqual(f.events, ["plan", "reserve", "dispatch", "uncertain"]);
+});
+
+test("paid HTTP failure is archived before rejection without fallback", async () => {
+  const f = fixture("weft/blockrun", "blockrun-chat-completions");
+  const fetch = f.client.fetch;
+  f.client.fetch = async (...args) => ({
+    ...(await fetch(...args)),
+    status: 402,
+  });
+  await assert.rejects(f.run(), /model_http_failure_response_archived/);
+  assert.equal(f.requests.length, 1);
+  assert.deepEqual(f.events, [
+    "plan",
+    "reserve",
+    "dispatch",
+    "fetch",
+    "archive",
+  ]);
+});
+
+test("tools and malformed parameters stop before any collection", async () => {
+  const tools = fixture();
+  tools.request.recipe.toolDefinitions = [{ type: "function" }];
+  await assert.rejects(tools.run(), /tool_execution_not_enabled/);
+  assert.deepEqual(tools.events, []);
+  for (const parameters of [null, [], "invalid"]) {
+    const f = fixture();
+    f.request.recipe.parameters = parameters;
+    await assert.rejects(f.run(), /invalid_model_parameters/);
+    assert.deepEqual(f.events, []);
+  }
+});

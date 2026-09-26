@@ -15,11 +15,19 @@ and availability can change; check the live Weft catalog before changing an
 operation. IDs and endpoint contracts belong to the source adapters, not a
 second hard-coded list in documentation.
 
+## Durable capture
+
+Default paid calls now pass through the durable archive before parsing. Configure
+the explicit enrichment database, aggregate budget and reviewed source policies;
+without them collection stops. See [enrichment operations](enrichment.md).
+The capture ledger reuses saved results and refuses unresolved redispatches.
+
 ## Failure and payment semantics
 
-The [retry helper](../lib/weft-retry.ts) bounds eligible retries to three attempts
+The [retry helper](../lib/weft-retry.ts) bounds eligible adapter retries to three attempts
 with backoff and unchanged per-request caps. It reuses the logical request key;
-this is not a durable one-charge guarantee. Known payment holds or charges must
+this helper alone is not a durable one-charge guarantee. The default transport's
+ledger prevents these retries from becoming new purchases. Known payment holds or charges must
 not be replayed. Policy/auth/budget refusals and ambiguous transport failures stop.
 An HTTP 200 with a pending receipt can be usable data with settlement unfinished.
 
@@ -45,7 +53,8 @@ queued public intros without a paid profile request via
 that has no valid source tweet ID.
 
 Do not surface provider exceptions verbatim in the public app. Store only the
-profile fields needed by the product; do not expose keys, payment headers or raw
+profile fields needed by the product in its public projection; retain permitted
+raw bodies privately for replay. Do not expose keys, payment headers or raw
 provider dumps. Record sanitized status and receipt identifiers for diagnosis.
 
 ## Limits of the example
