@@ -2,6 +2,7 @@
 import "../assert-server";
 import type { Database, Sql } from "./db";
 import { stableDigest } from "./contracts";
+import { assertFounderDnaCoverage } from "./dna-coverage";
 import {
   parseFounderDnaProfile,
   FOUNDER_DNA_SCHEMA_VERSION,
@@ -276,6 +277,8 @@ export class DnaPublicationStore {
       )
         throw new Error("release_not_validated");
       await this.validate(tx, releaseId);
+      // Rollback calls this method, so it cannot bypass the same public-union proof.
+      await assertFounderDnaCoverage(tx, releaseId);
       await tx.query(
         "INSERT INTO founder_dna_active_release(singleton,release_id) VALUES(true,$1) ON CONFLICT(singleton) DO UPDATE SET previous_release_id=founder_dna_active_release.release_id,release_id=EXCLUDED.release_id,activated_at=now() WHERE founder_dna_active_release.release_id<>EXCLUDED.release_id",
         [releaseId],

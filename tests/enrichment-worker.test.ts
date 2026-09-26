@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { PGlite } from "@electric-sql/pglite";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   migrateEnrichment,
   type Database,
@@ -18,6 +18,8 @@ import {
 } from "../lib/enrichment/worker";
 import { runPendingStages } from "../lib/enrichment/pipeline";
 import type { EvidenceInput } from "../lib/enrichment/contracts";
+import { collectWebsite } from "../lib/enrichment/website";
+import type { WeftTransport } from "../lib/weft";
 
 test("Atlas website expansion uses only one exact safe mapping", () => {
   const short = "https://t.co/verified";
@@ -731,4 +733,488 @@ test("profile identity mismatch blocks website purchase", async () => {
   } finally {
     await f.pg.close();
   }
+});
+
+test("withdrawing a source profile purges pre-analysis worker manifests that retain its website URL", async () => {
+  const pg = new PGlite();
+  const adapt = (client: Pick<PGlite, "query" | "exec">): Sql => ({
+    async query<T>(text: string, values?: unknown[]) {
+      if (!values && text.includes(";")) {
+        await client.exec(text);
+        return { rows: [] as T[] };
+      }
+      return client.query<T>(text, values);
+    },
+  });
+  const db: Database = {
+    ...adapt(pg),
+    transaction: (fn) => pg.transaction((tx) => fn(adapt(tx))),
+  };
+  await migrateEnrichment(db);
+  const store = new EnrichmentStore(db);
+  const configuration = {
+    codeDigest: "synthetic-v1",
+    model: { provider: "synthetic", model: "fixture", revision: "v1" },
+    website: { provider: "exa" as const },
+  };
+  const evaluation = await store.putArtifact({
+    kind: "legacy_import",
+    body: Buffer.from("synthetic evaluation"),
+    contentType: "text/plain",
+    redactionVersion: "none",
+    importBatch: "retention-evaluation",
+  });
+  const releaseId = await store.createRelease(
+    buildWorkerManifest(configuration),
+  );
+  await store.approveRelease(releaseId, evaluation.id, {
+    actor: "test",
+    reason: "synthetic",
+  });
+  await store.promoteRelease("test", releaseId, "retention");
+  const budgetId = randomUUID();
+  const unrelatedBudgetId = randomUUID();
+  await store.createBudget({
+    id: budgetId,
+    scope: "test",
+    currency: "USD",
+    capMicros: "5000",
+  });
+  await store.createBudget({
+    id: unrelatedBudgetId,
+    scope: "other",
+    currency: "USD",
+    capMicros: "80",
+  });
+  const founder = await store.createEntity("founder", "retained_founder");
+  await store.intake("test", founder);
+  await store.reconcileTargets("test");
+  let profileId = "";
+  let websiteId = "";
+  const websiteUrl = "https://retained.example/product";
+  const dependencies: WorkerDependencies = {
+    mode: "acquire",
+    ...configuration,
+    async collectProfile() {
+      const request = await store.planCollection({
+        scope: "test",
+        fingerprint: "retained-profile",
+        generation: 0,
+        operation: "source",
+        args: { handle: "retained_founder" },
+        policyId: "synthetic",
+      });
+      const attempt = await store.reserveAttempt({
+        requestId: request.id,
+        budgetId,
+        capMicros: "1",
+      });
+      await store.markDispatched(attempt.id);
+      const artifact = await store.captureResponse({
+        attemptId: attempt.id,
+        kind: "source_response",
+        body: Buffer.from(
+          JSON.stringify({
+            data: {
+              core: {
+                name: "Retained Founder",
+                screen_name: "retained_founder",
+              },
+              website: { url: websiteUrl },
+              profile_bio: { description: "Builds a retained product." },
+            },
+          }),
+        ),
+        contentType: "application/json",
+        redactionVersion: "none",
+        paymentState: "settled",
+        settledMicros: "1",
+        metadata: { sourceKind: "self-reported" },
+      });
+      profileId = artifact.id;
+      return { status: "captured", artifactId: artifact.id };
+    },
+    async collectWebsite(input) {
+      const client: WeftTransport = {
+        fetch: async (request) => {
+          const requested = (
+            JSON.parse(String(request.body)) as { urls: string[] }
+          ).urls[0];
+          return {
+            status: 200,
+            headers: { "content-type": "application/json" },
+            bodyBase64: Buffer.from(
+              JSON.stringify({
+                statuses: [{ id: requested, status: "success" }],
+                results: [
+                  {
+                    url: requested,
+                    text: "Retained product page text.",
+                  },
+                ],
+              }),
+            ).toString("base64"),
+            paidUsd: "0.001",
+            heldUsd: "0",
+            paymentStatus: "settled",
+            txHash: "synthetic",
+            artifactId: 1,
+            merchant: {
+              address: "synthetic",
+              settlementCount: 1,
+              firstSeenAt: new Date(0),
+              disputeCount: 0,
+            },
+          };
+        },
+      };
+      const result = await collectWebsite(
+        store,
+        client,
+        {
+          scope: "test",
+          budgetId,
+          generation: input.generation,
+          mode: "acquire",
+          policy: {
+            id: "synthetic-website",
+            scope: "test",
+            operation: "exa-contents",
+            storageVerified: true,
+            retentionApproved: true,
+          },
+          maxCostUsd: "0.001",
+          provider: input.provider,
+          websiteUrl: input.websiteUrl,
+          sourceProfileArtifactId: input.sourceProfileArtifactId,
+        },
+        () => true,
+      );
+      assert.equal(result.status, "captured");
+      if (result.status !== "captured")
+        return { status: "unavailable", reason: "website_not_captured" };
+      websiteId = result.artifact.id;
+      return { status: "captured", artifactId: result.artifact.id };
+    },
+    async executeGeneration() {
+      throw new Error("analysis must not run before withdrawal");
+    },
+  };
+  const handlers = createStageHandlers(
+    store,
+    new WorkerStore(db),
+    dependencies,
+  );
+  assert.deepEqual(
+    await runPendingStages(
+      store,
+      {
+        collection: handlers.collection,
+        extraction: handlers.extraction,
+      },
+      { limit: 2, leaseSeconds: 60 },
+    ),
+    { processed: 2, counts: { succeeded: 2 } },
+  );
+  assert.equal(
+    (await db.query("SELECT id FROM enrichment_analysis_runs")).rows.length,
+    0,
+  );
+  const written = (
+    await db.query<{ id: string; purpose: string; body: string }>(
+      `SELECT id, metadata->>'purpose' AS purpose, convert_from(body,'UTF8') AS body
+       FROM enrichment_artifacts
+       WHERE metadata->>'purpose' IN ('worker_source_bundle','worker_extraction')`,
+    )
+  ).rows;
+  const sourceBundle = written.find(
+    (row) => row.purpose === "worker_source_bundle",
+  );
+  const extraction = written.find((row) => row.purpose === "worker_extraction");
+  assert.ok(sourceBundle && extraction);
+  assert.ok(profileId && websiteId);
+  assert.match(sourceBundle.body, /https:\/\/retained\.example\/product/);
+  assert.match(extraction.body, /https:\/\/retained\.example\/product/);
+  const tracked = (
+    await db.query<{ purpose: string; ids: string[] }>(
+      `SELECT metadata->>'purpose' AS purpose,
+         ARRAY(SELECT jsonb_array_elements_text(metadata->'sourceArtifactIds')) AS ids
+       FROM enrichment_artifacts WHERE id=ANY($1::uuid[])`,
+      [[sourceBundle.id, extraction.id]],
+    )
+  ).rows;
+  assert.deepEqual(
+    tracked.find((row) => row.purpose === "worker_source_bundle")?.ids.sort(),
+    [profileId, websiteId].sort(),
+  );
+  assert.deepEqual(
+    new Set(tracked.find((row) => row.purpose === "worker_extraction")?.ids),
+    new Set([profileId, websiteId, sourceBundle.id]),
+  );
+  const insertManifest = async (
+    id: string,
+    batch: string,
+    body: unknown,
+    metadata: Record<string, unknown>,
+  ) => {
+    const bytes = Buffer.from(JSON.stringify(body));
+    await db.query(
+      "INSERT INTO enrichment_artifacts(id,kind,import_batch,sha256,body,byte_length,content_type,redaction_version,metadata) VALUES($1,'manifest',$2,$3,$4,$5,'application/json','credential-free-bundle-v1',$6)",
+      [
+        id,
+        batch,
+        createHash("sha256").update(bytes).digest("hex"),
+        bytes,
+        bytes.byteLength,
+        JSON.stringify(metadata),
+      ],
+    );
+  };
+  const legacyBundle = randomUUID();
+  const legacyExtraction = randomUUID();
+  const cycleLeft = randomUUID();
+  const cycleRight = randomUUID();
+  const metadataOnly = randomUUID();
+  const unrelatedProfile = randomUUID();
+  const unrelatedBundle = randomUUID();
+  const unrelatedLeft = randomUUID();
+  const unrelatedRight = randomUUID();
+  const unrelatedBytes = Buffer.from("unrelated profile");
+  await db.query(
+    "INSERT INTO enrichment_artifacts(id,kind,import_batch,sha256,body,byte_length,content_type,redaction_version,metadata) VALUES($1,'legacy_import',$2,$3,$4,$5,'text/plain','none','{}')",
+    [
+      unrelatedProfile,
+      "unrelated-profile",
+      createHash("sha256").update(unrelatedBytes).digest("hex"),
+      unrelatedBytes,
+      unrelatedBytes.byteLength,
+    ],
+  );
+  await insertManifest(
+    legacyBundle,
+    "legacy-source-bundle",
+    {
+      version: "profile-website-bundle-v1",
+      profileArtifactId: profileId,
+      website: {
+        status: "captured",
+        artifactId: websiteId,
+        url: "https://retained.example/product",
+      },
+    },
+    { purpose: "worker_source_bundle", entityId: founder, generation: 0 },
+  );
+  await insertManifest(
+    legacyExtraction,
+    "legacy-extraction",
+    {
+      version: "profile-website-evidence-v1",
+      evidenceIds: [randomUUID()],
+      artifactIds: [websiteId],
+      website: {
+        status: "captured",
+        artifactId: websiteId,
+        url: "https://retained.example/product",
+      },
+    },
+    { purpose: "worker_extraction", entityId: founder, generation: 0 },
+  );
+  await insertManifest(
+    cycleLeft,
+    "cycle-left",
+    {
+      version: "profile-website-bundle-v1",
+      profileArtifactId: profileId,
+      website: {
+        status: "captured",
+        artifactId: cycleRight,
+        url: "https://retained.example/cycle",
+      },
+    },
+    { purpose: "worker_source_bundle" },
+  );
+  await insertManifest(
+    cycleRight,
+    "cycle-right",
+    {
+      version: "profile-website-bundle-v1",
+      profileArtifactId: cycleLeft,
+      website: {
+        status: "captured",
+        artifactId: websiteId,
+        url: "https://retained.example/cycle-back",
+      },
+    },
+    { purpose: "worker_source_bundle" },
+  );
+  await insertManifest(
+    metadataOnly,
+    "metadata-only",
+    {
+      version: "profile-website-bundle-v1",
+      profileArtifactId: unrelatedProfile,
+      website: {
+        status: "unavailable",
+        url: "https://retained.example/metadata",
+      },
+    },
+    {
+      purpose: "worker_source_bundle",
+      sourceArtifactIds: [profileId],
+    },
+  );
+  await insertManifest(
+    unrelatedBundle,
+    "unrelated-bundle",
+    {
+      version: "profile-website-bundle-v1",
+      profileArtifactId: unrelatedProfile,
+      website: {
+        status: "unavailable",
+        url: "https://other.example/keep",
+      },
+    },
+    { purpose: "worker_source_bundle" },
+  );
+  await insertManifest(
+    unrelatedLeft,
+    "unrelated-cycle-left",
+    {
+      version: "profile-website-bundle-v1",
+      profileArtifactId: unrelatedRight,
+      website: { status: "unavailable", url: "https://other.example/cycle" },
+    },
+    { purpose: "worker_source_bundle" },
+  );
+  await insertManifest(
+    unrelatedRight,
+    "unrelated-cycle-right",
+    {
+      version: "profile-website-bundle-v1",
+      profileArtifactId: unrelatedLeft,
+      website: {
+        status: "unavailable",
+        url: "https://other.example/cycle-back",
+      },
+    },
+    { purpose: "worker_source_bundle" },
+  );
+  const unrelatedRequest = await store.planCollection({
+    scope: "other",
+    fingerprint: "unrelated-retention",
+    generation: 0,
+    operation: "website",
+    args: { url: "https://other.example/keep" },
+    policyId: "synthetic",
+  });
+  const unrelatedAttempt = await store.reserveAttempt({
+    requestId: unrelatedRequest.id,
+    budgetId: unrelatedBudgetId,
+    capMicros: "7",
+  });
+  await store.markDispatched(unrelatedAttempt.id);
+  const unrelatedCapture = await store.captureResponse({
+    attemptId: unrelatedAttempt.id,
+    body: Buffer.from("unrelated website"),
+    contentType: "text/plain",
+    redactionVersion: "none",
+    paymentState: "settled",
+    settledMicros: "7",
+    metadata: { sourceProfileArtifactId: unrelatedProfile },
+  });
+  const committedBefore = (
+    await db.query<{ committed_micros: string }>(
+      "SELECT committed_micros::text FROM enrichment_budgets WHERE id=$1",
+      [budgetId],
+    )
+  ).rows[0].committed_micros;
+  await store.withdrawArtifact(profileId, "test", "profile withdrawn");
+  const purged = [
+    profileId,
+    websiteId,
+    sourceBundle.id,
+    extraction.id,
+    legacyBundle,
+    legacyExtraction,
+    cycleLeft,
+    cycleRight,
+    metadataOnly,
+  ];
+  for (const id of purged) {
+    assert.equal(await store.getArtifact(id), null, id);
+    const row = (
+      await db.query<{ bytes: number; metadata: unknown }>(
+        "SELECT octet_length(body)::integer AS bytes, metadata FROM enrichment_artifacts WHERE id=$1",
+        [id],
+      )
+    ).rows[0];
+    assert.equal(row.bytes, 0, id);
+    assert.deepEqual(row.metadata, {}, id);
+  }
+  assert.equal(
+    (
+      await db.query<{ excerpt: string; source_url: string | null }>(
+        "SELECT excerpt, source_url FROM enrichment_evidence WHERE artifact_id=$1",
+        [websiteId],
+      )
+    ).rows[0].excerpt,
+    "",
+  );
+  for (const id of [
+    unrelatedProfile,
+    unrelatedBundle,
+    unrelatedLeft,
+    unrelatedRight,
+    unrelatedCapture.id,
+  ]) {
+    const artifact = await store.getArtifact(id);
+    assert.ok(artifact, id);
+    assert.ok(artifact.body.byteLength > 0, id);
+  }
+  assert.match(
+    Buffer.from((await store.getArtifact(unrelatedBundle))!.body).toString(),
+    /https:\/\/other\.example\/keep/,
+  );
+  assert.equal(
+    (
+      await db.query<{ committed_micros: string }>(
+        "SELECT committed_micros::text FROM enrichment_budgets WHERE id=$1",
+        [budgetId],
+      )
+    ).rows[0].committed_micros,
+    committedBefore,
+  );
+  assert.equal(
+    (
+      await db.query<{ committed_micros: string }>(
+        "SELECT committed_micros::text FROM enrichment_budgets WHERE id=$1",
+        [unrelatedBudgetId],
+      )
+    ).rows[0].committed_micros,
+    "7",
+  );
+  assert.deepEqual(
+    (
+      await db.query<{ args: unknown }>(
+        "SELECT args FROM enrichment_collection_requests WHERE id=$1",
+        [unrelatedRequest.id],
+      )
+    ).rows[0].args,
+    { url: "https://other.example/keep" },
+  );
+  const stages = (
+    await db.query<{ stage: string; status: string }>(
+      "SELECT stage,status FROM enrichment_stage_work WHERE entity_id=$1",
+      [founder],
+    )
+  ).rows;
+  assert.equal(
+    stages.find((row) => row.stage === "collection")?.status,
+    "blocked",
+  );
+  assert.equal(
+    stages.find((row) => row.stage === "extraction")?.status,
+    "blocked",
+  );
+  await pg.close();
 });

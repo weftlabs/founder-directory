@@ -25,7 +25,8 @@ Only selected display claims, eligible founder handles and cited product-site UR
 leave the query. Raw responses, manifests, evidence IDs and private entity IDs do
 not reach the page. Unsafe URL schemes and credentials are removed. Website links
 are omitted when a product has no eligible cited product-site URL. Founder links
-lead to `/u/<handle>`.
+lead to `/u/<handle>`. A Founder DNA activation must already cover those linked
+handles; the product page does not hide a founder who lacks DNA.
 
 Unknown, conflicting, stale and absent values are not displayed as facts. Inferred
 supported values carry an `Inferred` label. Business model and stage stay separate

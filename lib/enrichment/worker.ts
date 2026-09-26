@@ -24,6 +24,12 @@ import { parseWebsiteArtifact, publicWebsiteUrl } from "./website";
 
 const SOURCE_BUNDLE_VERSION = "profile-website-bundle-v1";
 const EXTRACTION_VERSION = "profile-website-evidence-v1";
+const artifactUuid = /^[0-9a-f]{8}-[0-9a-f-]{27}$/i;
+function sourceArtifactIds(ids: readonly (string | undefined)[]): string[] {
+  return [
+    ...new Set(ids.filter((id): id is string => !!id && artifactUuid.test(id))),
+  ];
+}
 type WebsiteCoverage = {
   provider?: "exa" | "jina";
   status: "captured" | "unavailable" | "disabled";
@@ -438,6 +444,10 @@ export function createStageHandlers(
             purpose: "worker_source_bundle",
             entityId: work.entityId,
             generation: work.generation,
+            sourceArtifactIds: sourceArtifactIds([
+              artifact.id,
+              website.artifactId,
+            ]),
           },
         });
         return { status: "succeeded", outputId: bundle.id };
@@ -559,6 +569,10 @@ export function createStageHandlers(
             entityId: work.entityId,
             generation: work.generation,
             sourceBundleId: bundleArtifact.id,
+            sourceArtifactIds: sourceArtifactIds([
+              ...artifactIds,
+              bundleArtifact.id,
+            ]),
           },
         });
         return { status: "succeeded", evidenceId: id, outputId: extracted.id };

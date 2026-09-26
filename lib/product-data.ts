@@ -17,12 +17,8 @@ import {
 // Do not reuse a latest-analysis lookup: publication is an explicit decision.
 // The eligibility view covers retained manifest/raw bytes; the extra evidence
 // check also excludes independently purged evidence and suppressed source owners.
-const eligible = `WITH eligible AS (
- SELECT a.id, a.evidence_ids, a.entity_id,
-  (SELECT jsonb_object_agg(c->>'field', jsonb_build_object('value',CASE WHEN c->>'state'='supported' AND jsonb_typeof(c->'value')='string' THEN to_jsonb(left(c->>'value',${PRODUCT_TEXT_LIMIT})) ELSE 'null'::jsonb END,'state',c->'state','kind',c->'kind'))
-   FROM jsonb_array_elements(a.output->'claims') c
-   WHERE c->>'field' IN ('name','description','audience','domain','product_type','business_model','stage')) AS fields
- FROM enrichment_profiles p
+// DNA coverage imports these fragments so founder links cannot drift from this page.
+export const publishedProductAnalysisFromSql = `FROM enrichment_profiles p
  JOIN enrichment_eligible_analyses a ON a.id=p.analysis_id AND a.entity_id=p.entity_id
  JOIN enrichment_entities product ON product.id=p.entity_id AND product.kind='product' AND product.status='active'
  JOIN enrichment_releases release ON release.id=a.release_id AND release.status='approved'
@@ -31,7 +27,22 @@ const eligible = `WITH eligible AS (
    JOIN enrichment_evidence e ON e.id::text=cited.id
    WHERE e.purged_at IS NOT NULL OR EXISTS (
     SELECT 1 FROM enrichment_entity_evidence own JOIN enrichment_entities source ON source.id=own.entity_id
-    WHERE own.evidence_id=e.id AND source.status<>'active'))
+    WHERE own.evidence_id=e.id AND source.status<>'active'))`;
+export const linkedProductFounderFromSql = `FROM enrichment_founder_products relation
+  JOIN enrichment_entities founder ON founder.id=relation.founder_id AND founder.kind='founder' AND founder.status='active'
+  JOIN enrichment_evidence evidence ON evidence.id=relation.evidence_id AND evidence.purged_at IS NULL
+  JOIN enrichment_artifacts raw ON raw.id=evidence.artifact_id AND raw.purged_at IS NULL
+  WHERE relation.product_id=a.entity_id AND founder.legacy_key ~ '^[a-zA-Z0-9_]{1,15}$'
+  AND (raw.expires_at IS NULL OR raw.expires_at>now())
+  AND NOT EXISTS(SELECT 1 FROM enrichment_artifact_withdrawals w WHERE w.artifact_id=raw.id)
+  AND EXISTS(SELECT 1 FROM enrichment_entity_evidence l WHERE l.entity_id=founder.id AND l.evidence_id=evidence.id)
+  AND NOT EXISTS(SELECT 1 FROM enrichment_entity_evidence own JOIN enrichment_entities source ON source.id=own.entity_id WHERE own.evidence_id=evidence.id AND source.status<>'active')`;
+const eligible = `WITH eligible AS (
+ SELECT a.id, a.evidence_ids, a.entity_id,
+  (SELECT jsonb_object_agg(c->>'field', jsonb_build_object('value',CASE WHEN c->>'state'='supported' AND jsonb_typeof(c->'value')='string' THEN to_jsonb(left(c->>'value',${PRODUCT_TEXT_LIMIT})) ELSE 'null'::jsonb END,'state',c->'state','kind',c->'kind'))
+   FROM jsonb_array_elements(a.output->'claims') c
+   WHERE c->>'field' IN ('name','description','audience','domain','product_type','business_model','stage')) AS fields
+ ${publishedProductAnalysisFromSql}
 ), projected AS (
  SELECT a.id,
  jsonb_build_object('name',fields->'name','description',fields->'description','audience',fields->'audience',
@@ -48,15 +59,7 @@ const eligible = `WITH eligible AS (
  JOIN LATERAL (
   SELECT jsonb_agg(DISTINCT founder.legacy_key ORDER BY founder.legacy_key) AS handles,
    string_agg(DISTINCT founder.legacy_key,' ' ORDER BY founder.legacy_key) AS search
-  FROM enrichment_founder_products relation
-  JOIN enrichment_entities founder ON founder.id=relation.founder_id AND founder.kind='founder' AND founder.status='active'
-  JOIN enrichment_evidence evidence ON evidence.id=relation.evidence_id AND evidence.purged_at IS NULL
-  JOIN enrichment_artifacts raw ON raw.id=evidence.artifact_id AND raw.purged_at IS NULL
-  WHERE relation.product_id=a.entity_id AND founder.legacy_key ~ '^[a-zA-Z0-9_]{1,15}$'
-  AND (raw.expires_at IS NULL OR raw.expires_at>now())
-  AND NOT EXISTS(SELECT 1 FROM enrichment_artifact_withdrawals w WHERE w.artifact_id=raw.id)
-  AND EXISTS(SELECT 1 FROM enrichment_entity_evidence l WHERE l.entity_id=founder.id AND l.evidence_id=evidence.id)
-  AND NOT EXISTS(SELECT 1 FROM enrichment_entity_evidence own JOIN enrichment_entities source ON source.id=own.entity_id WHERE own.evidence_id=evidence.id AND source.status<>'active')
+  ${linkedProductFounderFromSql}
  ) f ON f.handles IS NOT NULL
 ), categorized AS (
  SELECT *, CASE ${PRODUCT_CATEGORIES.filter((c) => c.pattern)

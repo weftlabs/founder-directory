@@ -34,6 +34,8 @@ pnpm exec tsx scripts/founder-dna-release.ts activate \
   --database-url "$DESTINATION_DATABASE_URL" --release RELEASE_ID --confirm-write
 pnpm exec tsx scripts/founder-dna-release.ts rollback \
   --database-url "$DESTINATION_DATABASE_URL" --confirm-write
+pnpm exec tsx scripts/founder-dna-release.ts coverage \
+  --database-url "$DESTINATION_DATABASE_URL" --release RELEASE_ID
 ```
 
 Use a private operator terminal. A URL passed as an argument can be visible to
@@ -45,7 +47,25 @@ retention and destination state without writes. Stage is one atomic transaction;
 an interrupted stage leaves no partial data. Repeating the same bundle is safe.
 Stage does not activate it. Validate and activate recheck eligibility. Failed
 upload, validation or activation leaves the previous active release selected.
-Rollback rechecks the previous release; it cannot restore withdrawn material.
+Rollback rechecks the previous release and the same public coverage gate as
+activation. It cannot restore withdrawn material, and it cannot restore a
+previous release that no longer covers the current public union.
+
+`coverage` is read-only. It does not load an environment file, dispatch a
+provider, write, or change the active pointer. It counts founders who are public
+once foundation reads are enabled and founders linked from published Products.
+Those sets use the same visibility and publication predicates as the directory
+and Products readers. A founder in both sets is counted once in the union.
+Suppressed directory founders and withdrawn product relationships are not public
+links and are not required. The report gives totals, ready and missing counts,
+and at most 1,000 missing handles with a saved-state reason. Invalid handles are
+redacted. It does not print source bodies, credentials, or profile text. A
+missing directory schema fails closed. The release profile cap stays 1,000; a
+larger public union cannot be activated by raising that cap. Coverage proves the
+current public union only. Later intake, publication, withdrawal, or suppression
+can make it incomplete. It does not scan visitor requests or collect missing DNA.
+`FOUNDER_DNA_ENABLED` stays off until an operator sets it. Activation runs this
+proof inside the pointer transaction and refuses an incomplete or oversized union.
 
 Preview reads one validated release by explicit ID through the same release-scoped
 projection as the public reader. It does not change the active pointer and cannot

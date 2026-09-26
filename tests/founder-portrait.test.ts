@@ -48,6 +48,7 @@ async function verifyPortrait(
   };
   try {
     await migrateEnrichment(db);
+    await db.query("CREATE TABLE founders(handle text PRIMARY KEY)");
     const store = new EnrichmentStore(db),
       dna = new DnaPublicationStore(db);
     const model = {

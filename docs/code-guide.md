@@ -99,7 +99,9 @@ when the feature is disabled.
 
 The private release CLI can select a validated inactive release for operator preview
 through the same release-scoped projection. It never changes the active pointer.
-Visitor requests cannot supply a release selector.
+Visitor requests cannot supply a release selector. Its coverage command is a
+read-only activation-time proof for the public directory and published product
+links; it does not run during a page request.
 
 The profile puts a playful roast before useful connections and products. “Why
 this fits” contains the approved source excerpts and factual claims. Categories

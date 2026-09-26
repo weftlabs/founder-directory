@@ -413,16 +413,27 @@ not replace a published portrait. Infrastructure failures save a private interru
 manifest with completed exchange provenance, then stop without a terminal analysis.
 An explicit resume can reuse those captures after reconciliation; uncertain
 attempts remain blocked and are never automatically retried. Source withdrawal
-also purges the interruption record and its derived captures.
+also purges the interruption record and its derived captures. A website capture
+whose metadata links `sourceProfileArtifactId` to a withdrawn artifact is part of
+that closure, including its evidence and analyses that cite the capture. Worker
+source-bundle and extraction manifests are in the same closure. New manifests
+record `sourceArtifactIds`. Manifests written before that field are included when
+their known `profile-website-bundle-v1` or `profile-website-evidence-v1` body cites
+a withdrawn artifact. Withdrawal clears those bodies, so a website URL retained
+only in a worker manifest cannot stay readable.
 
 Portrait approval is separate from the foundation's existing profile publication:
 `portrait-approve --entity UUID --id PORTRAIT_ANALYSIS_UUID --actor NAME
 --confirm-write`. It approves a saved successful portrait for staging only. The
 `DnaPublicationStore` stages profiles from retained analysis output, validates
 counts, source eligibility and hashes, then activates one data-release pointer
-atomically. It never accepts an operator-authored display profile. Connections
+atomically. Activation also proves that the release currently covers every public
+directory founder and every founder linked from a published product. See
+[Founder DNA data releases](founder-dna-releases.md). The proof does not collect
+missing profiles or hide founders. It never accepts an operator-authored display profile. Connections
 are separate accepted retained decisions and disappear if either endpoint becomes
-ineligible. Rollback revalidates the prior data release before restoring its pointer.
+ineligible. Rollback revalidates the prior data release and that same coverage
+proof before restoring its pointer.
 
 The web reader is off unless `FOUNDER_DNA_ENABLED=1`. It requires
 `FOUNDER_DNA_DATABASE_URL`; it never falls back to `DATABASE_URL`. Use

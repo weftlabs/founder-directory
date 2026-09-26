@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { postgresDatabase, type Database } from "../lib/enrichment/db";
 import { DnaPublicationStore } from "../lib/enrichment/dna-store";
 import { readFounderDnaReleaseProfile } from "../lib/founder-dna-data";
+import { readFounderDnaCoverage } from "../lib/enrichment/dna-coverage";
 import {
   dryRunDnaBundle,
   exportDnaBundle,
@@ -42,10 +43,11 @@ export async function main(
       "preview",
       "activate",
       "rollback",
+      "coverage",
     ].includes(command)
   )
     throw new Error(
-      "Usage: founder-dna-release <export|dry-run|stage|validate|preview|activate|rollback> --database-url <explicit URL> [--file private.json] [--release ID] [--handle HANDLE] [--confirm-write]",
+      "Usage: founder-dna-release <export|dry-run|stage|validate|preview|activate|rollback|coverage> --database-url <explicit URL> [--file private.json] [--release ID] [--handle HANDLE] [--confirm-write]",
     );
   if (!values["database-url"])
     throw new Error(
@@ -59,12 +61,19 @@ export async function main(
   if (["export", "dry-run", "stage"].includes(command) && !values.file)
     throw new Error("--file required");
   if (
-    ["export", "validate", "preview", "activate"].includes(command) &&
+    ["export", "validate", "preview", "activate", "coverage"].includes(
+      command,
+    ) &&
     !values.release
   )
     throw new Error("--release required");
   if (command === "preview" && !values.handle)
     throw new Error("--handle required");
+  if (
+    command === "coverage" &&
+    !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,119}$/.test(values.release!)
+  )
+    throw new Error("dna_coverage_invalid_release");
   let bundle;
   if (["dry-run", "stage"].includes(command)) {
     if ((await stat(values.file!)).size > MAX_DNA_BUNDLE_BYTES)
@@ -110,6 +119,11 @@ export async function main(
       case "rollback":
         await dna.rollback();
         return { command, completed: true };
+      case "coverage":
+        return {
+          command,
+          ...(await readFounderDnaCoverage(db, values.release!)),
+        };
     }
   } finally {
     await db.close();

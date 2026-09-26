@@ -35,6 +35,7 @@ async function database() {
     transaction: (fn) => pg.transaction((tx) => fn(adapt(tx))),
   };
   await migrateEnrichment(db);
+  await db.query("CREATE TABLE founders(handle text PRIMARY KEY)");
   return { pg, db };
 }
 async function retainIdentity(db: Database, entity: string, authorId: string) {

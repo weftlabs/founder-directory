@@ -31,6 +31,7 @@ export async function dnaDatabase() {
     transaction: (fn) => pg.transaction((tx) => fn(adapt(tx))),
   };
   await migrateEnrichment(db);
+  await db.query("CREATE TABLE founders(handle text PRIMARY KEY)");
   return { pg, db };
 }
 test("data releases stage without exposure, activate atomically, roll back and obey withdrawal", async () => {

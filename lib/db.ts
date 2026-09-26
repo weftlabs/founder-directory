@@ -128,6 +128,11 @@ function visibilityClauses(readOrigins: boolean): string[] {
     : [];
 }
 
+/** Distinct public handles once foundation reads are enabled. DNA coverage must not approximate this clause. */
+export function publicDirectoryHandleSql(): string {
+  return `SELECT DISTINCT lower(founders.handle) AS handle FROM founders ${whereSql(visibilityClauses(true))}`;
+}
+
 function directoryDatabase(): Sql {
   const db = sql();
   return {

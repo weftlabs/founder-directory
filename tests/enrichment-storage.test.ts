@@ -965,3 +965,368 @@ test("withdrawal physically clears derived payloads and late completions without
     await pg.close();
   }
 });
+
+test("profile withdrawal purges linked website captures and dependent analyses without erasing unrelated accounting", async () => {
+  const { pg, db, store } = await fixture();
+  try {
+    const entityId = await store.createEntity("founder", "website-withdrawal");
+    const release = await store.createRelease({ stages: ["dna"] });
+    const budgetId = randomUUID();
+    await store.createBudget({
+      id: budgetId,
+      scope: "test",
+      currency: "USD",
+      capMicros: "100",
+    });
+    const unrelatedBudgetId = randomUUID();
+    await store.createBudget({
+      id: unrelatedBudgetId,
+      scope: "other",
+      currency: "USD",
+      capMicros: "80",
+    });
+    const capture = async (
+      scope: string,
+      budget: string,
+      fingerprint: string,
+      body: string,
+      metadata: Record<string, unknown>,
+      settledMicros: string,
+    ) => {
+      const request = await store.planCollection({
+        scope,
+        fingerprint,
+        generation: 0,
+        operation: "website",
+        args: { url: `https://example.com/${fingerprint}`, body },
+        policyId: "test-only",
+      });
+      const attempt = await store.reserveAttempt({
+        requestId: request.id,
+        budgetId: budget,
+        capMicros: settledMicros,
+      });
+      const requestArtifact = await store.putArtifact({
+        kind: "tool_request",
+        body: Buffer.from(`request ${body}`),
+        contentType: "text/plain",
+        redactionVersion: "none",
+        attemptId: attempt.id,
+      });
+      await store.markDispatched(attempt.id);
+      const response = await store.captureResponse({
+        attemptId: attempt.id,
+        kind: "source_response",
+        body: Buffer.from(body),
+        contentType: "text/plain",
+        redactionVersion: "none",
+        paymentState: "settled",
+        settledMicros,
+        metadata,
+      });
+      return { request, requestArtifact, response, attempt };
+    };
+    const profile = await store.putArtifact({
+      kind: "legacy_import",
+      body: Buffer.from("private profile"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      importBatch: "profile",
+    });
+    const website = await capture(
+      "test",
+      budgetId,
+      "website",
+      "private website",
+      {
+        sourceKind: "product-site",
+        sourceProfileArtifactId: profile.id,
+      },
+      "40",
+    );
+    const child = await store.putArtifact({
+      kind: "legacy_import",
+      body: Buffer.from("private child website"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      importBatch: "child-website",
+      metadata: { sourceProfileArtifactId: website.response.id },
+    });
+    const evidence = await store.addEvidence({
+      artifactId: website.response.id,
+      extractorVersion: "v1",
+      locator: "$",
+      payload: { text: "private website" },
+      excerpt: "private website excerpt",
+      sourceUrl: "https://example.com/website",
+    });
+    await store.linkEvidence(entityId, evidence, "product_site");
+    const input = await store.putArtifact({
+      kind: "manifest",
+      body: Buffer.from("private analysis input"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      importBatch: "analysis-input",
+    });
+    const generated = await store.putArtifact({
+      kind: "generation_response",
+      body: Buffer.from("private generated"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      importBatch: "generated",
+    });
+    const loopLeft = randomUUID();
+    const loopRight = randomUUID();
+    for (const [id, batch, body, source] of [
+      [loopLeft, "loop-left", "private loop left", loopRight],
+      [loopRight, "loop-right", "private loop right", loopLeft],
+    ] as const) {
+      const bytes = Buffer.from(body);
+      await db.query(
+        "INSERT INTO enrichment_artifacts(id,kind,import_batch,sha256,body,byte_length,content_type,redaction_version,metadata) VALUES($1,'legacy_import',$2,$3,$4,$5,'text/plain','none',$6)",
+        [
+          id,
+          batch,
+          createHash("sha256").update(bytes).digest("hex"),
+          bytes,
+          bytes.byteLength,
+          JSON.stringify({ sourceProfileArtifactId: source }),
+        ],
+      );
+    }
+    const cited = randomUUID();
+    const downstream = randomUUID();
+    await store.saveAnalysis({
+      id: cited,
+      entityId,
+      releaseId: release,
+      generation: 0,
+      purpose: "product_descriptions",
+      inputArtifactId: input.id,
+      inputDigest: "website-input",
+      recipeDigest: "recipe",
+      evidenceIds: [evidence],
+      output: { description: "private cited output" },
+      validationReport: {
+        attemptId: website.attempt.id,
+        generationResponseArtifactId: generated.id,
+        judgeResponseArtifactId: loopLeft,
+        reusedFromRunId: downstream,
+      },
+      status: "succeeded",
+    });
+    await store.saveAnalysis({
+      id: downstream,
+      entityId,
+      releaseId: release,
+      generation: 0,
+      purpose: "founder_portrait",
+      inputArtifactId: generated.id,
+      inputDigest: "generated-input",
+      recipeDigest: "recipe",
+      evidenceIds: [],
+      output: { description: "private downstream output" },
+      validationReport: { reusedFromRunId: cited },
+      status: "succeeded",
+    });
+    const unrelatedProfile = await store.putArtifact({
+      kind: "legacy_import",
+      body: Buffer.from("unrelated profile"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      importBatch: "unrelated-profile",
+    });
+    const unrelated = await capture(
+      "other",
+      unrelatedBudgetId,
+      "unrelated",
+      "unrelated website",
+      { sourceProfileArtifactId: unrelatedProfile.id },
+      "25",
+    );
+    const unrelatedEvidence = await store.addEvidence({
+      artifactId: unrelated.response.id,
+      extractorVersion: "v1",
+      locator: "$",
+      payload: { text: "unrelated website" },
+      excerpt: "unrelated website excerpt",
+    });
+    await store.linkEvidence(entityId, unrelatedEvidence, "other_site");
+    const unrelatedInput = await store.putArtifact({
+      kind: "manifest",
+      body: Buffer.from("unrelated analysis"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      importBatch: "unrelated-analysis",
+    });
+    const unrelatedRun = randomUUID();
+    await store.saveAnalysis({
+      id: unrelatedRun,
+      entityId,
+      releaseId: release,
+      generation: 0,
+      purpose: "dna",
+      inputArtifactId: unrelatedInput.id,
+      inputDigest: "unrelated-input",
+      recipeDigest: "recipe",
+      evidenceIds: [unrelatedEvidence],
+      output: { description: "unrelated output" },
+      validationReport: { valid: true },
+      status: "succeeded",
+    });
+    const sharedEmbeddingRequest = await store.planCollection({
+      scope: "other",
+      fingerprint: "shared-embedding",
+      generation: 0,
+      operation: "embed",
+      args: { text: "shared embedding" },
+      policyId: "test-only",
+    });
+    const sharedEmbeddingAttempt = await store.reserveAttempt({
+      requestId: sharedEmbeddingRequest.id,
+      budgetId: unrelatedBudgetId,
+      capMicros: "1",
+    });
+    await store.markDispatched(sharedEmbeddingAttempt.id);
+    const sharedEmbeddingArtifact = await store.captureResponse({
+      attemptId: sharedEmbeddingAttempt.id,
+      body: Buffer.from("shared embedding response"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      paymentState: "not_charged",
+    });
+    const sharedEmbedding = await store.saveEmbedding({
+      scope: "test",
+      text: "shared embedding",
+      templateVersion: "v1",
+      model: "synthetic",
+      modelVersion: "v1",
+      distance: "cosine",
+      vector: [1, 0],
+      attemptId: sharedEmbeddingAttempt.id,
+    });
+    await store.linkEmbedding(entityId, cited, sharedEmbedding, "dna");
+    await store.linkEmbedding(entityId, unrelatedRun, sharedEmbedding, "dna");
+    await store.withdrawArtifact(profile.id, "test", "profile withdrawn");
+    for (const id of [
+      profile.id,
+      website.response.id,
+      website.requestArtifact.id,
+      child.id,
+      input.id,
+      generated.id,
+      loopLeft,
+      loopRight,
+    ])
+      assert.equal(await store.getArtifact(id), null, id);
+    assert.deepEqual(
+      (
+        await db.query<{ payload: unknown; excerpt: string; body: string }>(
+          "SELECT e.payload,e.excerpt,convert_from(a.body,'UTF8') AS body FROM enrichment_evidence e JOIN enrichment_artifacts a ON a.id=e.artifact_id WHERE e.id=$1",
+          [evidence],
+        )
+      ).rows[0],
+      { payload: {}, excerpt: "", body: "" },
+    );
+    assert.equal(await store.findAnalysis(cited), null);
+    assert.equal(await store.findAnalysis(downstream), null);
+    assert.equal(
+      (
+        await db.query<{ output: unknown }>(
+          "SELECT output FROM enrichment_analysis_runs WHERE id=$1",
+          [cited],
+        )
+      ).rows[0].output,
+      null,
+    );
+    assert.equal(
+      (await store.getArtifact(unrelated.response.id))?.sha256,
+      createHash("sha256").update("unrelated website").digest("hex"),
+    );
+    assert.equal(
+      (await store.getArtifact(unrelated.requestArtifact.id))?.sha256,
+      createHash("sha256").update("request unrelated website").digest("hex"),
+    );
+    assert.equal(
+      (await store.getArtifact(unrelatedProfile.id))?.sha256,
+      createHash("sha256").update("unrelated profile").digest("hex"),
+    );
+    assert.equal(
+      (
+        await db.query<{ excerpt: string }>(
+          "SELECT excerpt FROM enrichment_evidence WHERE id=$1",
+          [unrelatedEvidence],
+        )
+      ).rows[0].excerpt,
+      "unrelated website excerpt",
+    );
+    assert.deepEqual(
+      (
+        await db.query<{ args: unknown }>(
+          "SELECT args FROM enrichment_collection_requests WHERE id=$1",
+          [website.request.id],
+        )
+      ).rows[0].args,
+      {},
+    );
+    assert.deepEqual(
+      (
+        await db.query<{ args: unknown }>(
+          "SELECT args FROM enrichment_collection_requests WHERE id=$1",
+          [unrelated.request.id],
+        )
+      ).rows[0].args,
+      { url: "https://example.com/unrelated", body: "unrelated website" },
+    );
+    assert.deepEqual(
+      (
+        await db.query<{ committed_micros: string }>(
+          "SELECT committed_micros::text FROM enrichment_budgets WHERE id=$1",
+          [budgetId],
+        )
+      ).rows[0].committed_micros,
+      "40",
+    );
+    assert.equal(
+      (
+        await db.query<{ settled_micros: string; payment_state: string }>(
+          "SELECT settled_micros::text,payment_state FROM enrichment_collection_attempts WHERE id=$1",
+          [website.attempt.id],
+        )
+      ).rows[0].settled_micros,
+      "40",
+    );
+    assert.equal(
+      (
+        await db.query<{ committed_micros: string }>(
+          "SELECT committed_micros::text FROM enrichment_budgets WHERE id=$1",
+          [unrelatedBudgetId],
+        )
+      ).rows[0].committed_micros,
+      "25",
+    );
+    assert.equal(
+      (await store.getArtifact(sharedEmbeddingArtifact.id))?.sha256,
+      createHash("sha256").update("shared embedding response").digest("hex"),
+    );
+    assert.equal(
+      (
+        await db.query<{ output: { description: string } }>(
+          "SELECT output FROM enrichment_analysis_runs WHERE id=$1",
+          [unrelatedRun],
+        )
+      ).rows[0].output.description,
+      "unrelated output",
+    );
+    assert.equal(
+      (
+        await db.query("SELECT id FROM enrichment_embeddings WHERE id=$1", [
+          sharedEmbedding,
+        ])
+      ).rows.length,
+      1,
+    );
+  } finally {
+    await pg.close();
+  }
+});
