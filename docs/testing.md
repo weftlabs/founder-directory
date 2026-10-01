@@ -2,7 +2,7 @@
 
 ## Fast feedback
 
-Use Node 22 and the pinned pnpm. Install with `pnpm install --frozen-lockfile`.
+Use Node 24.21.0 and the pinned pnpm. Install with `pnpm install --frozen-lockfile`.
 For an inner loop, run a single file: `pnpm exec tsx --test tests/weft-retry.test.ts`.
 Tests use `node:test`, synthetic fixtures, and stubbed provider calls. Never copy
 production profiles or receipts into fixtures.
@@ -35,7 +35,7 @@ Use fake delays for retry-policy tests; do not pay for retry coverage.
 ## CI contract
 
 [CI](../.github/workflows/ci.yml) runs for pull requests and pushes to `main` on
-GitHub-hosted Linux, Node 22, and a frozen lockfile. Actions are pinned by SHA;
+GitHub-hosted Linux, Node 24.21.0, and a frozen lockfile. Actions are pinned by SHA;
 the token is read-only and checkout does not retain credentials. Fork PRs receive
 no deployment or provider secrets. No `pull_request_target` execution of fork code.
 Failure traces are retained briefly for debugging; only synthetic/no-key tests

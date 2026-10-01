@@ -117,7 +117,7 @@ maintainer-approved migration.
 ## Forking
 
 1. Fork the repo and create a Vercel project using Next.js and pnpm.
-2. Select Node 22. Update the public site URL and attribution in `lib/site.ts`
+2. Select Node 24. Update the public site URL and attribution in `lib/site.ts`
    before deploying; these own canonical metadata, structured data, robots and
    sitemap URLs.
 3. Start without paid credentials. The UI should render an empty directory.

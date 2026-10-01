@@ -28,7 +28,7 @@ A public, working founder directory and a small example of app functions powered
 
 ## Commands
 
-Use Node 22 and the pinned pnpm version in `package.json`.
+Use Node 24.21.0 and the pinned pnpm version in `package.json`.
 
 - `pnpm install --frozen-lockfile`
 - `pnpm dev` (no keys needed for an empty directory)
