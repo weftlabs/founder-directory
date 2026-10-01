@@ -15,7 +15,8 @@ credits [Nittarab](https://x.com/nittarab) and [Weft Labs](https://weftlabs.com)
 
 ## Run locally
 
-Use Node 22 and pnpm 10.33.4:
+Use Node 24.21.0 and pnpm 10.33.4. With [Mise](https://mise.jdx.dev/),
+run `mise install` and prefix the commands below with `mise exec --`:
 
 ```sh
 pnpm install --frozen-lockfile

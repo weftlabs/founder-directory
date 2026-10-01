@@ -39,7 +39,12 @@ not change the production domain. Production is the tagged commit only.
    previews for other branches but sets `git.deploymentEnabled.main` to
    `false`, so a merge cannot also promote production.
 6. Protect generated candidate URLs with Vercel Deployment Protection. The
-   candidate smoke uses `vercel curl`, which can read a protected deployment.
+   candidate and pre-promotion readbacks use pinned Vercel CLI 59.19.0
+   `vercel curl`, which can read a protected deployment. These steps authenticate
+   through their existing step-scoped `VERCEL_TOKEN` environment variable, not a
+   `--token` argument: this CLI's curl parser forwards that argument to curl.
+   Curl flags follow `--`; `--fail --silent --show-error` preserves JSON-only
+   response stdout and fails the step on HTTP errors.
 7. Configure the GitHub `production` environment with Patrick as required
    reviewer. Review the tag, full SHA, CI run, candidate run, artifact digest
    and staged URL in the `Verify tag candidate` summary before approval. The
@@ -117,7 +122,7 @@ maintainer-approved migration.
 ## Forking
 
 1. Fork the repo and create a Vercel project using Next.js and pnpm.
-2. Select Node 22. Update the public site URL and attribution in `lib/site.ts`
+2. Select Node 24. Update the public site URL and attribution in `lib/site.ts`
    before deploying; these own canonical metadata, structured data, robots and
    sitemap URLs.
 3. Start without paid credentials. The UI should render an empty directory.
