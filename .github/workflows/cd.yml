@@ -103,7 +103,7 @@ jobs:
             "https://api.vercel.com/v13/deployments/$deployment_host" \
             -o "$RUNNER_TEMP/deployment.json"
           vercel curl /api/release --deployment "$DEPLOYMENT_URL" \
-            --token="$VERCEL_TOKEN" > "$RUNNER_TEMP/readback.json"
+            -- --fail --silent --show-error > "$RUNNER_TEMP/readback.json"
           pnpm exec tsx scripts/release-candidate.ts deployment verify \
             --deployment-file "$RUNNER_TEMP/deployment.json" \
             --readback-file "$RUNNER_TEMP/readback.json" \
@@ -300,7 +300,7 @@ jobs:
             "https://api.vercel.com/v13/deployments/$deployment_host" \
             -o "$RUNNER_TEMP/deployment-before.json"
           vercel curl /api/release --deployment "$DEPLOYMENT_URL" \
-            --token="$VERCEL_TOKEN" > "$RUNNER_TEMP/readback-before.json"
+            -- --fail --silent --show-error > "$RUNNER_TEMP/readback-before.json"
           pnpm exec tsx scripts/release-candidate.ts deployment verify \
             --deployment-file "$RUNNER_TEMP/deployment-before.json" \
             --readback-file "$RUNNER_TEMP/readback-before.json" \
