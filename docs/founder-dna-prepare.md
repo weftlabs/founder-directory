@@ -5,7 +5,7 @@ analyses and embeddings, and `scripts/enrichment.ts portrait` has saved checked
 portraits. These commands read retained results. They do not accept display
 profile JSON, collect new sources, approve portraits, or activate a release.
 
-Run with Node 22 and the pinned pnpm. No environment files are loaded. Pass the
+Run with Node 24.21.0 and the pinned pnpm. No environment files are loaded. Pass the
 source database URL explicitly with `--database-url`; there is no database
 environment fallback. The source database must already have the enrichment
 migrations. Every command needs `--confirm-write`, including replay, because
