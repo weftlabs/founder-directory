@@ -59,8 +59,12 @@ An optional top-level `profiles` array contains saved `handle`, `name`, `bio`,
 `location`, `website`, and `avatarUrl` display fields. Profiles can also include
 an optional [Founder DNA display projection](typesafe-poc.md#local-founder-profile-preview)
 from a saved classification run. A valid editorial portrait is displayed as an
-integrated founder profile, with its sources and classifications under “Why this
-fits”; the comparison lab remains separate. Only profiles linked to a
+local card layout, with its sources and classifications under “Why this
+fits”; the comparison lab remains separate. The card shows saved product claims,
+not a numeric talent score. Its coverage map marks available fields and gaps;
+indexing-post identity, founding role and price are not in this snapshot contract
+and remain gaps. Without a checked portrait the card says “Portrait pending”
+and does not invent a roast or offer portrait share text. Only profiles linked to a
 snapshot product are available. A claim contains
 `value: string | null`, `state` (`supported`, `unknown`, `conflict`, `stale`, or
 `absent`) and `kind` (`self_report`, `publisher_statement`, or `inference`).

@@ -1995,6 +1995,56 @@ main.about code {
 .hero-row-no-avatar {
   grid-template-columns: minmax(0, 1fr);
 }
+.profile-initials {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #d8fa70;
+  color: #1f2b12;
+  font-size: 36px;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+}
+.profile-products {
+  margin-top: 28px;
+}
+.profile-products .local-founder-product {
+  margin: 8px 0 0;
+}
+.profile-product-for {
+  color: #b4bdab;
+  font-size: 14px;
+}
+.profile-dna-roast .portrait-copy {
+  padding: 8px 0 0;
+}
+.profile-dna-roast .portrait-copy label {
+  color: #37234f;
+}
+.profile-dna-roast .portrait-copy textarea {
+  min-height: 72px;
+  color: #37234f;
+  background: #efe8f8;
+  border-color: #37234f30;
+}
+.profile-dna-roast .portrait-copy > span {
+  color: #5c4a78;
+}
+.profile-kept-reading,
+.profile-saved-bio {
+  margin: 18px 0;
+}
+.profile-kept-reading h3,
+.profile-saved-bio span {
+  font-size: 13px;
+}
+.profile-saved-bio span {
+  color: #929c87;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
 
 .portrait-lab {
   max-width: 1040px;
@@ -2705,6 +2755,265 @@ main.profile-portrait {
   .profile-why > summary span {
     display: block;
     margin: 7px 0 0;
+  }
+}
+
+/* Local saved-data card: coverage markers are categorical, never scores. */
+main.local-card-page {
+  max-width: 1280px;
+  overflow-wrap: anywhere;
+}
+.local-card-page .back {
+  margin: 0 0 18px;
+}
+.founder-card {
+  background: #10120e;
+  border: 1px solid #2a2e26;
+  border-radius: 24px;
+  overflow: hidden;
+}
+.founder-card-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) minmax(0, 1fr);
+}
+.founder-card-identity {
+  min-width: 0;
+  background: #d8fa70;
+  color: #1b2410;
+  padding: 26px;
+  display: flex;
+  flex-direction: column;
+}
+.founder-card-who {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.founder-card-who img,
+.founder-card-who .profile-initials {
+  width: 56px;
+  height: 56px;
+  flex: none;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.founder-card-who .profile-initials {
+  background: #1b2410;
+  color: #d8fa70;
+  font-size: 24px;
+}
+.founder-card-who h1 {
+  font-size: 26px;
+  margin: 0;
+}
+.founder-card-who p {
+  font-size: 13px;
+  color: #52613b;
+  margin: 2px 0 0;
+}
+.founder-card-identity > .profile-dna-eyebrow {
+  margin: 32px 0 14px;
+}
+.founder-card-identity h2 {
+  font-size: clamp(36px, 4vw, 54px);
+  line-height: 0.96;
+  letter-spacing: -0.055em;
+  margin: 0;
+}
+.founder-card-hook {
+  font-size: 21px;
+  line-height: 1.3;
+  letter-spacing: -0.03em;
+  margin: 16px 0;
+}
+.founder-card-identity .portrait-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.founder-card-identity .portrait-tags span {
+  background: #1b241018;
+  color: #1b2410;
+  border-radius: 99px;
+  padding: 5px 9px;
+  font-size: 12px;
+}
+.founder-card-bio {
+  font-size: 13px;
+  line-height: 1.5;
+  margin: auto 0 0;
+  padding-top: 24px;
+}
+.founder-card-map {
+  min-width: 0;
+  padding: 22px 14px;
+  text-align: center;
+}
+.founder-card-map > .profile-dna-eyebrow {
+  color: #d8fa70;
+}
+.founder-card-map svg {
+  width: min(100%, 340px);
+  height: auto;
+  display: block;
+  margin: 0 auto;
+}
+.founder-card-map ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  text-align: left;
+}
+.founder-card-map li {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+  border-bottom: 1px solid #2a2e26;
+  padding: 4px;
+  font-size: 11px;
+}
+.founder-card-map li strong {
+  color: #d8fa70;
+  font-weight: 500;
+}
+.founder-card-map li[data-known="false"] strong {
+  color: #e6c27a;
+}
+.founder-card-map-note {
+  color: #9aa18f;
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 16px 0 0;
+}
+.founder-card-product {
+  min-width: 0;
+  margin: 14px 14px 14px 0;
+  border-radius: 18px;
+  overflow: hidden;
+  background: #f3eee4;
+  color: #1c3d40;
+  display: flex;
+  flex-direction: column;
+}
+.founder-card-product .product-image {
+  height: 150px;
+  border: 0;
+  border-radius: 0;
+  background: #f3eee4;
+}
+.founder-card-product .product-image img {
+  width: 100%;
+  height: 100%;
+}
+.founder-card-product-body {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+}
+.founder-card-product-body .profile-dna-eyebrow {
+  margin: 0;
+}
+.founder-card-product-body h3 {
+  font-size: 26px;
+  letter-spacing: -0.04em;
+  margin: 0;
+}
+.founder-card-product-body p {
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 0;
+}
+.founder-card-product-meta {
+  margin-top: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+  padding-top: 16px;
+}
+.founder-card-product-meta > * {
+  flex: 1 1 100%;
+}
+.founder-card-product-meta span {
+  flex: 0 1 auto;
+  font-size: 11px;
+  border-radius: 99px;
+  padding: 4px 8px;
+  background: #1c3d4012;
+}
+.founder-card-product-meta a {
+  color: #1c3d40;
+  font-size: 12px;
+}
+.founder-card-roast {
+  background: #d8cbef;
+  color: #2d2142;
+  padding: 20px 26px;
+}
+.founder-card-roast .profile-dna-eyebrow {
+  margin-bottom: 6px;
+}
+.founder-card-roast h3 {
+  font-size: 28px;
+  letter-spacing: -0.04em;
+  margin: 0 0 12px;
+}
+.founder-card-roast ul {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  list-style: none;
+  gap: 16px;
+  padding: 0;
+  margin: 0;
+}
+.founder-card-roast li {
+  font-size: 14px;
+  line-height: 1.4;
+}
+.founder-card-gaps {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #5c4a78;
+  margin: 16px 0 0;
+}
+.founder-card-gaps span {
+  margin: 0 7px;
+}
+@media (max-width: 950px) {
+  .founder-card-top {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .founder-card-identity {
+    grid-column: 1 / -1;
+  }
+  .founder-card-product {
+    margin: 14px;
+  }
+}
+@media (max-width: 600px) {
+  .founder-card-top {
+    display: block;
+  }
+  .founder-card-identity {
+    min-height: 390px;
+  }
+  .founder-card-product {
+    margin: 14px;
+  }
+  .founder-card-roast ul {
+    grid-template-columns: 1fr;
+  }
+  .founder-card-gaps span {
+    display: none;
+  }
+  .founder-card-gaps {
+    line-height: 2;
   }
 }
 
