@@ -25,16 +25,17 @@ pnpm dev
 ```
 
 Open http://127.0.0.1:3000. With blank credentials, the UI renders an empty
-directory and collection stays unauthorized. To collect real data, provision
-your own Neon `DATABASE_URL`, get a server-only `WEFT_API_KEY` from the
-[Weft buyer dashboard](https://weft.network/dashboard/buyer/api_keys), and set
-`CRON_SECRET`. Never prefix these with `NEXT_PUBLIC_`.
+directory. To collect real data, provision your own Neon `DATABASE_URL`, get a
+server-only `WEFT_API_KEY` from the
+[Weft buyer dashboard](https://weft.network/dashboard/buyer/api_keys), and run
+`pnpm exec tsx scripts/bulk.ts` from your terminal. Never prefix these with
+`NEXT_PUBLIC_`.
 
 **Deploy safely:** non-`main` branches get Vercel Git previews, merges to `main`
 deploy a separate Vercel preview through CD, and a `vX.Y.Z` tag deploys
-production. Collection is two production crons: discover every five minutes,
-hydrate four times an hour. Configure wallet
-limits and isolate preview credentials before enabling it. A Vercel clone does
+production. The deployed app never buys data: collection runs locally and
+reaches production through a reviewed release. Configure wallet limits before
+collecting. A Vercel clone does
 not come with a database, funded wallet, or free provider calls. Read the
 [deployment guide](docs/deployment.md) first.
 
@@ -50,9 +51,9 @@ can add cost; a scan is multiple requests. See [payment and failure semantics](d
 
 The current collection searches latest intro phrases for solo founders,
 founders, builders, and indie hackers, then hydrates first-person intros it
-has not stored yet. Each cron tick is time-boxed (~240s) and capped (eight
-searches and 15 profile hydrations on the schedule; bulk is higher). Search
-cursors and leftover intros persist so the next tick resumes history and
+has not stored yet. Each local `scripts/bulk.ts` run is time-boxed and capped
+(16 searches and 30 profile hydrations). Search cursors and leftover intros
+persist so the next run resumes history and
 still imports everyone already found. It keeps walking through retweet-only
 pages. Per-request Weft caps stay $0.01 / $0.002.
 The product is not limited to one template. It does

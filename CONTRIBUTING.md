@@ -8,7 +8,7 @@ change to paid behavior. Keep one PR focused on one user-visible outcome.
 
 1. Fork and create a branch from `main`.
 2. Use Node 24.21.0 and pnpm 10.33.4; run `pnpm install --frozen-lockfile`.
-3. Run `pnpm dev`. With no credentials, the directory is empty and cron is unauthorized.
+3. Run `pnpm dev`. With no credentials, the directory is empty.
 4. Write the smallest regression test. Use synthetic profiles, never real profile dumps.
 5. Change the owning code. Keep Next.js routes thin and Weft calls on the server.
 6. Run `pnpm check`, then `pnpm build && pnpm test:e2e`.

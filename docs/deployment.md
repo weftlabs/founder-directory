@@ -27,8 +27,8 @@ not change the production domain. Production is the tagged commit only.
    proof requires Vercel to supply `VERCEL=1`, `VERCEL_DEPLOYMENT_ID`, and
    `VERCEL_PROJECT_PRODUCTION_URL`. Do not define or copy these values manually.
    Candidate verification fails if the deployment ID is unavailable.
-4. Keep production env vars (`DATABASE_URL`, `WEFT_API_KEY`, `CRON_SECRET`) on
-   the Vercel production environment. Use a different Neon branch and wallet
+4. Keep `DATABASE_URL` on the Vercel production environment. Production does
+   not buy data, so do not give it a `WEFT_API_KEY`. Use a different Neon branch and wallet
    limits for preview. Never put those values in GitHub Actions as
    `NEXT_PUBLIC_*` or in this repo. Optional product analytics: a public
    PostHog project token as `NEXT_PUBLIC_POSTHOG_KEY` (must start with `phc_`)
@@ -68,7 +68,6 @@ and `/api/release` readback. After the protected-environment approval, it runs
 `vercel promote` on the recorded URL and requires the production domain to read
 back the same SHA and resolve through Vercel to the same deployment ID. Vercel
 promotion of a staged production deployment assigns domains without a rebuild.
-Cron in `vercel.json` continues to target the current production deployment.
 
 The public `/api/release` response contains exactly `sha` and `deployment_id`.
 The SHA is embedded at build time. The deployment ID is the automatic Vercel
@@ -76,41 +75,19 @@ system value for that deployed artifact. The response contains no other
 environment configuration, data-release identity, or profile state. A missing
 or malformed value returns 503.
 
-## Cron release guard
-
-The discover and hydrate cron routes compare their local `sha` and
-`deployment_id` with `/api/release` on `VERCEL_PROJECT_PRODUCTION_URL` before
-they start a scan. On Vercel, a missing or invalid value, a failed production
-read, a timeout, or either mismatch returns `503 Inactive release`. Therefore a
-staged deployment and an old deployment cannot run paid collection after a new
-deployment becomes current.
-
-This fail-closed behavior requires the automatic Vercel system variables from
-the setup section. Local development does not set `VERCEL=1` and skips this
-production comparison. Cron authentication and the scan budget controls still
-apply. The guard does not stop a request that was already running.
-
 ## Rollback
 
 Use this sequence for a code rollback:
 
 1. Select a previously verified production deployment. Record its expected
    `sha` and `deployment_id`.
-2. In Vercel Project Settings, open Cron Jobs and select **Disable Cron Jobs**.
-   Wait for any request that is already running to finish.
-3. Run `vercel rollback <deployment-url>`, then run `vercel rollback status`.
+2. Run `vercel rollback <deployment-url>`, then run `vercel rollback status`.
    Instant rollback reassigns domains to the existing deployment and does not
    rebuild it.
-4. Read `/api/release` on the production domain. Require the exact recorded SHA
+3. Read `/api/release` on the production domain. Require the exact recorded SHA
    and deployment ID before accepting the rollback.
-5. Keep cron jobs disabled. Vercel Instant Rollback does not update the active
-   cron job registrations. Restore the intended code and `vercel.json` on
-   `main`, then use the normal candidate, tag, and promotion path to create a new
-   production deployment and register that cron configuration.
-6. In Vercel Project Settings, confirm that the registered paths and schedules
-   match `vercel.json`. Enable Cron Jobs only after that check. Confirm that the
-   next scheduled requests reach the active release. They must not return
-   `Inactive release`.
+4. Fix forward on `main`, then use the normal candidate, tag, and promotion
+   path to create a new production deployment.
 
 Code rollback does not change the Founder DNA active data-release pointer, undo
 Neon writes or refund purchases. Founder DNA activation and rollback remain
@@ -129,23 +106,20 @@ maintainer-approved migration.
 4. Provision your own Neon database. Use a different database/branch for
    previews.
 5. Enable **Automatically expose System Environment Variables** in the Vercel
-   project. The release proof and cron release guard require these values.
-6. Add `DATABASE_URL`, `WEFT_API_KEY`, and a strong `CRON_SECRET` to the
-   intended server environment only. Get a Weft key from the buyer dashboard
-   linked in the README. Set wallet limits before enabling collection. Optional
+   project. The release proof requires these values.
+6. Add `DATABASE_URL` to the intended server environment only. Keep
+   `WEFT_API_KEY` in your local operator environment; the deployed app does not
+   buy data. Set wallet limits before collecting. Optional
    product analytics: a public PostHog project token as
    `NEXT_PUBLIC_POSTHOG_KEY` (must start with `phc_`) and
    `NEXT_PUBLIC_POSTHOG_HOST=https://eu.i.posthog.com`. Create a dedicated
    Founders Directory project. Do not reuse another app's token. The online-now
    chip counts Neon heartbeats, not PostHog.
-7. Review [vercel.json](../vercel.json): it schedules a scan every five minutes,
-   enables branch previews and excludes `main` from Git auto-deploy. Remove or
-   disable the schedule in your fork until you explicitly want paid collection.
-   To use Vercel Git for production too, remove the `main` exclusion and skip
-   the CD secrets.
-   Check your Vercel plan's cron limits; this frequency is not a promise of
-   free hosting. Do not copy production credentials into preview builds.
-8. Deploy a preview, verify UI/metadata/unauthorized cron, then let successful
+7. Review [vercel.json](../vercel.json): it enables branch previews and
+   excludes `main` from Git auto-deploy. To use Vercel Git for production too,
+   remove the `main` exclusion and skip the CD secrets. Do not copy production
+   credentials into preview builds.
+8. Deploy a preview, verify UI/metadata, then let successful
    `main` CI create the staged production candidate. Tag that exact current SHA
    and approve its existing deployment for production. A paid smoke is a
    separate, budgeted operator decision.

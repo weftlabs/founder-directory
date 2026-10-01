@@ -79,7 +79,7 @@ test("presence is public and the header shows an online count without a database
   );
 });
 
-test("cron rejects unauthenticated requests, including bulk", async ({
+test("the deployed app exposes no paid collection routes", async ({
   request,
 }) => {
   for (const path of [
@@ -89,8 +89,7 @@ test("cron rejects unauthenticated requests, including bulk", async ({
     "/api/cron/hydrate",
   ]) {
     const response = await request.get(path);
-    expect(response.status()).toBe(401);
-    expect(await response.json()).toEqual({ error: "Unauthorized" });
+    expect(response.status()).toBe(404);
   }
 });
 

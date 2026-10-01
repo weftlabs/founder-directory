@@ -13,7 +13,7 @@ merely because an upstream API returns a public profile.
 
 ## Deployment responsibilities
 
-- Keep `WEFT_API_KEY`, `DATABASE_URL`, and `CRON_SECRET` server-side.
+- Keep `WEFT_API_KEY` and `DATABASE_URL` server-side.
 - Use separate preview/test databases and credentials; never expose them to fork CI.
 - Configure Weft wallet limits before enabling scheduled scans.
 - Keep dependency updates and deployment access under maintainer review.

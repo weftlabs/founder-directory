@@ -17,7 +17,6 @@ export default defineConfig({
       DIRECTORY_PREVIEW: "1",
       DATABASE_URL: "",
       WEFT_API_KEY: "",
-      CRON_SECRET: "",
       NEXT_TELEMETRY_DISABLED: "1",
     },
   },
