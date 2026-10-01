@@ -71,7 +71,7 @@ function inspectClient(file, chain = []) {
   const next = [...chain, file];
   const trail = next.map((p) => relative(root, p)).join(" -> ");
   if (
-    /process\.env\.(?:WEFT_API_KEY|DATABASE_URL|CRON_SECRET|ENRICHMENT_DATABASE_URL|ENRICHMENT_CAPTURE_CONFIG)/.test(
+    /process\.env\.(?:WEFT_API_KEY|DATABASE_URL|ENRICHMENT_DATABASE_URL|ENRICHMENT_CAPTURE_CONFIG)/.test(
       source.text,
     )
   )

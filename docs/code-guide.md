@@ -9,9 +9,6 @@ app/                  Next.js routes and presentation
   site-header.tsx     shared product navigation
   analytics.tsx       optional anonymous PostHog transport and safe page events
   online-now.tsx      Neon heartbeat for the online chip (~20s ping, 45s window)
-  api/cron/discover/  search latest intros; queue leftover handles
-  api/cron/hydrate/   enrich queued intros (Pro maxDuration 800s)
-  api/cron/scan/      combined/bulk operator path; not on the schedule
   api/presence/       anonymous session heartbeat; no Weft
 lib/
   model.ts            pure founder types and heuristics
@@ -39,15 +36,12 @@ The client receives only the current 48 cards, with source text, external links
 and analysis details omitted. There is no next-page data prefetch.
 `/filter-preview` still passes a synthetic `founders` list so Playwright can
 exercise chips without a database. Client filters never call Weft.
-An authenticated discover job searches latest intros and queues unknown
-handles. A separate hydrate job enriches that queue (profile + places).
-Discover runs every five minutes (120s cap, no hydrations). Hydrate runs
-four times an hour, offset from discover, with an 800s Pro Fluid limit
-and a 780s deadline so one tick can enrich more than 15 people without a
-plan upgrade. Combined `/api/cron/scan` remains for operator bulk.
-Each tick still returns JSON and records `last_scan_at`. Per-phrase
-cursors and leftover intros live on `scan_meta`. Found intros are not
-dropped to meet the hydration cap — they wait for the next hydrate run.
+The deployed app never buys data. Collection runs only from an operator
+terminal: `scripts/bulk.ts` searches intros and enriches unknown handles
+(profile + places) through Weft, then records `last_scan_at`. Per-phrase
+cursors and leftover intros live on `scan_meta`; found intros wait for the
+next run instead of being dropped. Data is bought and processed locally, then
+shipped to production as a [release](founder-dna-releases.md).
 If Atlas profile hydration returns HTTP 502 or 504, the scan leaves that
 intro queued (or, if a stub row already exists, re-fetches it later). It
 does not write an avatar-less founder row, because `existingHandles`
