@@ -128,11 +128,22 @@ Replace every `REVIEWED_...` value and `BUDGET_UUID` with verified values:
 The sample policies deliberately prevent dispatch. Change their values only
 after the relevant checks.
 
-Profiles try each approved source cheapest first: `twitsh-user-by-username`
-(twit.sh, $0.005, X API v2 shape; Weft does not index it, so Weft receives the
-plain URL) then `bazaar-x402-atlas-183` (x402 Atlas, $0.006). Add a policy to
-enable a source. A failed response that was not charged falls through to the
-next source; a charged failure stops, so the same profile is never bought twice. A null model revision records an unresolved alias;
+Profiles try each approved source cheapest first: `x402factory-xprofile`
+(x402factory, $0.001, profile plus up to 10 recent posts, POST), then
+`twitsh-user-by-username` (twit.sh, $0.005, X API v2 shape), then
+`bazaar-x402-atlas-183` (x402 Atlas, $0.006). Weft does not index the first two,
+so Weft receives the plain URL. Add a policy to enable a source. A failed
+response that was not charged falls through to the next source; a charged
+failure stops, so the same profile is never bought twice. A paid success that
+cannot be parsed is not profile data, so the next source may run.
+
+Set `configuration.tweets: true` to add the founder's recent posts as
+self-reported evidence for Founder DNA. Posts that came with the profile are
+used directly; otherwise `bazaar-x402-atlas-187` (Atlas timeline, $0.005) runs
+when its policy is approved. Reposts and posts by anyone else are dropped; each
+kept post links to `https://x.com/<handle>/status/<id>`. Enabling tweets changes
+the release identity. Founders collected earlier keep their saved profile and
+only their posts are collected. A null model revision records an unresolved alias;
 it does not promise an immutable upstream model. Per-request caps do not replace
 the aggregate budget.
 

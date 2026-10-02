@@ -8,6 +8,7 @@ import {
   LOCAL_EMBEDDING_OPERATION,
 } from "./local-embedding";
 import { collectWeft } from "./weft-transport";
+import { extractProfile } from "./worker";
 import { weftGeneration, generationRoute } from "./generation";
 import {
   collectWebsite as captureWebsite,
@@ -17,6 +18,13 @@ import {
 
 /** Cheapest first. Each source runs only when the operator approved its policy. */
 export const PROFILE_SOURCES = [
+  {
+    // Profile plus up to 10 recent posts in one call.
+    operation: "x402factory-xprofile",
+    url: () => "https://x402factory.ai/base/xprofile",
+    body: (handle: string) => JSON.stringify({ handle }),
+    accessMethodId: null,
+  },
   {
     operation: "twitsh-user-by-username",
     url: (handle: string) =>
@@ -30,6 +38,8 @@ export const PROFILE_SOURCES = [
     accessMethodId: "bazaar-x402-atlas-183-x402",
   },
 ] as const;
+
+export const TWEETS_OPERATION = "bazaar-x402-atlas-187";
 
 export type WorkerTransportConfig = CaptureConfig & {
   sourceMaxCostUsd: string;
@@ -62,6 +72,72 @@ export function workerAdapters(
     policy: config.policies[route.operationId],
     enabled,
   });
+  const selfReportedStore: CollectionStore = {
+    planCollection: (value) => store.planCollection(value),
+    getReusableArtifact: (id) => store.getReusableArtifact(id),
+    reserveAttempt: (value) => store.reserveAttempt(value),
+    markDispatched: (id) => store.markDispatched(id),
+    markUncertain: (id, reason) => store.markUncertain(id, reason),
+    captureResponse: (value) =>
+      store.captureResponse({
+        ...value,
+        metadata: {
+          ...value.metadata,
+          sourceKind: "self-reported",
+          observedAt: new Date().toISOString(),
+        },
+      }),
+  };
+  const readable = (body: Uint8Array) => {
+    try {
+      extractProfile(body);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const collectTweets = async (input: {
+    entityId: string;
+    legacyKey: string;
+    generation: number;
+  }) => {
+    if (!/^[A-Za-z0-9_]{1,15}$/.test(input.legacyKey))
+      return { status: "unavailable" as const, reason: "invalid_handle" };
+    if (!config.policies[TWEETS_OPERATION])
+      return {
+        status: "unavailable" as const,
+        reason: "tweet_policy_not_configured",
+      };
+    const artifact = await collectWeft(
+      selfReportedStore,
+      client,
+      {
+        scope: config.scope,
+        budgetId: config.budgetId,
+        generation: input.generation,
+        operation: TWEETS_OPERATION,
+        mode: "acquire",
+        policy: config.policies[TWEETS_OPERATION],
+      },
+      {
+        url: `https://twitter.use.x402atlas.com/user-tweets?username=${input.legacyKey}`,
+        method: "GET",
+        headers: {},
+        operationId: TWEETS_OPERATION,
+        accessMethodId: `${TWEETS_OPERATION}-x402`,
+        maxCostUsd: config.sourceMaxCostUsd,
+      },
+      enabled,
+    );
+    const status = artifact.metadata.status;
+    return typeof status === "number" && status >= 200 && status < 300
+      ? { status: "captured" as const, artifactId: artifact.id }
+      : {
+          status: "unavailable" as const,
+          reason: "tweet_http_failure",
+          artifactId: artifact.id,
+        };
+  };
   const collectProfile = async (input: {
     entityId: string;
     legacyKey: string | null;
@@ -88,22 +164,7 @@ export function workerAdapters(
     } | null = null;
     for (const source of sources) {
       const artifact = await collectWeft(
-        {
-          planCollection: (value) => store.planCollection(value),
-          getReusableArtifact: (id) => store.getReusableArtifact(id),
-          reserveAttempt: (value) => store.reserveAttempt(value),
-          markDispatched: (id) => store.markDispatched(id),
-          markUncertain: (id, reason) => store.markUncertain(id, reason),
-          captureResponse: (value) =>
-            store.captureResponse({
-              ...value,
-              metadata: {
-                ...value.metadata,
-                sourceKind: "self-reported",
-                observedAt: new Date().toISOString(),
-              },
-            }),
-        },
+        selfReportedStore,
         // Weft does not index every source; it then receives the plain URL.
         source.accessMethodId
           ? client
@@ -121,8 +182,13 @@ export function workerAdapters(
         },
         {
           url: source.url(handle),
-          method: "GET",
-          headers: {},
+          ...("body" in source
+            ? {
+                method: "POST" as const,
+                headers: { "content-type": "application/json" },
+                body: source.body(input.legacyKey),
+              }
+            : { method: "GET" as const, headers: {} }),
           operationId: source.operation,
           ...(source.accessMethodId
             ? { accessMethodId: source.accessMethodId }
@@ -132,15 +198,18 @@ export function workerAdapters(
         enabled,
       );
       const status = artifact.metadata.status;
-      if (typeof status === "number" && status >= 200 && status < 300)
+      const ok = typeof status === "number" && status >= 200 && status < 300;
+      if (ok && readable(artifact.body))
         return { status: "captured" as const, artifactId: artifact.id };
       failure = {
         status: "unavailable" as const,
-        reason: "source_http_failure",
+        reason: ok ? "source_unreadable" : "source_http_failure",
         artifactId: artifact.id,
       };
-      // Only an uncharged failure may fall back; a paid failure is never bought twice.
-      if (!/^0*(\.0*)?$/.test(String(artifact.metadata.paidUsd ?? "0"))) break;
+      // An unreadable success is not data, so the next source may run. Otherwise
+      // only an uncharged failure falls back; a paid failure is never bought twice.
+      if (!ok && !/^0*(\.0*)?$/.test(String(artifact.metadata.paidUsd ?? "0")))
+        break;
     }
     return failure!;
   };
@@ -262,5 +331,11 @@ export function workerAdapters(
           };
         }
       : undefined;
-  return { executeGeneration, collectProfile, collectWebsite, embed };
+  return {
+    executeGeneration,
+    collectProfile,
+    collectTweets,
+    collectWebsite,
+    embed,
+  };
 }

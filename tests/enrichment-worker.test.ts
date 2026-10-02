@@ -774,6 +774,97 @@ test("enabling websites later collects them without buying the profile again", a
   }
 });
 
+test("recent posts become the founder's self-reported evidence", async () => {
+  const f = await fixture();
+  try {
+    const budgetId = randomUUID();
+    await f.store.createBudget({
+      id: budgetId,
+      scope: "test",
+      currency: "USD",
+      capMicros: "1000",
+    });
+    let tweetCalls = 0;
+    const tweetsOn = {
+      ...f.dependencies,
+      codeDigest: "synthetic-tweets",
+      tweets: true,
+      async collectTweets(input: { legacyKey: string }) {
+        tweetCalls++;
+        const request = await f.store.planCollection({
+          scope: "test",
+          fingerprint: `tweets:${input.legacyKey}`,
+          generation: 0,
+          operation: "tweets",
+          args: {},
+          policyId: "synthetic",
+        });
+        const attempt = await f.store.reserveAttempt({
+          requestId: request.id,
+          budgetId,
+          capMicros: "1",
+        });
+        await f.store.markDispatched(attempt.id);
+        const user = { core: { screen_name: input.legacyKey } };
+        const artifact = await f.store.captureResponse({
+          attemptId: attempt.id,
+          body: Buffer.from(
+            JSON.stringify({
+              data: [
+                { id_str: "11", full_text: "I ship every Friday", user },
+                { id_str: "12", full_text: "RT @other: not mine", user },
+              ],
+            }),
+          ),
+          contentType: "application/json",
+          redactionVersion: "none",
+          paymentState: "settled",
+          settledMicros: "1",
+          kind: "source_response",
+          metadata: { sourceKind: "self-reported", status: 200 },
+        });
+        return { status: "captured" as const, artifactId: artifact.id };
+      },
+    };
+    const evaluation = await f.store.putArtifact({
+      kind: "legacy_import",
+      body: Buffer.from("tweets"),
+      contentType: "text/plain",
+      redactionVersion: "none",
+      importBatch: "tweets",
+    });
+    const release = await f.store.createRelease(buildWorkerManifest(tweetsOn));
+    await f.store.approveRelease(release, evaluation.id, {
+      actor: "test",
+      reason: "tweets",
+    });
+    await f.store.promoteRelease("test", release, "tweets");
+    const founder = await f.store.createEntity("founder", "synthetic_tweets");
+    await f.store.intake("test", founder);
+    await f.store.reconcileTargets("test");
+    await runPendingStages(
+      f.store,
+      createStageHandlers(f.store, new WorkerStore(f.db), tweetsOn),
+      { limit: 2, leaseSeconds: 60 },
+    );
+    assert.equal(tweetCalls, 1);
+    const tweets = (
+      await f.db.query<{ excerpt: string; source_url: string }>(
+        "SELECT e.excerpt,e.source_url FROM enrichment_evidence e JOIN enrichment_entity_evidence l ON l.evidence_id=e.id WHERE l.entity_id=$1 AND e.extractor_version='x-tweets-v1'",
+        [founder],
+      )
+    ).rows;
+    assert.deepEqual(tweets, [
+      {
+        excerpt: "I ship every Friday",
+        source_url: "https://x.com/synthetic_tweets/status/11",
+      },
+    ]);
+  } finally {
+    await f.pg.close();
+  }
+});
+
 test("profile identity mismatch blocks website purchase", async () => {
   const f = await fixture({ website: true, mismatchedProfile: true });
   try {
