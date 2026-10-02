@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { PGlite } from "@electric-sql/pglite";
 import {
   migrateEnrichment,
+  templateQuery,
   type Database,
   type Sql,
 } from "../lib/enrichment/db";
@@ -1329,4 +1330,21 @@ test("profile withdrawal purges linked website captures and dependent analyses w
   } finally {
     await pg.close();
   }
+});
+
+test("local PostgreSQL tagged templates bind values in order like Neon", async () => {
+  const tag = (strings: TemplateStringsArray, ...values: unknown[]) => ({
+    text: templateQuery(strings),
+    values,
+  });
+  const { text, values } =
+    tag`SELECT ${"a"}::text AS x, ${2}::int AS y, ${["c"]}::text[] AS z`;
+  assert.equal(text, "SELECT $1::text AS x, $2::int AS y, $3::text[] AS z");
+  const pg = new PGlite();
+  const { rows } = await pg.query(text, values);
+  assert.deepEqual(rows, [{ x: "a", y: 2, z: ["c"] }]);
+  assert.equal(
+    templateQuery(Object.assign(["SELECT 1"], { raw: [] })),
+    "SELECT 1",
+  );
 });

@@ -28,7 +28,9 @@ Open http://127.0.0.1:3000. With blank credentials, the UI renders an empty
 directory. To collect real data, provision your own Neon `DATABASE_URL`, get a
 server-only `WEFT_API_KEY` from the
 [Weft buyer dashboard](https://weft.network/dashboard/buyer/api_keys), and run
-`pnpm exec tsx scripts/bulk.ts` from your terminal. Never prefix these with
+`pnpm exec tsx scripts/bulk.ts` from your terminal. Work against a local
+PostgreSQL copy, not production: set `DATABASE_URL` to it and
+`DATABASE_TRANSPORT=postgres`. Results reach production through releases. Never prefix these with
 `NEXT_PUBLIC_`.
 
 **Deploy safely:** non-`main` branches get Vercel Git previews, merges to `main`

@@ -2,7 +2,7 @@ import "./assert-server";
 import { directoryDatabaseUrl } from "./founder-database-config";
 export { directoryDatabaseUrl } from "./founder-database-config";
 import { withIndexingOrigin } from "./enrichment/origin";
-import type { Sql } from "./enrichment/db";
+import { neonCompatible, type Sql } from "./enrichment/db";
 import { neon } from "@neondatabase/serverless";
 import type { DirectoryFilters, LocationOption } from "./directory-filters";
 import {
@@ -18,7 +18,11 @@ import { isPresenceSessionId } from "./presence";
 import type { TrendHit } from "./x";
 
 function sql() {
-  return neon(directoryDatabaseUrl());
+  const url = directoryDatabaseUrl();
+  // A local operator copy is plain PostgreSQL; the deployed app uses Neon HTTP.
+  return process.env.DATABASE_TRANSPORT === "postgres"
+    ? (neonCompatible(url) as unknown as ReturnType<typeof neon>)
+    : neon(url);
 }
 
 export async function ensureSchema() {

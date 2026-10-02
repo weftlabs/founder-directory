@@ -54,6 +54,33 @@ export function postgresDatabase(
   };
 }
 
+/** `$1..$n` text for a tagged template, matching the Neon driver's placeholders. */
+export function templateQuery(strings: readonly string[]): string {
+  return strings.reduce((text, part, i) => `${text}$${i}${part}`);
+}
+
+const neonCompatiblePools = new Map<string, Pool>();
+
+/**
+ * Neon-driver-shaped client over plain PostgreSQL, for an operator's local copy.
+ * Tagged templates and `.query` both resolve to rows, as `neon()` does.
+ */
+export function neonCompatible(connectionString: string) {
+  let pool = neonCompatiblePools.get(connectionString);
+  if (!pool) {
+    // allowExitOnIdle lets one-shot operator scripts exit without closing it.
+    pool = new Pool({ connectionString, max: 4, allowExitOnIdle: true });
+    neonCompatiblePools.set(connectionString, pool);
+  }
+  const run = async (text: string, values?: unknown[]) =>
+    (await pool.query(text, values)).rows;
+  return Object.assign(
+    (strings: TemplateStringsArray, ...values: unknown[]) =>
+      run(templateQuery(strings), values),
+    { query: run },
+  );
+}
+
 export async function migrateEnrichment(db: Database): Promise<void> {
   const migrations = [
     [1, "001_enrichment.sql"],
