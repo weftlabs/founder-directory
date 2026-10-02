@@ -738,7 +738,7 @@ test("enabling websites later collects them without buying the profile again", a
       await f.store.reconcileTargets("test");
       return id;
     };
-    const { website: _off, ...withoutWebsite } = f.dependencies;
+    const withoutWebsite = { ...f.dependencies, website: undefined };
     await promote(withoutWebsite, "websites-off");
     const founder = await f.store.createEntity("founder", "synthetic_later");
     await f.store.intake("test", founder);
