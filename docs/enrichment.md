@@ -126,7 +126,13 @@ Replace every `REVIEWED_...` value and `BUDGET_UUID` with verified values:
 ```
 
 The sample policies deliberately prevent dispatch. Change their values only
-after the relevant checks. A null model revision records an unresolved alias;
+after the relevant checks.
+
+Profiles try each approved source cheapest first: `twitsh-user-by-username`
+(twit.sh, $0.005, X API v2 shape; Weft does not index it, so Weft receives the
+plain URL) then `bazaar-x402-atlas-183` (x402 Atlas, $0.006). Add a policy to
+enable a source. A failed response that was not charged falls through to the
+next source; a charged failure stops, so the same profile is never bought twice. A null model revision records an unresolved alias;
 it does not promise an immutable upstream model. Per-request caps do not replace
 the aggregate budget.
 
