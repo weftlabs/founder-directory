@@ -239,7 +239,8 @@ export async function assertFounderDnaCoverage(
   requestedReleaseId: string,
 ): Promise<void> {
   const report = await readFounderDnaCoverage(db, requestedReleaseId);
-  if (report.union.total > report.releaseProfileLimit)
-    throw new Error("dna_coverage_exceeds_release_limit");
-  if (report.union.missing > 0) throw new Error("dna_coverage_incomplete");
+  // Directory founders without DNA keep their plain profile, so a release may
+  // cover them in parts. Product links have no fallback page and must be covered.
+  if (report.productLinked.missing > 0)
+    throw new Error("dna_coverage_incomplete");
 }

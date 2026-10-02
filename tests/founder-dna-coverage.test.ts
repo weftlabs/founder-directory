@@ -248,7 +248,7 @@ test("coverage separates directory, product and shared gaps without hiding found
   }
 });
 
-test("eligible public union activates and withdrawal or later intake blocks the pointer change", async () => {
+test("eligible release activates; withdrawal blocks it but later directory intake does not", async () => {
   const { pg, db } = await migrated();
   try {
     const first = await stageReady(db, "ready", "first");
@@ -275,9 +275,10 @@ test("eligible public union activates and withdrawal or later intake blocks the 
     });
     await first.dna.validateRelease("second");
     await first.dna.activateRelease("second");
+    // A later directory-only founder keeps the plain profile; it does not block.
     await db.query("INSERT INTO founders(handle) VALUES ('later')");
-    await assert.rejects(first.dna.rollback(), /dna_coverage_incomplete/);
-    assert.equal(await activeRelease(db), "second");
+    await first.dna.rollback();
+    assert.equal(await activeRelease(db), "first");
     await first.store.withdrawArtifact(first.raw.id, "test", "withdrawn");
     const withdrawn = await readFounderDnaCoverage(db, "second");
     assert.equal(
@@ -288,7 +289,7 @@ test("eligible public union activates and withdrawal or later intake blocks the 
       first.dna.activateRelease("second"),
       /ineligible|dna_coverage_incomplete/,
     );
-    assert.equal(await activeRelease(db), "second");
+    assert.equal(await activeRelease(db), "first");
   } finally {
     await pg.close();
   }
@@ -429,7 +430,7 @@ test("coverage command rejects malformed input before connecting and does not sp
   }
 });
 
-test("public union above the unchanged release cap cannot activate", async () => {
+test("directory founders beyond the release cap do not block a partial release", async () => {
   const { pg, db } = await migrated();
   try {
     assert.equal(DNA_RELEASE_PROFILE_LIMIT, 1000);
@@ -452,11 +453,8 @@ test("public union above the unchanged release cap cannot activate", async () =>
     assert.equal(report.missingTruncated, true);
     assert.equal(report.missing.length, 1000);
     assert.equal(report.releaseProfileLimit, 1000);
-    await assert.rejects(
-      ready.dna.activateRelease("pilot"),
-      /dna_coverage_exceeds_release_limit/,
-    );
-    assert.equal(await activeRelease(db), null);
+    await ready.dna.activateRelease("pilot");
+    assert.equal(await activeRelease(db), "pilot");
   } finally {
     await pg.close();
   }
