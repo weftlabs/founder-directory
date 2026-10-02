@@ -163,11 +163,16 @@ test("OpenRouter route preserves model revision, schema and parameters through d
   assert.equal(result.finishReason, "stop");
 });
 
-for (const purpose of ["founder_dna", "founder_portrait"] as const) {
-  test(`${purpose} disables DeepSeek Flash thinking in both recipe identity and captured request`, async () => {
+for (const [purpose, flash] of [
+  ["founder_dna", "deepseek/deepseek-v4.1-flash"],
+  ["founder_portrait", "deepseek/deepseek-v4.1-flash"],
+  ["founder_dna", "deepseek/deepseek-v4-flash"],
+  ["founder_portrait", "deepseek/deepseek-v4-flash"],
+] as const) {
+  test(`${purpose} disables ${flash} thinking in both recipe identity and captured request`, async () => {
     const model = {
       provider: "weft/openrouter",
-      model: "deepseek/deepseek-v4.1-flash",
+      model: flash,
       revision: null,
     };
     const input = buildAnalysisInput({

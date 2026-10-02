@@ -194,7 +194,8 @@ An unchanged successful input reuses its result; a changed recipe creates a new
 derived result without source recollection. Model calls can still cost money.
 Saving a request does not guarantee identical output from a later model call.
 
-For `weft/openrouter` with the effective model `deepseek/deepseek-v4.1-flash`,
+For `weft/openrouter` with the effective model `deepseek/deepseek-v4-flash` or
+`deepseek/deepseek-v4.1-flash`,
 description, DNA and portrait recipes disable reasoning and require providers to
 support the request parameters. This preserves the output budget for visible JSON.
 Both controls are part of the saved recipe identity and captured request; previous

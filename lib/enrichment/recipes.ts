@@ -8,6 +8,12 @@ import {
   type JsonValue,
 } from "./contracts";
 
+// DeepSeek Flash models whose hidden reasoning would spend the JSON output budget.
+const DEEPSEEK_FLASH_MODELS = new Set([
+  "deepseek/deepseek-v4-flash",
+  "deepseek/deepseek-v4.1-flash",
+]);
+
 /** Save provider controls in recipe identity, before request capture or dispatch. */
 export function deepseekFlashParameters(model: {
   provider: string;
@@ -15,7 +21,7 @@ export function deepseekFlashParameters(model: {
   revision: string | null;
 }): Record<string, JsonValue> {
   return model.provider === "weft/openrouter" &&
-    (model.revision ?? model.model) === "deepseek/deepseek-v4.1-flash"
+    DEEPSEEK_FLASH_MODELS.has(model.revision ?? model.model)
     ? {
         reasoning: { enabled: false },
         provider: { require_parameters: true },
