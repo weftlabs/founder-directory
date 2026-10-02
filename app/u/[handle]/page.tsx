@@ -23,7 +23,8 @@ export async function generateMetadata({
   const { handle } = await params;
   const dna = await readDnaProfile(handle);
   if (dna.status === "ready") return founderShareMetadata(dna.profile);
-  if (dna.status !== "disabled")
+  // A founder outside the active DNA release keeps the plain directory profile.
+  if (dna.status === "hidden" || dna.status === "unavailable")
     return {
       title:
         dna.status === "unavailable"
@@ -93,7 +94,7 @@ export default async function ProfilePage({
         </main>
       </>
     );
-  if (dna.status !== "disabled") notFound();
+  if (dna.status === "hidden") notFound();
   if (process.env.PRODUCTS_LOCAL_SNAPSHOT) {
     const founder = await loadLocalProductFounder(handle);
     if (!founder) notFound();
