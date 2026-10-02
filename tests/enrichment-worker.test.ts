@@ -716,6 +716,64 @@ test("website failure preserves personal DNA but marks descriptions unavailable"
   }
 });
 
+test("enabling websites later collects them without buying the profile again", async () => {
+  const f = await fixture({ website: true });
+  try {
+    const promote = async (configuration: object, label: string) => {
+      const evaluation = await f.store.putArtifact({
+        kind: "legacy_import",
+        body: Buffer.from(label),
+        contentType: "text/plain",
+        redactionVersion: "none",
+        importBatch: label,
+      });
+      const id = await f.store.createRelease(
+        buildWorkerManifest(configuration as never),
+      );
+      await f.store.approveRelease(id, evaluation.id, {
+        actor: "test",
+        reason: label,
+      });
+      await f.store.promoteRelease("test", id, label);
+      await f.store.reconcileTargets("test");
+      return id;
+    };
+    const withoutWebsite = { ...f.dependencies, website: undefined };
+    await promote(withoutWebsite, "websites-off");
+    const founder = await f.store.createEntity("founder", "synthetic_later");
+    await f.store.intake("test", founder);
+    await f.store.reconcileTargets("test");
+    await runPendingStages(
+      f.store,
+      createStageHandlers(f.store, new WorkerStore(f.db), withoutWebsite),
+      { limit: 1, leaseSeconds: 60 },
+    );
+    assert.equal(f.counters().collections, 1);
+    assert.equal(f.websiteCalls(), 0);
+    const websitesOn = { ...f.dependencies, codeDigest: "synthetic-v2" };
+    const next = await promote(websitesOn, "websites-on");
+    await runPendingStages(
+      f.store,
+      createStageHandlers(f.store, new WorkerStore(f.db), websitesOn),
+      { limit: 1, leaseSeconds: 60 },
+    );
+    assert.equal(f.counters().collections, 1);
+    assert.equal(f.websiteCalls(), 1);
+    const bundle = (
+      await f.db.query<{ body: Uint8Array }>(
+        "SELECT a.body FROM enrichment_stage_work w JOIN enrichment_artifacts a ON a.id=w.output_id WHERE w.release_id=$1 AND w.stage='collection'",
+        [next],
+      )
+    ).rows[0];
+    assert.equal(
+      JSON.parse(Buffer.from(bundle.body).toString()).website.status,
+      "captured",
+    );
+  } finally {
+    await f.pg.close();
+  }
+});
+
 test("profile identity mismatch blocks website purchase", async () => {
   const f = await fixture({ website: true, mismatchedProfile: true });
   try {
