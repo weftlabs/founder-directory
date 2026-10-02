@@ -172,7 +172,7 @@ export function selectProductEvidence(
   );
 }
 
-/** Parses the enabled Atlas profile contract only. Unknown contracts fail visibly. */
+/** Parses the Atlas and X v2 (twit.sh) profile contracts. Unknown contracts fail visibly. */
 export function extractProfile(body: Uint8Array):
   | {
       status: "available";
@@ -184,6 +184,7 @@ export function extractProfile(body: Uint8Array):
   if (!record(raw) || !record(raw.data))
     throw new Error("profile_schema_invalid");
   const data = raw.data;
+  if (!record(data.core) && "username" in data) return extractV2Profile(data);
   if (record(data.privacy) && data.privacy.protected === true)
     return { status: "unavailable", reason: "protected_account" };
   const core = record(data.core) ? data.core : null;
@@ -224,6 +225,38 @@ export function extractProfile(body: Uint8Array):
   return {
     status: "available",
     payload: { name, handle, bio, website, location },
+    sourceUrl: `https://x.com/${handle}`,
+  };
+}
+
+/** X API v2 user shape (twit.sh). The profile URL field is its own entity list. */
+function extractV2Profile(
+  data: Record<string, unknown>,
+): ReturnType<typeof extractProfile> {
+  if (data.protected === true)
+    return { status: "unavailable", reason: "protected_account" };
+  const name = text(data.name),
+    handle = text(data.username);
+  if (!name || !handle || !/^\w{1,50}$/.test(handle))
+    throw new Error("profile_identity_missing");
+  const urls =
+    record(data.entities) &&
+    record(data.entities.url) &&
+    Array.isArray(data.entities.url.urls)
+      ? data.entities.url.urls
+      : [];
+  // One profile URL only; never pick among several by array order.
+  const expanded =
+    urls.length === 1 && record(urls[0]) ? text(urls[0].expanded_url) : null;
+  return {
+    status: "available",
+    payload: {
+      name,
+      handle,
+      bio: text(data.description),
+      website: expanded ? publicWebsiteUrl(expanded) : null,
+      location: text(data.location),
+    },
     sourceUrl: `https://x.com/${handle}`,
   };
 }

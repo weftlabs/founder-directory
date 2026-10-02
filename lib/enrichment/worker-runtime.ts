@@ -15,6 +15,22 @@ import {
   JINA_WEBSITE_OPERATION,
 } from "./website";
 
+/** Cheapest first. Each source runs only when the operator approved its policy. */
+export const PROFILE_SOURCES = [
+  {
+    operation: "twitsh-user-by-username",
+    url: (handle: string) =>
+      `https://x402.twit.sh/users/by/username?username=${handle}`,
+    accessMethodId: null,
+  },
+  {
+    operation: "bazaar-x402-atlas-183",
+    url: (handle: string) =>
+      `https://twitter.use.x402atlas.com/user-details?username=${handle}`,
+    accessMethodId: "bazaar-x402-atlas-183-x402",
+  },
+] as const;
+
 export type WorkerTransportConfig = CaptureConfig & {
   sourceMaxCostUsd: string;
   modelMaxCostUsd: string;
@@ -56,56 +72,77 @@ export function workerAdapters(
         status: "blocked" as const,
         reason: "missing_verified_source_handle",
       };
-    const operation = "bazaar-x402-atlas-183";
-    if (!config.policies[operation])
+    const handle = encodeURIComponent(input.legacyKey);
+    const sources = PROFILE_SOURCES.filter(
+      (source) => config.policies[source.operation],
+    );
+    if (!sources.length)
       return {
         status: "blocked" as const,
         reason: "source_policy_not_configured",
       };
-    const artifact = await collectWeft(
-      {
-        planCollection: (value) => store.planCollection(value),
-        getReusableArtifact: (id) => store.getReusableArtifact(id),
-        reserveAttempt: (value) => store.reserveAttempt(value),
-        markDispatched: (id) => store.markDispatched(id),
-        markUncertain: (id, reason) => store.markUncertain(id, reason),
-        captureResponse: (value) =>
-          store.captureResponse({
-            ...value,
-            metadata: {
-              ...value.metadata,
-              sourceKind: "self-reported",
-              observedAt: new Date().toISOString(),
+    let failure: {
+      status: "unavailable";
+      reason: string;
+      artifactId: string;
+    } | null = null;
+    for (const source of sources) {
+      const artifact = await collectWeft(
+        {
+          planCollection: (value) => store.planCollection(value),
+          getReusableArtifact: (id) => store.getReusableArtifact(id),
+          reserveAttempt: (value) => store.reserveAttempt(value),
+          markDispatched: (id) => store.markDispatched(id),
+          markUncertain: (id, reason) => store.markUncertain(id, reason),
+          captureResponse: (value) =>
+            store.captureResponse({
+              ...value,
+              metadata: {
+                ...value.metadata,
+                sourceKind: "self-reported",
+                observedAt: new Date().toISOString(),
+              },
+            }),
+        },
+        // Weft does not index every source; it then receives the plain URL.
+        source.accessMethodId
+          ? client
+          : {
+              fetch: (request, options) =>
+                client.fetch({ ...request, operationId: undefined }, options),
             },
-          }),
-      },
-      client,
-      {
-        scope: config.scope,
-        budgetId: config.budgetId,
-        generation: input.generation,
-        operation,
-        mode: "acquire",
-        policy: config.policies[operation],
-      },
-      {
-        url: `https://twitter.use.x402atlas.com/user-details?username=${encodeURIComponent(input.legacyKey)}`,
-        method: "GET",
-        headers: {},
-        operationId: operation,
-        accessMethodId: "bazaar-x402-atlas-183-x402",
-        maxCostUsd: config.sourceMaxCostUsd,
-      },
-      enabled,
-    );
-    const status = artifact.metadata.status;
-    if (typeof status !== "number" || status < 200 || status >= 300)
-      return {
+        {
+          scope: config.scope,
+          budgetId: config.budgetId,
+          generation: input.generation,
+          operation: source.operation,
+          mode: "acquire",
+          policy: config.policies[source.operation],
+        },
+        {
+          url: source.url(handle),
+          method: "GET",
+          headers: {},
+          operationId: source.operation,
+          ...(source.accessMethodId
+            ? { accessMethodId: source.accessMethodId }
+            : {}),
+          maxCostUsd: config.sourceMaxCostUsd,
+        },
+        enabled,
+      );
+      const status = artifact.metadata.status;
+      if (typeof status === "number" && status >= 200 && status < 300)
+        return { status: "captured" as const, artifactId: artifact.id };
+      failure = {
         status: "unavailable" as const,
         reason: "source_http_failure",
         artifactId: artifact.id,
       };
-    return { status: "captured" as const, artifactId: artifact.id };
+      // Only an uncharged failure may fall back; a paid failure is never bought twice.
+      if (!/^0*(\.0*)?$/.test(String(artifact.metadata.paidUsd ?? "0"))) break;
+    }
+    return failure!;
   };
   const collectWebsite = async (input: {
     provider?: "exa" | "jina";
