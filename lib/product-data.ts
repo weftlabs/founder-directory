@@ -2,7 +2,7 @@
 import "./assert-server";
 import { neon } from "@neondatabase/serverless";
 import { readProductSnapshot } from "./product-snapshot";
-import type { Sql } from "./enrichment/db";
+import { neonCompatible, type Sql } from "./enrichment/db";
 import {
   PRODUCT_CATEGORIES,
   PRODUCT_PAGE_SIZE,
@@ -111,9 +111,12 @@ export async function loadProducts(
   }
   if (!env.DATABASE_URL) return { ...empty, unavailable: false, preview: null };
   try {
-    const sql = neon(env.DATABASE_URL, {
-      fetchOptions: { signal: AbortSignal.timeout(10000) },
-    });
+    const sql =
+      env.DATABASE_TRANSPORT === "postgres"
+        ? neonCompatible(env.DATABASE_URL)
+        : neon(env.DATABASE_URL, {
+            fetchOptions: { signal: AbortSignal.timeout(10000) },
+          });
     const db: Sql = {
       async query<T>(text: string, values?: unknown[]) {
         return { rows: (await sql.query(text, values)) as T[] };
