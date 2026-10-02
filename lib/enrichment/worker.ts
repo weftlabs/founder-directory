@@ -357,18 +357,29 @@ export function createStageHandlers(
     {
       async collection(work) {
         const saved = await workerStore.stageOutput(work, "collection", true);
-        const savedArtifact = saved ? await store.getArtifact(saved) : null;
+        let savedArtifact = saved ? await store.getArtifact(saved) : null;
         if (savedArtifact?.kind === "manifest") {
           const bundle = JSON.parse(
             Buffer.from(savedArtifact.body).toString("utf8"),
           ) as SourceBundle;
+          const profileArtifact = await store.getArtifact(
+            bundle.profileArtifactId,
+          );
           if (
             bundle.version === SOURCE_BUNDLE_VERSION &&
-            (await store.getArtifact(bundle.profileArtifactId)) &&
+            profileArtifact &&
             (!bundle.website.artifactId ||
               (await store.getArtifact(bundle.website.artifactId)))
           ) {
-            return { status: "succeeded", outputId: saved! };
+            // A bundle saved before website collection was enabled keeps its
+            // profile; only the website is collected now.
+            if (!(
+              dependencies.mode === "acquire" &&
+              dependencies.website &&
+              bundle.website.status === "disabled"
+            ))
+              return { status: "succeeded", outputId: saved! };
+            savedArtifact = profileArtifact;
           }
         }
         if (dependencies.mode === "rederive" && !savedArtifact)
