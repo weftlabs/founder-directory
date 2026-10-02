@@ -37,10 +37,16 @@ type WebsiteCoverage = {
   artifactId?: string;
   url?: string;
 };
+type TweetCoverage = {
+  status: "captured" | "unavailable" | "disabled";
+  reason?: string;
+  artifactId?: string;
+};
 type SourceBundle = {
   version: typeof SOURCE_BUNDLE_VERSION;
   profileArtifactId: string;
   website: WebsiteCoverage;
+  tweets?: TweetCoverage;
 };
 
 export interface WorkerConfiguration {
@@ -48,6 +54,8 @@ export interface WorkerConfiguration {
   model: { provider: string; model: string; revision: string | null };
   embedding?: { model: string; modelVersion: string; dimensions: number };
   website?: { provider: "exa" | "jina"; maxExcerptChars?: number };
+  /** Recent posts by the founder become self-reported evidence. */
+  tweets?: boolean;
 }
 export interface WorkerDependencies extends WorkerConfiguration {
   mode: "acquire" | "rederive";
@@ -60,6 +68,14 @@ export interface WorkerDependencies extends WorkerConfiguration {
     | { status: "unavailable" | "blocked"; reason: string; artifactId?: string }
   >;
   executeGeneration: ExecuteGeneration;
+  collectTweets?: (input: {
+    entityId: string;
+    legacyKey: string;
+    generation: number;
+  }) => Promise<
+    | { status: "captured"; artifactId: string }
+    | { status: "unavailable"; reason: string; artifactId?: string }
+  >;
   collectWebsite?: (input: {
     provider?: "exa" | "jina";
     entityId: string;
@@ -97,6 +113,8 @@ export function buildWorkerManifest(configuration: WorkerConfiguration) {
     sourceBundleVersion: SOURCE_BUNDLE_VERSION,
     extractionVersion: EXTRACTION_VERSION,
     website: configuration.website ?? null,
+    // Only enabled configurations change identity; older releases keep theirs.
+    ...(configuration.tweets ? { tweets: true } : {}),
   };
   const recipes = Object.fromEntries(
     (["product_discovery", "product_descriptions", "founder_dna"] as const).map(
@@ -181,6 +199,13 @@ export function extractProfile(body: Uint8Array):
     }
   | { status: "unavailable"; reason: string } {
   const raw: unknown = JSON.parse(Buffer.from(body).toString("utf8"));
+  // x402factory wraps the upstream profile next to recent tweets.
+  if (record(raw) && raw.ok === true && record(raw.profile)) {
+    const p = raw.profile;
+    if (record(p.core) || "username" in p)
+      return extractProfile(Buffer.from(JSON.stringify({ data: p })));
+    return extractFlatProfile(p);
+  }
   if (!record(raw) || !record(raw.data))
     throw new Error("profile_schema_invalid");
   const data = raw.data;
@@ -259,6 +284,93 @@ function extractV2Profile(
     },
     sourceUrl: `https://x.com/${handle}`,
   };
+}
+
+/** Flat upstream user (screen_name, description, location string). */
+function extractFlatProfile(
+  p: Record<string, unknown>,
+): ReturnType<typeof extractProfile> {
+  if (p.protected === true)
+    return { status: "unavailable", reason: "protected_account" };
+  const name = text(p.name),
+    handle = text(p.screen_name);
+  if (!name || !handle || !/^\w{1,50}$/.test(handle))
+    throw new Error("profile_identity_missing");
+  const urls =
+    record(p.entities) &&
+    record(p.entities.url) &&
+    Array.isArray(p.entities.url.urls)
+      ? p.entities.url.urls
+      : [];
+  const expanded =
+    urls.length === 1 && record(urls[0]) ? text(urls[0].expanded_url) : null;
+  return {
+    status: "available",
+    payload: {
+      name,
+      handle,
+      bio: text(p.description),
+      website: expanded ? publicWebsiteUrl(expanded) : null,
+      location: typeof p.location === "string" ? text(p.location) : null,
+    },
+    sourceUrl: `https://x.com/${handle}`,
+  };
+}
+
+const MAX_TWEETS = 20;
+
+/**
+ * The founder's own recent posts from an x402factory profile or an Atlas
+ * timeline. Reposts and posts by anyone else are dropped. Null: no tweet list.
+ */
+export function extractTweets(
+  body: Uint8Array,
+  handle: string,
+): { id: string; text: string; createdAt: string | null }[] | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(Buffer.from(body).toString("utf8"));
+  } catch {
+    return null;
+  }
+  if (!record(raw)) return null;
+  const list = Array.isArray(raw.tweets)
+    ? raw.tweets
+    : Array.isArray(raw.data)
+      ? raw.data
+      : null;
+  if (!list) return null;
+  const owner = handle.toLowerCase();
+  const out = [];
+  for (const item of list) {
+    if (!record(item)) continue;
+    const id = text(item.id_str) ?? text(item.id);
+    const content = text(item.full_text) ?? text(item.text);
+    if (!id || !/^\d{1,25}$/.test(id) || !content || /^RT @/.test(content))
+      continue;
+    const user = record(item.user)
+      ? item.user
+      : record(item.author)
+        ? item.author
+        : null;
+    const author =
+      user && record(user.core)
+        ? text(user.core.screen_name)
+        : user
+          ? (text(user.screen_name) ?? text(user.username))
+          : null;
+    // An Atlas timeline names every author; any other author is not this founder.
+    if (author ? author.toLowerCase() !== owner : Array.isArray(raw.data))
+      continue;
+    if (item.retweeted_status_result || item.retweeted_status) continue;
+    out.push({
+      id,
+      text: content.slice(0, 3000),
+      createdAt: text(item.created_at),
+    });
+    if (out.length === MAX_TWEETS) break;
+  }
+  return out;
 }
 
 export function createStageHandlers(
@@ -371,13 +483,16 @@ export function createStageHandlers(
             (!bundle.website.artifactId ||
               (await store.getArtifact(bundle.website.artifactId)))
           ) {
-            // A bundle saved before website collection was enabled keeps its
-            // profile; only the website is collected now.
-            if (!(
-              dependencies.mode === "acquire" &&
-              dependencies.website &&
-              bundle.website.status === "disabled"
-            ))
+            // A bundle saved before website or tweet collection was enabled
+            // keeps its profile; only the newly enabled sources are collected.
+            if (
+              dependencies.mode !== "acquire" ||
+              !(
+                (dependencies.website &&
+                  bundle.website.status === "disabled") ||
+                (dependencies.tweets && !bundle.tweets)
+              )
+            )
               return { status: "succeeded", outputId: saved! };
             savedArtifact = profileArtifact;
           }
@@ -472,6 +587,33 @@ export function createStageHandlers(
             };
           }
         }
+        let tweets: TweetCoverage = { status: "disabled" };
+        if (dependencies.tweets && profile.status === "available") {
+          const handle = String(profile.payload.handle);
+          if (extractTweets(artifact.body, handle))
+            tweets = { status: "captured", artifactId: artifact.id };
+          else if (dependencies.mode === "rederive")
+            tweets = { status: "unavailable", reason: "missing_saved_tweets" };
+          else if (!dependencies.collectTweets)
+            tweets = {
+              status: "unavailable",
+              reason: "tweet_collection_not_configured",
+            };
+          else {
+            await store.assertStageLease(work.id, work.leaseToken);
+            const collected = await dependencies.collectTweets({
+              entityId: work.entityId,
+              legacyKey: handle,
+              generation: work.generation,
+            });
+            if (collected.artifactId) {
+              const retained = await store.getArtifact(collected.artifactId);
+              if (!retained || retained.kind !== "source_response")
+                throw new Error("tweet_capture_missing");
+            }
+            tweets = collected;
+          }
+        }
         const bundle = await store.putArtifact({
           kind: "manifest",
           runId: work.id,
@@ -480,6 +622,7 @@ export function createStageHandlers(
               version: SOURCE_BUNDLE_VERSION,
               profileArtifactId: artifact.id,
               website,
+              ...(dependencies.tweets ? { tweets } : {}),
             }),
           ),
           contentType: "application/json",
@@ -491,6 +634,7 @@ export function createStageHandlers(
             sourceArtifactIds: sourceArtifactIds([
               artifact.id,
               website.artifactId,
+              tweets.artifactId,
             ]),
           },
         });
@@ -539,6 +683,29 @@ export function createStageHandlers(
         await store.linkEvidence(work.entityId, id, "profile_source");
         const evidenceIds = [id],
           artifactIds = [artifact.id];
+        if (dependencies.tweets && bundle.tweets?.artifactId) {
+          const raw = await store.getArtifact(bundle.tweets.artifactId);
+          if (
+            !raw ||
+            raw.kind !== "source_response" ||
+            raw.metadata.sourceKind !== "self-reported"
+          )
+            throw new Error("missing_saved_tweets");
+          if (raw.id !== artifact.id) artifactIds.push(raw.id);
+          const handle = String(result.payload.handle);
+          for (const tweet of extractTweets(raw.body, handle) ?? []) {
+            const tweetId = await store.addEvidence({
+              artifactId: raw.id,
+              extractorVersion: "x-tweets-v1",
+              locator: `tweet:${tweet.id}`,
+              sourceUrl: `https://x.com/${handle}/status/${tweet.id}`,
+              payload: { tweetId: tweet.id, createdAt: tweet.createdAt },
+              excerpt: tweet.text,
+            });
+            await store.linkEvidence(work.entityId, tweetId, "profile_source");
+            evidenceIds.push(tweetId);
+          }
+        }
         let website = bundle.website;
         if (dependencies.website && website.status === "disabled")
           website = { status: "unavailable", reason: "missing_saved_website" };

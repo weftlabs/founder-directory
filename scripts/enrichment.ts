@@ -118,6 +118,11 @@ async function workerFile(
     throw new Error("invalid_worker_model_configuration");
   generationRoute(configuration.model.provider);
   if (
+    configuration.tweets !== undefined &&
+    typeof configuration.tweets !== "boolean"
+  )
+    throw new Error("invalid_worker_tweets_configuration");
+  if (
     configuration.website !== undefined &&
     (!record(configuration.website) ||
       !["exa", "jina"].includes(String(configuration.website.provider)) ||

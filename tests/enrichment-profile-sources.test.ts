@@ -6,7 +6,20 @@ import type {
 } from "../lib/enrichment/collection";
 import type { WeftTransport } from "../lib/weft";
 import { workerAdapters } from "../lib/enrichment/worker-runtime";
-import { extractProfile } from "../lib/enrichment/worker";
+import { extractProfile, extractTweets } from "../lib/enrichment/worker";
+
+// Readable bodies per provider; "{}" stands for a success we cannot parse.
+const BODIES: Record<string, unknown> = {
+  "x402factory.ai": {
+    ok: true,
+    profile: { name: "Builder", screen_name: "builder", description: "Builds" },
+    tweets: [{ id: "1", text: "Shipped v2 today", created_at: "2026-10-01" }],
+  },
+  "x402.twit.sh": { data: { name: "Builder", username: "builder" } },
+  "twitter.use.x402atlas.com": {
+    data: { core: { name: "Builder", screen_name: "builder" } },
+  },
+};
 
 const policy = (operation: string) => ({
   id: operation,
@@ -17,10 +30,14 @@ const policy = (operation: string) => ({
 });
 
 function harness(
-  responses: Record<string, { status: number; paidUsd: string }>,
+  responses: Record<
+    string,
+    { status: number; paidUsd: string; body?: unknown }
+  >,
+  sources = ["twitsh-user-by-username", "bazaar-x402-atlas-183"],
 ) {
   const saved = new Map<string, CapturedArtifact>();
-  const calls: { url: string; operationId?: string }[] = [];
+  const calls: { url: string; operationId?: string; body?: unknown }[] = [];
   let request = 0;
   const store: CollectionStore = {
     planCollection: async (value) => ({ id: value.fingerprint }),
@@ -44,13 +61,17 @@ function harness(
   };
   const client: WeftTransport = {
     fetch: async (req) => {
-      calls.push({ url: req.url, operationId: req.operationId });
+      calls.push({
+        url: req.url,
+        operationId: req.operationId,
+        body: req.body,
+      });
       const host = new URL(req.url).host;
-      const { status, paidUsd } = responses[host];
+      const { status, paidUsd, body = BODIES[host] } = responses[host];
       return {
         status,
         headers: { "content-type": "application/json" },
-        bodyBase64: Buffer.from("{}").toString("base64"),
+        bodyBase64: Buffer.from(JSON.stringify(body)).toString("base64"),
         paidUsd,
         heldUsd: "0",
         paymentStatus: paidUsd === "0" ? "pending" : "settled",
@@ -67,10 +88,7 @@ function harness(
       scope: "test",
       budgetId: "budget",
       generation: 0,
-      policies: {
-        "twitsh-user-by-username": policy("twitsh-user-by-username"),
-        "bazaar-x402-atlas-183": policy("bazaar-x402-atlas-183"),
-      },
+      policies: Object.fromEntries(sources.map((op) => [op, policy(op)])),
       sourceMaxCostUsd: "0.01",
       modelMaxCostUsd: "0.01",
     },
@@ -95,6 +113,7 @@ test("profile sources run cheapest first and stop on success", async () => {
     {
       url: "https://x402.twit.sh/users/by/username?username=builder",
       operationId: undefined,
+      body: undefined,
     },
   ]);
   // A repeat is served from the archive, never bought again.
@@ -160,4 +179,123 @@ test("X v2 (twit.sh) profiles parse identity, bio, location and one profile URL"
     () => profile({ ...base, name: "" }),
     /profile_identity_missing/,
   );
+});
+
+test("x402factory runs first as a POST; an unreadable paid success falls back", async () => {
+  const sources = ["x402factory-xprofile", "bazaar-x402-atlas-183"];
+  const ok = harness(
+    {
+      "x402factory.ai": { status: 200, paidUsd: "0.001" },
+      "twitter.use.x402atlas.com": { status: 200, paidUsd: "0.006" },
+    },
+    sources,
+  );
+  assert.equal((await ok.collect()).status, "captured");
+  assert.deepEqual(ok.calls, [
+    {
+      url: "https://x402factory.ai/base/xprofile",
+      operationId: undefined,
+      body: JSON.stringify({ handle: "builder" }),
+    },
+  ]);
+
+  const unreadable = harness(
+    {
+      "x402factory.ai": { status: 200, paidUsd: "0.001", body: {} },
+      "twitter.use.x402atlas.com": { status: 200, paidUsd: "0.006" },
+    },
+    sources,
+  );
+  assert.equal((await unreadable.collect()).status, "captured");
+  assert.deepEqual(
+    unreadable.calls.map((call) => call.operationId),
+    [undefined, "bazaar-x402-atlas-183"],
+  );
+});
+
+test("x402factory profiles parse flat and nested upstream shapes", () => {
+  const parse = (profile: unknown) =>
+    extractProfile(Buffer.from(JSON.stringify({ ok: true, profile })));
+  assert.deepEqual(
+    parse({
+      name: "Builder",
+      screen_name: "builder",
+      description: "Builds",
+      location: "Lisbon",
+      entities: {
+        url: { urls: [{ expanded_url: "https://product.example/" }] },
+      },
+    }),
+    {
+      status: "available",
+      payload: {
+        name: "Builder",
+        handle: "builder",
+        bio: "Builds",
+        website: "https://product.example/",
+        location: "Lisbon",
+      },
+      sourceUrl: "https://x.com/builder",
+    },
+  );
+  assert.equal(
+    parse({ core: { name: "Builder", screen_name: "builder" } }).status,
+    "available",
+  );
+  assert.throws(() => parse({ name: "Builder" }), /profile_identity_missing/);
+  assert.throws(
+    () => extractProfile(Buffer.from(JSON.stringify({ ok: false }))),
+    /profile_schema_invalid/,
+  );
+});
+
+test("tweets keep only the founder's own posts, never reposts", () => {
+  const atlas = {
+    data: [
+      {
+        id_str: "1",
+        full_text: "Shipped",
+        created_at: "x",
+        user: { core: { screen_name: "Builder" } },
+      },
+      {
+        id_str: "2",
+        full_text: "RT @other: hi",
+        user: { core: { screen_name: "builder" } },
+      },
+      {
+        id_str: "3",
+        full_text: "Not mine",
+        user: { core: { screen_name: "other" } },
+      },
+      { id_str: "4", full_text: "No author" },
+      {
+        id_str: "5",
+        full_text: "Quoted",
+        retweeted_status_result: {},
+        user: { core: { screen_name: "builder" } },
+      },
+    ],
+  };
+  assert.deepEqual(
+    extractTweets(Buffer.from(JSON.stringify(atlas)), "builder"),
+    [{ id: "1", text: "Shipped", createdAt: "x" }],
+  );
+  const factory = {
+    ok: true,
+    tweets: [
+      { id: "7", text: "Building in public", created_at: null },
+      { id: "8", text: "x", author: { screen_name: "other" } },
+    ],
+  };
+  assert.deepEqual(
+    extractTweets(Buffer.from(JSON.stringify(factory)), "builder"),
+    [{ id: "7", text: "Building in public", createdAt: null }],
+  );
+  // Profile-only bodies carry no tweet list.
+  for (const body of Object.values(BODIES).slice(1))
+    assert.equal(
+      extractTweets(Buffer.from(JSON.stringify(body)), "builder"),
+      null,
+    );
 });
