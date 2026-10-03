@@ -24,6 +24,7 @@ import {
   type RunFounderPortraitInput,
 } from "../lib/enrichment/founder-portrait";
 import { retainedJev } from "../lib/enrichment/retained-jev";
+import { llmJudge } from "../lib/enrichment/llm-judge";
 import { runAnalysis } from "../lib/enrichment/analysis";
 import { weftGeneration, generationRoute } from "../lib/enrichment/generation";
 import {
@@ -56,7 +57,7 @@ const HELP = `Enrichment operator commands (no environment files are loaded)
   budget-create --scope NAME --cap-micros INTEGER --confirm-write
   analyze --file INPUT.json --policy POLICY.json --budget UUID --max-cost USD --allow-paid --confirm-write
   worker --file WORKER_CONFIG.json --scope NAME --mode acquire|rederive [--limit 25] [--lease-seconds 900] --allow-paid --confirm-write
-  portrait --file INPUT.json --policy POLICY.json --jev-policy POLICY.json --budget UUID --max-cost USD --jev-cap-micros INTEGER --allow-paid --confirm-write
+  portrait --file INPUT.json --policy POLICY.json --jev-policy POLICY.json --budget UUID --max-cost USD (--jev-cap-micros INTEGER | --judge-model PROVIDER:MODEL) --allow-paid --confirm-write
   portrait-approve --entity UUID --id PORTRAIT_ANALYSIS_UUID --actor NAME --confirm-write
   publish --id ANALYSIS_UUID --confirm-write
 
@@ -67,7 +68,8 @@ Migrate installs additive tables and a no-spend intake trigger on an existing fo
 Analyze uses saved evidence in INPUT.json. It never recollects sources.
 Paid model calls also require WEFT_API_KEY and ENRICHMENT_ALLOW_PAID=1.
 Portrait uses retained founder evidence, one generation and one direct Jev check; it never publishes automatically.
-Portrait additionally requires TYPESAFE_AI_API_KEY (TYPESAGE_AI_API_KEY is supported).
+Portrait additionally requires TYPESAFE_AI_API_KEY (TYPESAGE_AI_API_KEY is supported),
+unless --judge-model PROVIDER:MODEL selects a chat-model judge (--jev-policy then covers that route).
 Approval requires a saved evaluation artifact; no default release is auto-approved.
 Worker imports bounded intake, reconciles durable targets and processes at most --limit stages.
 Re-derive never collects sources; model and embedding calls still need a budget.
@@ -273,7 +275,7 @@ export async function main(args = process.argv.slice(2)) {
     (!args.includes("--allow-paid") ||
       process.env.ENRICHMENT_ALLOW_PAID !== "1" ||
       !process.env.WEFT_API_KEY ||
-      !jevKey)
+      (!jevKey && !args.includes("--judge-model")))
   )
     throw new Error("paid_portrait_not_enabled");
   let worker:
@@ -444,7 +446,18 @@ export async function main(args = process.argv.slice(2)) {
         if (policy.scope !== jevPolicy.scope)
           throw new Error("portrait_policy_scope_mismatch");
         const budgetId = argument(args, "--budget");
-        const capMicros = argument(args, "--jev-cap-micros");
+        const judgeIndex = args.indexOf("--judge-model");
+        const judgeSpec = judgeIndex >= 0 ? args[judgeIndex + 1] : undefined;
+        const judgeModel = judgeSpec
+          ? (() => {
+              const [provider, ...model] = judgeSpec.split(":");
+              if (!provider || !model.length)
+                throw new Error("invalid_judge_model");
+              generationRoute(provider);
+              return { provider, model: model.join(":"), revision: null };
+            })()
+          : null;
+        const capMicros = judgeModel ? "1" : argument(args, "--jev-cap-micros");
         if (!/^[1-9][0-9]*$/.test(capMicros))
           throw new Error("invalid_jev_cap");
         const enabled = () => process.env.ENRICHMENT_ALLOW_PAID === "1";
@@ -463,15 +476,32 @@ export async function main(args = process.argv.slice(2)) {
               enabled,
             },
           ),
-          executeDecision: retainedJev(store, {
-            scope: policy.scope,
-            budgetId,
-            capMicros,
-            policy: jevPolicy,
-            mode: "acquire",
-            enabled,
-            apiKey: jevKey,
-          }),
+          // --judge-model PROVIDER:MODEL uses a chat model instead of TypeSafe Jev.
+          executeDecision: judgeModel
+            ? llmJudge(
+                store,
+                boundedWeftClient(
+                  process.env.WEFT_API_KEY!,
+                  WORKER_WEFT_TIMEOUT_MS,
+                ),
+                {
+                  scope: policy.scope,
+                  budgetId,
+                  maxCostUsd: argument(args, "--max-cost"),
+                  policy: jevPolicy,
+                  enabled,
+                  model: judgeModel,
+                },
+              )
+            : retainedJev(store, {
+                scope: policy.scope,
+                budgetId,
+                capMicros,
+                policy: jevPolicy,
+                mode: "acquire",
+                enabled,
+                apiKey: jevKey,
+              }),
         });
         console.log(
           JSON.stringify({
