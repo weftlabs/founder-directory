@@ -45,21 +45,34 @@ test("description recipes distinguish founder behavior, source attribution and p
       model: { provider: "fixture", model: "fixture", revision: null },
       codeDigest: "test",
     });
-    assert.equal(recipe.promptVersion, "evidence-only-v9");
+    assert.equal(recipe.promptVersion, "evidence-only-v10");
     assert.deepEqual(recipe.parameters, { temperature: 0, max_tokens: 1800 });
     assert.match(recipe.template, /Write values in English/);
     assert.match(recipe.template, /publisher_statement/);
-    if (purpose === "founder_dna")
+    if (purpose === "founder_dna") {
       assert.match(
         recipe.template,
         /Product capabilities are not founder skills or habits/,
       );
+      // Kept by the autoresearch prompt loop (see PR description).
+      assert.match(recipe.template, /never repeat a field/);
+      assert.match(
+        recipe.template,
+        /building or promoting a product is not a craft/,
+      );
+      assert.match(recipe.template, /cites every excerpt any part relies on/);
+    }
     if (purpose === "product_descriptions")
       assert.match(recipe.template, /planned or announced/);
-    if (purpose === "product_discovery")
+    if (purpose === "product_discovery") {
       assert.match(recipe.template, /Never replace a proper product name/);
+      assert.match(
+        recipe.template,
+        /shortened link such as t\.co is not a product website/,
+      );
+    }
     if (purpose === "founder_dna") {
-      assert.match(recipe.template, /every factual clause/);
+      // Replaced by the stricter "cites every excerpt any part relies on" rule.
       assert.match(recipe.template, /documenting.*public/i);
       assert.match(recipe.template, /CEO.*not.*craft/i);
       assert.match(

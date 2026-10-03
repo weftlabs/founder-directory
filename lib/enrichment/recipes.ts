@@ -65,7 +65,7 @@ const FIELDS = {
   founder_dna: ["summary", "craft", "working_style", "interests"],
 } as const;
 
-export const RECIPE_VERSION = "evidence-only-v9";
+export const RECIPE_VERSION = "evidence-only-v10";
 
 export function selectAnalysisEvidence(
   purpose: keyof typeof FIELDS,
