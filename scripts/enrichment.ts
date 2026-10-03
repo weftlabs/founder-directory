@@ -24,7 +24,7 @@ import {
   type RunFounderPortraitInput,
 } from "../lib/enrichment/founder-portrait";
 import { retainedJev } from "../lib/enrichment/retained-jev";
-import { llmJudge } from "../lib/enrichment/llm-judge";
+import { llmJudge, llmJudgeIdentity } from "../lib/enrichment/llm-judge";
 import { runAnalysis } from "../lib/enrichment/analysis";
 import { weftGeneration, generationRoute } from "../lib/enrichment/generation";
 import {
@@ -476,6 +476,9 @@ export async function main(args = process.argv.slice(2)) {
               enabled,
             },
           ),
+          ...(judgeModel
+            ? { judgeIdentity: llmJudgeIdentity(judgeModel) }
+            : {}),
           // --judge-model PROVIDER:MODEL uses a chat model instead of TypeSafe Jev.
           executeDecision: judgeModel
             ? llmJudge(

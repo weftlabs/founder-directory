@@ -12,6 +12,8 @@ import { generationContent } from "./analysis";
 import { deepseekFlashParameters } from "./recipes";
 
 export const LLM_JUDGE_VERSION = "llm-choice-judge-v1";
+export const llmJudgeIdentity = (model: { provider: string; model: string }) =>
+  `${LLM_JUDGE_VERSION}:${model.provider}:${model.model}`;
 const SYSTEM = [
   "You are a strict evidence judge. The user message holds `state` (JSON with rules,",
   "evidence and the statements to check) and `questions`. For every question, read its",
@@ -147,9 +149,11 @@ export function llmJudge(
       },
     });
     const body = {
+      // Reasoning models would otherwise spend the whole output budget thinking.
+      reasoning: { effort: "minimal" },
       ...deepseekFlashParameters(config.model),
       temperature: 0,
-      max_tokens: 400 + 150 * Object.keys(input.request.questions).length,
+      max_tokens: 1000 + 200 * Object.keys(input.request.questions).length,
       model: config.model.revision ?? config.model.model,
       messages: [
         { role: "system", content: SYSTEM },
