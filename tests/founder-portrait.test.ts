@@ -26,6 +26,7 @@ async function verifyPortrait(
     | "wrong roast citation"
     | "wrong portrait citation"
     | "unsupported trait"
+    | "gendered pronoun"
     | "long judge request"
     | "maximum profile"
     | "oversized evidence"
@@ -294,6 +295,8 @@ async function verifyPortrait(
       if (scenario === "unsupported trait")
         draft.archetype.summary =
           "Alex is a relentlessly curious perfectionist.";
+      if (scenario === "gendered pronoun")
+        draft.archetype.summary = "Alex designs tools; his work ships weekly.";
       if (
         scenario === "wrong roast citation" ||
         scenario === "wrong portrait citation"
@@ -466,6 +469,20 @@ async function verifyPortrait(
       executeGeneration,
       executeDecision,
     });
+    if (scenario === "gendered pronoun") {
+      // Rejected deterministically, before any paid judge call.
+      assert.equal(result.status, "failed");
+      assert.equal(judgeCalls, 0);
+      const saved = await db.query<{ validation_report: { error: string } }>(
+        "SELECT validation_report FROM enrichment_analysis_runs WHERE id=$1",
+        [result.analysisId],
+      );
+      assert.equal(
+        saved.rows[0].validation_report.error,
+        "portrait_gendered_pronoun",
+      );
+      return;
+    }
     if (
       scenario === "wrong citation" ||
       scenario === "wrong roast citation" ||
@@ -719,6 +736,7 @@ for (const scenario of [
   "wrong roast citation",
   "wrong portrait citation",
   "unsupported trait",
+  "gendered pronoun",
   "long judge request",
   "maximum profile",
   "oversized evidence",
