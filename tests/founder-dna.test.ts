@@ -130,3 +130,25 @@ test("explicit SQL injection remains available without runtime URLs", async () =
   );
   assert.deepEqual(result, { status: "ready", profile });
 });
+
+test("coverage measures evidence per area, never the person; unknown is missing", async () => {
+  const { founderCoverage } = await import("../lib/founder-dna");
+  const axes = founderCoverage({
+    facets: [
+      { key: "venture_domain", value: "developer", confidence: 0.1 },
+      { key: "craft", value: "technical", confidence: 0.9 },
+      { key: "building_style", value: "unknown", confidence: 1 },
+      { key: "founding_role", value: "solo", confidence: 1 },
+    ],
+    products: [{}, {}, {}] as never,
+    sources: [{ kind: "post" }, { kind: "post" }, { kind: "bio" }] as never,
+  });
+  assert.deepEqual(Object.fromEntries(axes.map((a) => [a.key, a.value])), {
+    venture_domain: 0.35, // known but uncertain stays visible
+    craft: 0.9,
+    building_style: 0, // unknown is missing (gold)
+    founding_role: 1,
+    products: 1,
+    posts: 0.4,
+  });
+});

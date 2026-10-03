@@ -1,11 +1,16 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import type { FounderDnaProfile } from "@/lib/founder-dna";
+import {
+  founderCoverage,
+  type CoverageAxis,
+  type FounderDnaProfile,
+} from "@/lib/founder-dna";
 import { founderShareImageUrl, founderShareText } from "@/lib/founder-share";
 import { SiteHeader } from "./site-header";
 import { FounderDnaShare } from "./founder-dna-share";
 import { Claim } from "./products-view";
 import { ProductImage } from "./product-image";
+import { FounderAvatar } from "./founder-avatar";
 
 const sourceLabels = {
   bio: "Saved bio",
@@ -22,6 +27,96 @@ const facetLabels = {
 function valueLabel(value: string) {
   return value === "unknown" ? "Not yet known" : value.replace(/_/g, " ");
 }
+function initials(name: string) {
+  const letters = name
+    .replace(/[^\p{L}\p{N} ]/gu, "")
+    .trim()
+    .split(/\s+/)
+    .map((part) => part[0])
+    .join("");
+  return (letters || "?").slice(0, 2).toUpperCase();
+}
+
+/** Evidence coverage as a spider chart. Gold axes are missing from the sources. */
+function CoverageRadar({ axes }: { axes: CoverageAxis[] }) {
+  const size = 320,
+    center = size / 2,
+    radius = 108;
+  const point = (index: number, scale: number) => {
+    const angle = (Math.PI * 2 * index) / axes.length - Math.PI / 2;
+    return [
+      center + Math.cos(angle) * radius * scale,
+      center + Math.sin(angle) * radius * scale,
+    ];
+  };
+  const ring = (scale: number) =>
+    axes.map((_, index) => point(index, scale).join(",")).join(" ");
+  const shape = axes
+    .map((axis, index) => point(index, Math.max(axis.value, 0.06)).join(","))
+    .join(" ");
+  const missing = axes.filter((axis) => axis.value === 0).map((a) => a.label);
+  return (
+    <figure className="dna-radar">
+      <svg
+        viewBox={`0 0 ${size} ${size}`}
+        role="img"
+        aria-label={`Evidence coverage. Established: ${axes
+          .filter((a) => a.value > 0)
+          .map((a) => a.label)
+          .join(", ")}. Missing: ${missing.join(", ") || "none"}.`}
+      >
+        {[0.33, 0.66, 1].map((scale) => (
+          <polygon
+            key={scale}
+            points={ring(scale)}
+            className="dna-radar-ring"
+          />
+        ))}
+        {axes.map((_, index) => {
+          const [x, y] = point(index, 1);
+          return (
+            <line
+              key={index}
+              x1={center}
+              y1={center}
+              x2={x}
+              y2={y}
+              className="dna-radar-spoke"
+            />
+          );
+        })}
+        <polygon points={shape} className="dna-radar-shape" />
+        {axes.map((axis, index) => {
+          const [x, y] = point(index, 1.24);
+          return (
+            <text
+              key={axis.key}
+              x={x}
+              y={y}
+              textAnchor={
+                Math.abs(x - center) < 4
+                  ? "middle"
+                  : x > center
+                    ? "start"
+                    : "end"
+              }
+              dominantBaseline="middle"
+              className={
+                axis.value ? "dna-radar-label" : "dna-radar-label missing"
+              }
+            >
+              {axis.label}
+            </text>
+          );
+        })}
+      </svg>
+      <figcaption>
+        What the sources establish. <span>Gold means missing.</span>
+      </figcaption>
+    </figure>
+  );
+}
+
 export function FounderDnaProfileView({
   profile,
   connections,
@@ -30,98 +125,147 @@ export function FounderDnaProfileView({
   connections?: ReactNode;
 }) {
   const { portrait } = profile;
+  // Lead with the best-documented product: image, then website, then description.
+  const rank = (product: (typeof profile.products)[number]) =>
+    (product.imageUrl ? 4 : 0) +
+    (product.website ? 2 : 0) +
+    (product.description.value?.length ?? 0) / 1000;
+  const [lead, ...others] = [...profile.products].sort(
+    (a, b) => rank(b) - rank(a),
+  );
   return (
     <>
       <SiteHeader />
-      <main className="profile profile-portrait released-dna-profile">
+      <main className="dna-page released-dna-profile">
         <Link className="back" href="/directory">
           ← Find founders
         </Link>
-        <div
-          className={
-            profile.avatarUrl ? "hero-row" : "hero-row hero-row-no-avatar"
-          }
-        >
-          {profile.avatarUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={profile.avatarUrl}
-              alt=""
-              width={96}
-              height={96}
-              referrerPolicy="no-referrer"
-            />
-          ) : null}
-          <div>
-            <h1>{profile.name}</h1>
-            <p className="handle">
-              @{profile.handle}
-              {profile.location ? ` · ${profile.location}` : ""}
-            </p>
-          </div>
-        </div>
-        {profile.bio ? <p className="bio">{profile.bio}</p> : null}
-        <section className="profile-dna-hero">
-          <p className="profile-dna-eyebrow">Founder DNA</p>
-          <h2>{portrait.archetype.title}</h2>
-          <p className="profile-dna-hook">{portrait.archetype.hook}</p>
-          <div className="portrait-tags">
-            {portrait.archetype.tags.map((tag) => (
-              <span key={tag}>{tag}</span>
-            ))}
-          </div>
-          <p className="profile-dna-summary">{portrait.archetype.summary}</p>
-        </section>
-        <section className="profile-dna-roast">
-          <p className="profile-dna-eyebrow">The friendly roast</p>
-          <h2>{portrait.roast.title}</h2>
-          <ul>
-            {portrait.roast.lines.map((line, index) => (
-              <li key={index}>{line.text}</li>
-            ))}
-          </ul>
-          <a href="#founder-share-title">Share this roast ↓</a>
-        </section>
-        {connections ?? (
-          <section className="panel">
-            <h2>Explore connections</h2>
-            <p>There are no checked connections to show yet.</p>
-            <Link href="/directory">Find more founders →</Link>
-          </section>
-        )}
-        <section className="profile-dna-connection">
-          <p className="profile-dna-eyebrow">The connection in your story</p>
-          <h2>{portrait.story.title}</h2>
-          <p>{portrait.story.connection}</p>
-        </section>
-        {profile.products.length ? (
-          <section className="panel">
-            <h2>What they are building</h2>
-            {profile.products.map((product, index) => (
-              <article className="local-founder-product" key={index}>
-                <ProductImage
-                  name={product.name.value ?? "Product"}
-                  imageUrl={product.imageUrl}
-                  website={product.website}
+        <article className="dna-card">
+          <div className="dna-grid">
+            <section className="dna-identity">
+              <header className="dna-person">
+                <FounderAvatar
+                  src={profile.avatarUrl}
+                  initials={initials(profile.name)}
                 />
-                <h3>
-                  <Claim claim={product.name} fallback="Product" />
-                </h3>
-                <p>
-                  <Claim
-                    claim={product.description}
-                    fallback="Description not yet known"
-                  />
-                </p>
-                {product.website ? (
-                  <a href={product.website} target="_blank" rel="noreferrer">
-                    Visit site ↗
+                <div>
+                  <h1>{profile.name}</h1>
+                  <p>
+                    @{profile.handle}
+                    {profile.location ? ` · ${profile.location}` : ""}
+                  </p>
+                </div>
+              </header>
+              <p className="dna-eyebrow">Founder DNA</p>
+              <h2>{portrait.archetype.title}</h2>
+              <p className="dna-hook">{portrait.archetype.hook}</p>
+              <div className="dna-tags">
+                {portrait.archetype.tags.map((tag) => (
+                  <span key={tag}>{tag}</span>
+                ))}
+              </div>
+              <p className="dna-summary">{portrait.archetype.summary}</p>
+            </section>
+            <section className="dna-coverage" aria-label="Evidence coverage">
+              <CoverageRadar axes={founderCoverage(profile)} />
+            </section>
+            <section className="dna-building">
+              {lead ? (
+                <>
+                  {lead.imageUrl ? (
+                    <ProductImage
+                      name={lead.name.value ?? "Product"}
+                      imageUrl={lead.imageUrl}
+                      website={lead.website}
+                    />
+                  ) : null}
+                  <p className="dna-eyebrow">What they are building</p>
+                  <h3>
+                    <Claim claim={lead.name} fallback="Product" />
+                  </h3>
+                  <p className="dna-product-description">
+                    <Claim
+                      claim={lead.description}
+                      fallback="Description not yet known"
+                    />
+                  </p>
+                  {lead.website ? (
+                    <a href={lead.website} target="_blank" rel="noreferrer">
+                      Visit site ↗
+                    </a>
+                  ) : null}
+                  {others.length ? (
+                    <div className="dna-also">
+                      <p className="dna-eyebrow">Also building</p>
+                      <ul>
+                        {others.map((product, index) => (
+                          <li key={index}>
+                            {product.website ? (
+                              <a
+                                href={product.website}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                <Claim
+                                  claim={product.name}
+                                  fallback="Product"
+                                />
+                              </a>
+                            ) : (
+                              <Claim claim={product.name} fallback="Product" />
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {profile.bio ? (
+                    <p className="dna-bio">
+                      <span className="dna-eyebrow">In their words</span>
+                      {profile.bio}
+                    </p>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <p className="dna-eyebrow">{portrait.story.title}</p>
+                  <p className="dna-story">{portrait.story.connection}</p>
+                  {profile.bio ? (
+                    <p className="dna-bio">
+                      <span className="dna-eyebrow">In their words</span>
+                      {profile.bio}
+                    </p>
+                  ) : null}
+                </>
+              )}
+              <p className="dna-links">
+                <a
+                  href={`https://x.com/${profile.handle}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  @{profile.handle} on X ↗
+                </a>
+                {profile.website ? (
+                  <a href={profile.website} target="_blank" rel="noreferrer">
+                    Website ↗
                   </a>
                 ) : null}
-              </article>
-            ))}
+              </p>
+            </section>
+          </div>
+          <section className="dna-roast">
+            <p className="dna-eyebrow">The friendly roast</p>
+            <h2>{portrait.roast.title}</h2>
+            <ul>
+              {portrait.roast.lines.map((line, index) => (
+                <li key={index}>{line.text}</li>
+              ))}
+            </ul>
+            <a href="#founder-share-title">Share this roast ↓</a>
           </section>
-        ) : null}
+        </article>
+        {connections}
         <details className="profile-why">
           <summary>
             Why this fits <span>See the sources behind the portrait</span>
@@ -188,23 +332,6 @@ export function FounderDnaProfileView({
             "",
           )}
         />
-        <section className="panel">
-          <h2>Public links</h2>
-          <a
-            href={`https://x.com/${profile.handle}`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            View @{profile.handle} on X ↗
-          </a>
-          {profile.website ? (
-            <p>
-              <a href={profile.website} target="_blank" rel="noreferrer">
-                Website ↗
-              </a>
-            </p>
-          ) : null}
-        </section>
       </main>
     </>
   );

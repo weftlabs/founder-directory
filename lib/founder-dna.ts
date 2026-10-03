@@ -262,3 +262,38 @@ export function parseFounderDnaProfile(value: unknown): FounderDnaProfile {
     connections,
   };
 }
+
+export type CoverageAxis = { key: string; label: string; value: number };
+
+/**
+ * How well the saved sources establish each area of the profile, 0–1.
+ * Evidence coverage, never a score of the person; 0 means "missing".
+ */
+export function founderCoverage(
+  profile: Pick<FounderDnaProfile, "facets" | "products" | "sources">,
+): CoverageAxis[] {
+  const facet = (key: DnaFacetKey) => {
+    const found = profile.facets.find((item) => item.key === key);
+    // A known but uncertain area stays visible; unknown is missing.
+    return found && found.value !== "unknown"
+      ? Math.min(1, Math.max(0.35, found.confidence))
+      : 0;
+  };
+  const posts = profile.sources.filter((s) => s.kind === "post").length;
+  return [
+    {
+      key: "venture_domain",
+      label: "Working on",
+      value: facet("venture_domain"),
+    },
+    { key: "craft", label: "Craft", value: facet("craft") },
+    { key: "building_style", label: "Style", value: facet("building_style") },
+    { key: "founding_role", label: "Role", value: facet("founding_role") },
+    {
+      key: "products",
+      label: "Products",
+      value: Math.min(1, profile.products.length / 2),
+    },
+    { key: "posts", label: "Own posts", value: Math.min(1, posts / 5) },
+  ];
+}

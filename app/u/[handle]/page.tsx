@@ -69,20 +69,28 @@ export default async function ProfilePage({
 }) {
   const { handle } = await params;
   const dna = await readDnaProfile(handle);
-  if (dna.status === "ready")
+  if (dna.status === "ready") {
+    // The release may not carry an avatar; the directory row usually does.
+    const avatarUrl =
+      dna.profile.avatarUrl ??
+      (await getFounder(handle).catch(() => null))?.avatarUrl ??
+      null;
     return (
       <FounderDnaProfileView
-        profile={dna.profile}
+        profile={{ ...dna.profile, avatarUrl }}
         connections={
-          <FounderConnections
-            connections={dna.profile.connections}
-            founderId={dna.profile.id}
-            profileRevision={dna.profile.revision}
-            releaseId={dna.profile.releaseId}
-          />
+          dna.profile.connections.length ? (
+            <FounderConnections
+              connections={dna.profile.connections}
+              founderId={dna.profile.id}
+              profileRevision={dna.profile.revision}
+              releaseId={dna.profile.releaseId}
+            />
+          ) : null
         }
       />
     );
+  }
   if (dna.status === "unavailable")
     return (
       <>
