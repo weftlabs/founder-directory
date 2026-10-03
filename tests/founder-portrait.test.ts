@@ -572,6 +572,20 @@ async function verifyPortrait(
     assert.equal(replay.status, "reused");
     assert.equal(textCalls, 1);
     assert.equal(judgeCalls, 3);
+    if (scenario === "unchanged replay") {
+      // A different judge is a different check: it must not replay this verdict.
+      const otherJudge = await runFounderPortrait(store, input, {
+        executeGeneration,
+        executeDecision: async () => {
+          throw new Error("other judge called");
+        },
+        judgeIdentity: "llm-choice-judge-v1:weft/openrouter:other",
+      }).catch((error: Error) => error);
+      assert.ok(
+        otherJudge instanceof Error &&
+          /other judge called/.test(String(otherJudge.cause)),
+      );
+    }
     let publicationResult = result;
     if (scenario === "new product") {
       const productId = await store.createEntity("product", "new-product");

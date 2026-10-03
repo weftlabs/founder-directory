@@ -376,6 +376,17 @@ uses at most one text-generation call. Judge v6 groups fact checks by exact sour
 subset and prose checks by exact cited fact subset, then classifies facets in a
 separate call. A typical profile uses three Jev calls; the maximum is fifteen.
 All request sizes and the planned count are checked before the first judge call.
+
+`--judge-model PROVIDER:MODEL` (for example `weft/openrouter:openai/gpt-5-nano`)
+replaces Jev with a chat model that answers the same choice questions through
+the paid Weft route, so no TypeSafe key is needed and `--jev-cap-micros` is
+ignored. `--jev-policy` then names that route's operation (for OpenRouter,
+`openrouter-chat-completions`). The judge must return a choice and a probability
+for every option; probabilities are normalized and the chosen option must be the
+most likely, otherwise the check fails closed. The exact request, the raw model
+response and the normalized decision are retained. Self-reported probabilities
+are not calibrated like Jev's, so review a sample before trusting the 0.8
+support threshold. Use a different model from the portrait generator.
 A failed fact group stops before prose; a failed prose group stops later groups.
 An operator must also enforce its approved aggregate call limit. Repeating the same completed
 run reuses its saved analysis. Replay identity includes the eligible published

@@ -171,6 +171,8 @@ export async function runFounderPortrait(
   deps: {
     executeGeneration: ExecuteGeneration;
     executeDecision: ExecuteRetainedDecision;
+    /** A non-Jev judge is part of the check, so it is part of the run identity. */
+    judgeIdentity?: string;
   },
 ) {
   const worker = new WorkerStore(store.db),
@@ -270,6 +272,7 @@ export async function runFounderPortrait(
   const runId = stableUuid({
     generationRunId,
     judgeRecipeVersion: PORTRAIT_JUDGE_RECIPE_VERSION,
+    ...(deps.judgeIdentity ? { judge: deps.judgeIdentity } : {}),
   });
   const old = await store.findAnalysis(runId);
   if (old) {
