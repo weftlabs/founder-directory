@@ -16,6 +16,9 @@ import {
   stageDnaBundle,
 } from "../lib/enrichment/dna-bundle";
 import { readFounderDnaProfile } from "../lib/founder-dna-data";
+import { readFounderDnaCoverage } from "../lib/enrichment/dna-coverage";
+import { readProductPage } from "../lib/product-data";
+import { productQuery } from "../lib/products";
 import { founderDnaFixture } from "./fixtures/founder-dna";
 import { main } from "../scripts/founder-dna-release";
 import { stableDigest } from "../lib/enrichment/contracts";
@@ -665,6 +668,198 @@ test("v5 bundles retain every scoped judge capture and reject incomplete exchang
         (row) => row.id === portrait.id,
       )?.validation_report,
       portrait.validation_report,
+    );
+  } finally {
+    await src.pg.close();
+    await dst.pg.close();
+  }
+});
+
+async function publishDescribedProduct(
+  db: Database,
+  founderId: string,
+  slug: string,
+  name: string,
+) {
+  const store = new EnrichmentStore(db);
+  const product = await store.createEntity(
+    "product",
+    `product:${founderId}:${slug}`,
+  );
+  const raw = await store.putArtifact({
+    kind: "legacy_import",
+    body: Buffer.from(name),
+    contentType: "text/plain",
+    redactionVersion: "none",
+    importBatch: `product-${slug}`,
+  });
+  const evidence = await store.addEvidence({
+    artifactId: raw.id,
+    extractorVersion: "v1",
+    locator: "page",
+    excerpt: name,
+    payload: { sourceKind: "product-site" },
+    sourceUrl: "https://example.test/product",
+  });
+  await store.linkEvidence(product, evidence, "source");
+  await store.linkEvidence(founderId, evidence, "ownership");
+  await store.linkProduct(founderId, product, evidence);
+  const release = await store.createRelease({
+    stages: ["product_descriptions"],
+  });
+  await store.approveRelease(release, raw.id, {
+    actor: "reviewer",
+    reason: "synthetic",
+  });
+  const analysis = randomUUID();
+  await store.saveAnalysis({
+    id: analysis,
+    entityId: product,
+    releaseId: release,
+    generation: 0,
+    purpose: "product_descriptions",
+    inputArtifactId: raw.id,
+    inputDigest: `product-${slug}`,
+    recipeDigest: "product-recipe",
+    evidenceIds: [evidence],
+    output: {
+      claims: [
+        {
+          field: "name",
+          value: name,
+          kind: "self_report",
+          state: "supported",
+          evidenceIds: [],
+        },
+        {
+          field: "description",
+          value: "A saved product",
+          kind: "self_report",
+          state: "supported",
+          evidenceIds: [],
+        },
+      ],
+    },
+    validationReport: {},
+    status: "succeeded",
+  });
+  await db.query(
+    "INSERT INTO enrichment_profiles(entity_id,analysis_id) VALUES($1,$2)",
+    [product, analysis],
+  );
+  return { product, analysis, evidence, raw, store };
+}
+
+test("published cohort products stage into an empty destination and non-cohort products stay behind", async () => {
+  const src = await database(),
+    dst = await database();
+  try {
+    const cohort = await seed(src.db);
+    const outsider = await seed(src.db, false, "outsider");
+    const published = await publishDescribedProduct(
+      src.db,
+      cohort.entity,
+      "planner",
+      "Planner",
+    );
+    // A co-founder outside the release must not become a public product link.
+    await published.store.linkEvidence(
+      outsider.entity,
+      published.evidence,
+      "ownership",
+    );
+    await published.store.linkProduct(
+      outsider.entity,
+      published.product,
+      published.evidence,
+    );
+    const other = await publishDescribedProduct(
+      src.db,
+      outsider.entity,
+      "other",
+      "Outsider Tool",
+    );
+    const portrait = (
+      await src.db.query<{ product_ids: unknown }>(
+        "SELECT validation_report->'productAnalysisIds' AS product_ids FROM enrichment_analysis_runs WHERE id=$1",
+        [cohort.portrait],
+      )
+    ).rows[0];
+    assert.deepEqual(portrait.product_ids, []);
+
+    const bundle = await exportDnaBundle(src.db, "release-one");
+    assert.deepEqual(
+      bundle.rows.enrichment_profiles.map((row) => row.entity_id),
+      [published.product],
+    );
+    assert.equal(
+      bundle.rows.enrichment_analysis_runs.some(
+        (row) => row.id === published.analysis,
+      ),
+      true,
+    );
+    assert.deepEqual(
+      bundle.rows.enrichment_founder_products.map((row) => row.founder_id),
+      [cohort.entity],
+    );
+    for (const id of [outsider.entity, other.product, other.analysis]) {
+      assert.equal(JSON.stringify(bundle.rows).includes(id), false, id);
+    }
+
+    await stageDnaBundle(dst.db, bundle);
+    await stageDnaBundle(dst.db, bundle);
+    const page = await readProductPage(dst.db, productQuery({}));
+    assert.equal(page.total, 1);
+    assert.equal(page.products[0].name.value, "Planner");
+    assert.deepEqual(page.products[0].founders, ["example"]);
+    assert.equal(
+      (await dst.db.query("SELECT entity_id FROM enrichment_profiles")).rows
+        .length,
+      1,
+    );
+
+    const dna = new DnaPublicationStore(dst.db);
+    await dna.validateRelease("release-one");
+    await dna.activateRelease("release-one");
+    const coverage = await readFounderDnaCoverage(dst.db, "release-one");
+    assert.equal(coverage.productLinked.total, 1);
+    assert.equal(coverage.productLinked.missing, 0);
+    assert.equal(coverage.productLinked.ready, 1);
+  } finally {
+    await src.pg.close();
+    await dst.pg.close();
+  }
+});
+
+test("staged product publication follows the destination owner identity", async () => {
+  const src = await database(),
+    dst = await database();
+  try {
+    const seeded = await seed(src.db);
+    const published = await publishDescribedProduct(
+      src.db,
+      seeded.entity,
+      "planner",
+      "Planner",
+    );
+    const target = new EnrichmentStore(dst.db);
+    const founder = await target.createEntity("founder", "example");
+    const product = await target.createEntity(
+      "product",
+      `product:${founder}:planner`,
+    );
+    await retainIdentity(dst.db, founder, "100");
+    const bundle = await exportDnaBundle(src.db, "release-one");
+    await stageDnaBundle(dst.db, bundle);
+    const page = await readProductPage(dst.db, productQuery({}));
+    assert.equal(page.products[0].name.value, "Planner");
+    assert.deepEqual(
+      (
+        await dst.db.query<{ entity_id: string; analysis_id: string }>(
+          "SELECT entity_id,analysis_id FROM enrichment_profiles",
+        )
+      ).rows,
+      [{ entity_id: product, analysis_id: published.analysis }],
     );
   } finally {
     await src.pg.close();
