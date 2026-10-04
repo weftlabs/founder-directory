@@ -129,6 +129,8 @@ export function llmJudge(
     policy: CollectionInput["policy"];
     enabled: () => boolean;
     model: { provider: string; model: string; revision: string | null };
+    /** Portraits omit this and stay on acquire. Connections replay must not dispatch. */
+    mode?: "acquire" | "replay";
   },
 ): ExecuteRetainedDecision {
   const route = generationRoute(config.model.provider);
@@ -183,7 +185,7 @@ export function llmJudge(
         generation: 0,
         operation: route.operationId,
         policy: config.policy,
-        mode: "acquire",
+        mode: config.mode ?? "acquire",
         requestIdentity: `${LLM_JUDGE_VERSION}:${input.runId}:${stableDigest(input.request)}`,
       },
       {

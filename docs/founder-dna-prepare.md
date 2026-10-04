@@ -120,15 +120,48 @@ even when credentials are present. Acquisition also requires explicitly set
 are also supported. Replay without a batch manifest can check and save retained
 decisions, but it cannot stage any edge.
 
+`--judge-model PROVIDER:MODEL` (for example `weft/openrouter:openai/gpt-5-nano`)
+replaces TypeSafe Jev with a chat model that answers the same choice question
+through the paid Weft route. Acquire then requires `WEFT_API_KEY` instead of a
+TypeSafe key, plus `--allow-paid` and `ENRICHMENT_ALLOW_PAID=1`. Pass `--max-cost`
+in USD for each judge call. `--jev-cap-micros` is not used. `--policy` must name
+that route's operation (`openrouter-chat-completions` for `weft/openrouter`,
+`blockrun-chat-completions` for `weft/blockrun`), with the same scope and the
+existing storage and retention approvals. A Jev policy cannot authorize this route.
+The exact request, the raw model response, and the normalized decision are retained.
+The saved decision model is the chat judge's response model. A repeated run with the
+same judge reuses that decision and does not buy the pair again. The judge identity
+is part of the decision id, so a different model does not replay an earlier verdict.
+Batch files from `connections-plan` still name candidate pairs, not the judge, and
+the same file works with either judge. Do not stage two judges onto one release:
+duplicate neighbours fail validation. Chat probabilities are self-reported, not
+calibrated like Jev, so review a sample before trusting the 0.8 support threshold.
+
+```sh
+pnpm exec tsx scripts/founder-dna-prepare.ts connections \
+  --database-url "$SOURCE_DATABASE_URL" --release pilot-001 --scope pilot-001 \
+  --policy "$PRIVATE_JUDGE_POLICY_FILE" --budget "$BUDGET_ID" \
+  --judge-model weft/openrouter:openai/gpt-5-nano --max-cost "$MAX_COST_USD" \
+  --max-requests "$REQUEST_LIMIT" \
+  --batch-file "$PRIVATE_CONNECTION_BATCH_FILE" --batch "$BATCH_ID" \
+  --mode acquire --allow-paid \
+  --confirm-write
+```
+
+Replay with the same flags, and without `--mode acquire` or `--allow-paid`, uses
+the retained decision and does not dispatch. A missing decision still fails with
+`missing_input`.
+
 The release, policy, and budget scopes must match. `--max-requests` is a positive
 integer no larger than 5000. It bounds the complete candidate set, including
-cached decisions; an oversized set fails before dispatch. Each request reserves
-`--jev-cap-micros` against the existing total budget. Provider token usage is an
-estimate, not a settled receipt. Ambiguous calls are retained and are not retried
+cached decisions; an oversized set fails before dispatch. Each Jev request reserves
+`--jev-cap-micros` against the existing total budget. A chat judge reserves
+`--max-cost` instead. Provider token usage is an estimate, not a settled receipt.
+Ambiguous calls are retained and are not retried
 automatically; inspect and reconcile the attempt before any new paid work.
 
 Candidates come from eligible staged profiles and compatible saved embeddings.
-Each pair is checked again before and after its retained Jev decision. Accepted,
+Each pair is checked again before and after its retained decision. Accepted,
 rejected, and insufficient decisions are stored. At most three accepted edges per
 profile are staged. Missing or withdrawn endpoints produce no new edges. Empty
 results are valid. The JSON result reports complete candidate, processed,
@@ -154,6 +187,8 @@ dry-run and staging operations. Activation and rollback remain explicit operator
 actions, with the existing production approval requirement.
 
 The offline regression in `tests/founder-dna-prepare.test.ts` runs these preparation
-commands against PGlite with the real stores and a mocked Jev transport. It proves
-approval gates, bounded requests, scope checks, retained capture, repeat replay,
-and withdrawal without paid calls or an active release change.
+commands against PGlite with the real stores and a mocked Jev or Weft transport. It
+proves approval gates, bounded requests, scope checks, retained capture, repeat replay,
+and withdrawal without paid calls or an active release change. The chat-judge path
+makes no Jev call, retains the request and decision, and a different judge identity
+does not reuse the earlier verdict.
