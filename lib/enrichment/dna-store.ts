@@ -216,6 +216,20 @@ export class DnaPublicationStore {
         [releaseId],
       );
       if (!release.rows.length) throw new Error("release_not_staging");
+      // A second judge has a different decision id for the same pair. Staging both
+      // would publish duplicate neighbours; keep the earlier edge and fail closed.
+      const duplicate = await tx.query(
+        `SELECT 1 FROM founder_dna_release_edges edge
+        JOIN founder_dna_connection_decisions existing ON existing.id=edge.decision_id
+        JOIN founder_dna_connection_decisions incoming ON incoming.id=$2
+        WHERE edge.release_id=$1 AND edge.decision_id<>$2
+        AND ((existing.left_entity_id=incoming.left_entity_id AND existing.right_entity_id=incoming.right_entity_id)
+          OR (existing.left_entity_id=incoming.right_entity_id AND existing.right_entity_id=incoming.left_entity_id))
+        LIMIT 1`,
+        [releaseId, decisionId],
+      );
+      if (duplicate.rows.length)
+        throw new Error("connection_pair_already_staged");
       await tx.query(
         "INSERT INTO founder_dna_release_edges(release_id,decision_id) VALUES($1,$2) ON CONFLICT DO NOTHING",
         [releaseId, decisionId],

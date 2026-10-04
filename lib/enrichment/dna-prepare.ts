@@ -17,7 +17,14 @@ import {
   resolveConnectionBatch,
   type ConnectionBatchManifest,
 } from "./founder-connections";
-import { retainedJev } from "./retained-jev";
+import {
+  retainedJev,
+  type ExecuteRetainedDecision,
+  type RetainedDecision,
+} from "./retained-jev";
+import { llmJudge, llmJudgeIdentity } from "./llm-judge";
+import { generationRoute } from "./generation";
+import type { WeftTransport } from "../weft";
 
 export type PreparationManifest = {
   version: 1;
@@ -170,9 +177,13 @@ export type ConnectionOptions = {
   policy: CollectionInput["policy"];
   batchManifest?: ConnectionBatchManifest;
   batchId?: string;
+  /** Chat-model judge. Absent means TypeSafe Jev, with an unchanged decision id. */
+  judgeModel?: { provider: string; model: string; revision: string | null };
+  maxCostUsd?: string;
 };
 export function validateConnectionOptions(input: ConnectionOptions) {
   const policy = input.policy;
+  const judge = input.judgeModel;
   if (
     !label(input.releaseId) ||
     !label(input.scope) ||
@@ -183,14 +194,23 @@ export function validateConnectionOptions(input: ConnectionOptions) {
     input.maxRequests > 5000 ||
     !["acquire", "replay"].includes(input.mode) ||
     (!!input.batchId && !input.batchManifest) ||
-    (input.mode === "acquire" && (!input.batchManifest || !input.batchId))
+    (input.mode === "acquire" && (!input.batchManifest || !input.batchId)) ||
+    (!!judge &&
+      (!judge.provider ||
+        !judge.model ||
+        judge.revision !== null ||
+        !input.maxCostUsd ||
+        !/^\d+(?:\.\d{1,6})?$/.test(input.maxCostUsd)))
   )
     throw new Error("invalid_connection_options");
+  const operation = judge
+    ? generationRoute(judge.provider).operationId
+    : "typesafe-systemone";
   if (
     !record(policy) ||
     !label(policy.id) ||
     policy.scope !== input.scope ||
-    policy.operation !== "typesafe-systemone" ||
+    policy.operation !== operation ||
     policy.storageVerified !== true ||
     policy.retentionApproved !== true
   )
@@ -245,6 +265,46 @@ export async function planFounderConnectionBatches(
   return createConnectionBatchManifest(releaseId, scope, pairs);
 }
 
+async function reuseConnectionDecision(
+  store: EnrichmentStore,
+  runId: string,
+): Promise<RetainedDecision | null> {
+  const row = (
+    await store.db.query<{
+      requestArtifactId: string;
+      responseArtifactId: string;
+    }>(
+      `SELECT request_artifact_id AS "requestArtifactId",
+              response_artifact_id AS "responseArtifactId"
+       FROM founder_dna_connection_decisions WHERE id=$1`,
+      [runId],
+    )
+  ).rows[0];
+  if (!row) return null;
+  const responseArtifact = await store.getArtifact(row.responseArtifactId);
+  const requestArtifact = await store.getArtifact(row.requestArtifactId);
+  if (!responseArtifact || !requestArtifact)
+    throw new Error("connection_decision_not_retained");
+  const rawId = responseArtifact.metadata.rawResponseArtifactId;
+  const raw = typeof rawId === "string" ? await store.getArtifact(rawId) : null;
+  const attemptId = raw?.metadata.attemptId;
+  if (typeof attemptId !== "string")
+    throw new Error("connection_decision_not_retained");
+  let response: RetainedDecision["response"];
+  try {
+    response = JSON.parse(Buffer.from(responseArtifact.body).toString("utf8"));
+  } catch {
+    throw new Error("connection_decision_not_retained");
+  }
+  return {
+    response,
+    requestArtifactId: requestArtifact.id,
+    responseArtifactId: responseArtifact.id,
+    attemptId,
+    estimatedCostMicros: "0",
+  };
+}
+
 export async function prepareFounderConnections(
   db: Database,
   input: ConnectionOptions,
@@ -252,6 +312,7 @@ export async function prepareFounderConnections(
     enabled: () => boolean;
     apiKey?: string;
     fetcher?: typeof fetch;
+    weft?: WeftTransport;
   },
 ) {
   validateConnectionOptions(input);
@@ -285,10 +346,33 @@ export async function prepareFounderConnections(
   )
     throw new Error("connection_budget_scope_mismatch");
   const publication = new DnaPublicationStore(db);
-  const execute = retainedJev(new EnrichmentStore(db), {
-    ...input,
-    ...transport,
-  });
+  const store = new EnrichmentStore(db);
+  const judge = input.judgeModel;
+  let execute: ExecuteRetainedDecision;
+  if (judge) {
+    if (!transport.weft) throw new Error("missing_weft_client");
+    if (!input.maxCostUsd) throw new Error("invalid_connection_options");
+    execute = llmJudge(store, transport.weft, {
+      scope: input.scope,
+      budgetId: input.budgetId,
+      maxCostUsd: input.maxCostUsd,
+      policy: input.policy,
+      enabled: transport.enabled,
+      model: judge,
+      mode: input.mode,
+    });
+  } else
+    execute = retainedJev(store, {
+      scope: input.scope,
+      budgetId: input.budgetId,
+      capMicros: input.capMicros,
+      policy: input.policy,
+      mode: input.mode,
+      enabled: transport.enabled,
+      apiKey: transport.apiKey,
+      fetcher: transport.fetcher,
+    });
+  const judgeIdentity = judge ? llmJudgeIdentity(judge) : undefined;
   let requests = 0;
   return discoverFounderConnections({
     loadEndpoints: async () => {
@@ -311,9 +395,16 @@ export async function prepareFounderConnections(
     stageConnections: !!input.batchManifest && !batch,
     assertEligible: (pair) =>
       assertConnectionEndpointsEligible(db, input.releaseId, pair),
+    judgeIdentity,
     execute: async (request) => {
       if (++requests > input.maxRequests)
         throw new Error("connection_request_limit_exceeded");
+      // llmJudge writes new artifact ids even when the route is cached. A saved
+      // decision is immutable, so resume must return those ids instead of conflicting.
+      if (judge) {
+        const reused = await reuseConnectionDecision(store, request.runId);
+        if (reused) return reused;
+      }
       return execute(request);
     },
     saveDecision: (decision) => publication.saveConnectionDecision(decision),

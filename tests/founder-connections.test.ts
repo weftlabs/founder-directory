@@ -266,6 +266,14 @@ test("run identity is symmetric, stable on evidence order and changes with sourc
   assert.notEqual(connectionRunId(p), connectionRunId(changed));
   changed.left.analysisId = "new-analysis";
   assert.notEqual(connectionRunId(p), connectionRunId(changed));
+  assert.equal(connectionRunId(p), connectionRunId(p, undefined, undefined));
+  const nano = "llm-choice-judge-v1:weft/openrouter:openai/gpt-5-nano";
+  const mini = "llm-choice-judge-v1:weft/openrouter:openai/gpt-5-mini";
+  assert.notEqual(connectionRunId(p), connectionRunId(p, undefined, nano));
+  assert.notEqual(
+    connectionRunId(p, undefined, nano),
+    connectionRunId(p, undefined, mini),
+  );
 });
 test("judge retains exact chosen proposition, citations from both and store mapping", async () => {
   const p = pair(),

@@ -237,6 +237,7 @@ export function buildConnectionRequest(input: ConnectionPair): Request {
 export function connectionRunId(
   pair: ConnectionPair,
   request = buildConnectionRequest(pair),
+  judgeIdentity?: string,
 ): string {
   const ordered = orderPair(pair);
   return stableUuid({
@@ -248,6 +249,8 @@ export function connectionRunId(
       .map((e) => ({ id: e.id, hash: e.contentHash }))
       .sort((a, b) => a.id.localeCompare(b.id)),
     requestDigest: stableDigest(request),
+    // Absent for Jev so existing decision and batch-pair ids stay stable.
+    ...(judgeIdentity ? { judge: judgeIdentity } : {}),
   });
 }
 
@@ -429,11 +432,13 @@ export async function judgeConnectionPair(
     execute: ExecuteRetainedDecision;
     assertEligible: (pair: ConnectionPair) => Promise<void>;
     save: (decision: ConnectionDecision) => Promise<void>;
+    /** Included in the decision id so a different judge cannot replay this verdict. */
+    judgeIdentity?: string;
   },
 ): Promise<ConnectionDecision> {
   const ordered = orderPair(pair),
     request = buildConnectionRequest(ordered),
-    id = connectionRunId(ordered, request);
+    id = connectionRunId(ordered, request, dependencies.judgeIdentity);
   await dependencies.assertEligible(ordered);
   const evidenceIds = [...ordered.left.evidence, ...ordered.right.evidence]
     .map((e) => e.id)
@@ -446,8 +451,15 @@ export async function judgeConnectionPair(
     recipeVersion: CONNECTION_RECIPE,
     evidenceIds,
   });
-  const answer = validateResponse(retained.response, request).answers
-    .related_work;
+  // Choice validation still expects the request model. The retained artifact and
+  // the saved decision model keep the chat judge's own model unchanged.
+  const response = validateResponse(
+    dependencies.judgeIdentity
+      ? { ...retained.response, model: request.model }
+      : retained.response,
+    request,
+  );
+  const answer = response.answers.related_work;
   const chosen = answer.choice as keyof typeof WORK_RELATIONS;
   const status =
     answer.choice === "rejected"
@@ -475,7 +487,7 @@ export async function judgeConnectionPair(
           ? "No supported shared-work claim."
           : "Not enough evidence for a supported shared-work claim.",
     recipeVersion: CONNECTION_RECIPE,
-    model: request.model,
+    model: dependencies.judgeIdentity ? retained.response.model : request.model,
     similarity: pair.similarity,
     confidence: answer.confidence,
     requestArtifactId: retained.requestArtifactId,
@@ -544,10 +556,11 @@ export function selectPublishedConnections(
 export function connectionDecisionInput(
   decision: ConnectionDecision,
   pair: ConnectionPair,
+  judgeIdentity?: string,
 ): ConnectionDecisionInput {
   const ordered = orderPair(pair);
   if (
-    decision.id !== connectionRunId(ordered) ||
+    decision.id !== connectionRunId(ordered, undefined, judgeIdentity) ||
     decision.leftEntityId !== ordered.left.entityId ||
     decision.rightEntityId !== ordered.right.entityId ||
     decision.leftAnalysisId !== ordered.left.analysisId ||
@@ -584,6 +597,8 @@ export async function discoverFounderConnections(dependencies: {
   execute: ExecuteRetainedDecision;
   saveDecision: (decision: ConnectionDecisionInput) => Promise<unknown>;
   stageDecision: (id: string) => Promise<unknown>;
+  /** A non-Jev judge is part of the decision, so it is part of the run id. */
+  judgeIdentity?: string;
 }) {
   const endpoints = await dependencies.loadEndpoints();
   if (endpoints.length > 1000) throw new Error("connection_cohort_too_large");
@@ -599,6 +614,7 @@ export async function discoverFounderConnections(dependencies: {
       new Set(dependencies.pairIds).size !== dependencies.pairIds.length
     )
       throw new Error("invalid_connection_batch_selection");
+    // Batch pair ids identify candidates, not the judge. Decision ids include it.
     const available = new Map(
       pairs.map((pair) => [connectionRunId(pair), pair]),
     );
@@ -614,9 +630,10 @@ export async function discoverFounderConnections(dependencies: {
       await judgeConnectionPair(pair, {
         execute: dependencies.execute,
         assertEligible: dependencies.assertEligible,
+        judgeIdentity: dependencies.judgeIdentity,
         save: async (decision) => {
           await dependencies.saveDecision(
-            connectionDecisionInput(decision, pair),
+            connectionDecisionInput(decision, pair, dependencies.judgeIdentity),
           );
         },
       }),

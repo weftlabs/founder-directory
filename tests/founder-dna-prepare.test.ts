@@ -21,6 +21,7 @@ import {
 import { readFounderDnaProfile } from "../lib/founder-dna-data";
 import { founderDnaFixture } from "./fixtures/founder-dna";
 import { MODEL, type Request } from "../lib/typesafe-poc";
+import type { WeftTransport } from "../lib/weft";
 
 test("preparation and connections require explicit writes before opening a database", async () => {
   for (const command of ["prepare", "connections-plan", "connections"])
@@ -550,4 +551,437 @@ test("unknown commands and acquire without paid permission fail before connectin
     main(["connections", "--confirm-write", "--mode", "acquire"]),
     /paid_connections_not_enabled/,
   );
+});
+
+test("chat-judge flags fail closed before opening a database", async () => {
+  let connected = false;
+  const connect = () => {
+    connected = true;
+    throw new Error("unexpected_connection");
+  };
+  await assert.rejects(
+    main(
+      [
+        "connections",
+        "--confirm-write",
+        "--mode",
+        "acquire",
+        "--allow-paid",
+        "--judge-model",
+        "weft/openrouter:openai/gpt-5-nano",
+        "--max-cost",
+        "0.01",
+      ],
+      {
+        env: { ENRICHMENT_ALLOW_PAID: "1", TYPESAFE_AI_API_KEY: "fixture" },
+        connect,
+      },
+    ),
+    /paid_connections_not_enabled/,
+  );
+  await assert.rejects(
+    main(
+      [
+        "connections",
+        "--confirm-write",
+        "--judge-model",
+        "weft/openrouter:openai/gpt-5-nano",
+      ],
+      { connect },
+    ),
+    /missing --max-cost/,
+  );
+  await assert.rejects(
+    main(
+      ["connections", "--confirm-write", "--judge-model", "not-a-provider"],
+      { connect },
+    ),
+    /invalid_judge_model/,
+  );
+  await assert.rejects(
+    main(["connections", "--confirm-write", "--judge-model", "other:model"], {
+      connect,
+    }),
+    /unsupported_model_provider/,
+  );
+  assert.equal(connected, false);
+});
+
+test("chat-judge connections make no Jev call and do not replay another judge", async () => {
+  const pg = new PGlite();
+  const directory = await mkdtemp(join(tmpdir(), "dna-judge-test-"));
+  const adapt = (client: Pick<PGlite, "query" | "exec">): Sql => ({
+    async query<T>(sql: string, values?: unknown[]) {
+      if (!values && sql.includes(";")) {
+        await client.exec(sql);
+        return { rows: [] as T[] };
+      }
+      return client.query<T>(sql, values);
+    },
+  });
+  const db: Database = {
+    ...adapt(pg),
+    transaction: (fn) => pg.transaction((tx) => fn(adapt(tx))),
+  };
+  const store = new EnrichmentStore(db),
+    dna = new DnaPublicationStore(db);
+  const scope = "synthetic-judge",
+    releaseId = "synthetic-judge-release",
+    budgetId = randomUUID();
+  const manifest: PreparationManifest = {
+    version: 1,
+    releaseId,
+    scope,
+    profiles: [],
+  };
+  let jevCalls = 0;
+  const sent: { url: string; body: string }[] = [];
+  const weft: WeftTransport = {
+    async fetch(req) {
+      sent.push({ url: req.url, body: String(req.body) });
+      const chat = JSON.parse(String(req.body)) as {
+        messages: { content: string }[];
+      };
+      const questions = JSON.parse(chat.messages[1].content).questions as {
+        related_work: { criteria: Record<string, string> };
+      };
+      const keys = Object.keys(questions.related_work.criteria);
+      const content = JSON.stringify({
+        answers: {
+          related_work: {
+            choice: "scheduling",
+            probabilities: Object.fromEntries(
+              keys.map((key) => [
+                key,
+                key === "scheduling" ? 0.88 : 0.12 / (keys.length - 1),
+              ]),
+            ),
+          },
+        },
+      });
+      return {
+        status: 200,
+        headers: { "content-type": "application/json" },
+        bodyBase64: Buffer.from(
+          JSON.stringify({
+            choices: [{ message: { content } }],
+            usage: { prompt_tokens: 10, completion_tokens: 5 },
+          }),
+        ).toString("base64"),
+        paidUsd: "0.0001",
+        heldUsd: "0",
+        paymentStatus: "settled",
+        txHash: null,
+        artifactId: null,
+        merchant: null,
+      } as never;
+    },
+  };
+  const output: string[] = [];
+  const dependencies = {
+    env: {
+      ENRICHMENT_ALLOW_PAID: "1",
+      WEFT_API_KEY: "fixture-weft",
+    },
+    connect: () => ({
+      ...db,
+      close: async () => {},
+    }),
+    output: (text: string) => {
+      output.push(text);
+    },
+    weft,
+    fetcher: (async () => {
+      jevCalls++;
+      throw new Error("jev_must_not_be_called");
+    }) as typeof fetch,
+  };
+  const file = join(directory, "cohort.json"),
+    policyFile = join(directory, "policy.json"),
+    batchFile = join(directory, "connection-batches.json");
+  const prepare = [
+    "prepare",
+    "--database-url",
+    "postgres://explicit-test-only",
+    "--file",
+    file,
+    "--confirm-write",
+  ];
+  const connectionsPlan = [
+    "connections-plan",
+    "--database-url",
+    "postgres://explicit-test-only",
+    "--release",
+    releaseId,
+    "--scope",
+    scope,
+    "--file",
+    batchFile,
+    "--confirm-write",
+  ];
+  const judgeCommand = (model: string, extra: string[] = []) => [
+    "connections",
+    "--database-url",
+    "postgres://explicit-test-only",
+    "--release",
+    releaseId,
+    "--scope",
+    scope,
+    "--policy",
+    policyFile,
+    "--budget",
+    budgetId,
+    "--judge-model",
+    model,
+    "--max-cost",
+    "0.01",
+    "--max-requests",
+    "1",
+    "--confirm-write",
+    ...extra,
+  ];
+  try {
+    await migrateEnrichment(db);
+    await store.createBudget({
+      id: budgetId,
+      scope,
+      currency: "USD",
+      capMicros: "100000",
+    });
+    for (const handle of ["example", "second_example"]) {
+      const entityId = await store.createEntity("founder", handle);
+      const raw = await store.putArtifact({
+        kind: "legacy_import",
+        body: Buffer.from(`${handle} builds scheduling tools.`),
+        contentType: "text/plain",
+        redactionVersion: "none",
+        importBatch: "synthetic",
+      });
+      const evidenceId = await store.addEvidence({
+        artifactId: raw.id,
+        extractorVersion: "v1",
+        locator: "bio",
+        excerpt: `${handle} builds scheduling tools.`,
+        payload: {},
+        sourceUrl: `https://example.com/${handle}`,
+      });
+      await store.linkEvidence(entityId, evidenceId, "bio");
+      const executionRelease = await store.createRelease({
+        stages: ["founder_dna"],
+        fixture: handle,
+      });
+      await store.approveRelease(executionRelease, raw.id, {
+        actor: "fixture-reviewer",
+        reason: "synthetic",
+      });
+      const analysisId = randomUUID(),
+        portraitAnalysisId = randomUUID();
+      const profile = founderDnaFixture();
+      Object.assign(profile, { id: entityId, handle, analysisId });
+      profile.portrait.analysisId = portraitAnalysisId;
+      profile.sources[0].id = evidenceId;
+      profile.facts[0].sourceIds = [evidenceId];
+      for (const [id, purpose, output] of [
+        [analysisId, "founder_dna", {}],
+        [portraitAnalysisId, "founder_portrait", { profile }],
+      ] as const)
+        await store.saveAnalysis({
+          id,
+          entityId,
+          releaseId: executionRelease,
+          generation: 0,
+          purpose,
+          inputArtifactId: raw.id,
+          inputDigest: "input",
+          recipeDigest: "recipe",
+          evidenceIds: [evidenceId],
+          output,
+          validationReport: {
+            checksPassed: true,
+            generationResponseArtifactId: raw.id,
+            judgeRequestArtifactId: raw.id,
+            judgeResponseArtifactId: raw.id,
+            productAnalysisIds: [],
+          },
+          status: "succeeded",
+        });
+      const embedding = await store.saveEmbedding({
+        scope,
+        text: "Scheduling",
+        templateVersion: "v1",
+        model: "fixture-local",
+        modelVersion: "v1",
+        distance: "cosine",
+        vector: [1, 0],
+      });
+      await store.linkEmbedding(entityId, analysisId, embedding, "founder_dna");
+      manifest.profiles.push({ entityId, analysisId, portraitAnalysisId });
+    }
+    await writeFile(file, JSON.stringify(manifest));
+    for (const profile of manifest.profiles)
+      await dna.approvePortrait(
+        profile.entityId,
+        profile.portraitAnalysisId,
+        "fixture-reviewer",
+      );
+    await writeFile(
+      policyFile,
+      JSON.stringify({
+        id: "synthetic-jev",
+        scope,
+        operation: "typesafe-systemone",
+        storageVerified: true,
+        retentionApproved: true,
+      }),
+    );
+    await main(prepare, dependencies);
+    await main(connectionsPlan, dependencies);
+    const batchPlan = JSON.parse(await readFile(batchFile, "utf8")) as {
+      batches: { id: string; pairIds: string[] }[];
+    };
+    const selected = [
+      "--batch-file",
+      batchFile,
+      "--batch",
+      batchPlan.batches[0].id,
+    ];
+    const nano = "weft/openrouter:openai/gpt-5-nano";
+    const mini = "weft/openrouter:openai/gpt-5-mini";
+    await assert.rejects(
+      main(
+        [
+          ...judgeCommand(nano),
+          ...selected,
+          "--mode",
+          "acquire",
+          "--allow-paid",
+        ],
+        dependencies,
+      ),
+      /connection_policy_not_approved/,
+    );
+    assert.equal(sent.length, 0);
+    assert.equal(jevCalls, 0);
+    await writeFile(
+      policyFile,
+      JSON.stringify({
+        id: "synthetic-judge",
+        scope,
+        operation: "openrouter-chat-completions",
+        storageVerified: true,
+        retentionApproved: true,
+      }),
+    );
+    await main(
+      [...judgeCommand(nano), ...selected, "--mode", "acquire", "--allow-paid"],
+      dependencies,
+    );
+    assert.equal(jevCalls, 0);
+    assert.equal(sent.length, 1);
+    assert.equal(
+      sent[0].url,
+      "https://openrouter.mpp.tempo.xyz/v1/chat/completions",
+    );
+    assert.equal(JSON.parse(sent[0].body).model, "openai/gpt-5-nano");
+    assert.deepEqual(JSON.parse(output.at(-1)!), {
+      candidatePairs: 1,
+      processedPairs: 1,
+      accepted: 1,
+      rejected: 0,
+      insufficient: 0,
+      staged: 0,
+    });
+    const saved = (
+      await db.query<{
+        id: string;
+        model: string;
+        requestArtifactId: string;
+        responseArtifactId: string;
+      }>(
+        `SELECT id, model, request_artifact_id AS "requestArtifactId",
+                response_artifact_id AS "responseArtifactId"
+         FROM founder_dna_connection_decisions`,
+      )
+    ).rows[0];
+    assert.notEqual(saved.id, batchPlan.batches[0].pairIds[0]);
+    assert.equal(saved.model, "llm-choice-judge-v1:openai/gpt-5-nano");
+    const requestArtifact = await store.getArtifact(saved.requestArtifactId);
+    const responseArtifact = await store.getArtifact(saved.responseArtifactId);
+    const retained = JSON.parse(
+      Buffer.from(requestArtifact!.body).toString("utf8"),
+    );
+    const judged = JSON.parse(JSON.parse(sent[0].body).messages[1].content);
+    assert.equal(requestArtifact!.kind, "generation_request");
+    assert.equal(retained.model, MODEL);
+    assert.deepEqual(JSON.parse(retained.state), judged.state);
+    assert.deepEqual(retained.questions, judged.questions);
+    assert.equal(responseArtifact!.metadata.purpose, "llm_judge_decision");
+    assert.equal(
+      JSON.parse(Buffer.from(responseArtifact!.body).toString("utf8")).answers
+        .related_work.choice,
+      "scheduling",
+    );
+    const operations = await db.query<{ operation: string }>(
+      "SELECT operation FROM enrichment_collection_requests",
+    );
+    assert.deepEqual(
+      operations.rows.map((row) => row.operation),
+      ["openrouter-chat-completions"],
+    );
+    await main(
+      [...judgeCommand(nano), ...selected, "--mode", "acquire", "--allow-paid"],
+      dependencies,
+    );
+    assert.equal(sent.length, 1, "the same judge reuses the retained decision");
+    assert.equal(jevCalls, 0);
+    await assert.rejects(
+      main([...judgeCommand(mini), ...selected], dependencies),
+      /missing_input/,
+    );
+    assert.equal(sent.length, 1, "replay of another judge must not dispatch");
+    await main(
+      [...judgeCommand(mini), ...selected, "--mode", "acquire", "--allow-paid"],
+      dependencies,
+    );
+    assert.equal(sent.length, 2);
+    assert.equal(JSON.parse(sent[1].body).model, "openai/gpt-5-mini");
+    assert.equal(jevCalls, 0);
+    const ids = (
+      await db.query<{ id: string }>(
+        "SELECT id FROM founder_dna_connection_decisions",
+      )
+    ).rows.map((row) => row.id);
+    assert.equal(ids.length, 2);
+    assert.equal(new Set(ids).size, 2);
+    assert.ok(ids.every((id) => id !== batchPlan.batches[0].pairIds[0]));
+    assert.deepEqual(
+      (
+        await db.query<{ operation: string }>(
+          "SELECT DISTINCT operation FROM enrichment_collection_requests",
+        )
+      ).rows.map((row) => row.operation),
+      ["openrouter-chat-completions"],
+    );
+    const edgeCount = async () =>
+      (
+        await db.query<{ count: number }>(
+          "SELECT count(*)::integer AS count FROM founder_dna_release_edges",
+        )
+      ).rows[0].count;
+    await main(
+      [...judgeCommand(nano), "--batch-file", batchFile],
+      dependencies,
+    );
+    assert.equal(await edgeCount(), 1);
+    assert.equal(sent.length, 2, "staging replay must not dispatch");
+    await assert.rejects(
+      main([...judgeCommand(mini), "--batch-file", batchFile], dependencies),
+      /connection_pair_already_staged/,
+    );
+    assert.equal(await edgeCount(), 1);
+    assert.equal(jevCalls, 0);
+  } finally {
+    await pg.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });
