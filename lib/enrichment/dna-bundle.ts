@@ -8,6 +8,10 @@ import {
   FOUNDER_DNA_SCHEMA_VERSION,
   parseFounderDnaProfile,
 } from "../founder-dna";
+import {
+  linkedProductFounderFromSql,
+  publishedProductAnalysisFromSql,
+} from "../product-data";
 
 type Row = Record<string, unknown>;
 const keys = {
@@ -18,6 +22,7 @@ const keys = {
   enrichment_founder_products: ["founder_id", "product_id", "evidence_id"],
   enrichment_releases: ["id"],
   enrichment_analysis_runs: ["id"],
+  enrichment_profiles: ["entity_id"],
   founder_dna_portrait_publications: ["entity_id"],
   founder_dna_connection_decisions: ["id"],
   founder_dna_release_profiles: ["release_id", "entity_id"],
@@ -25,6 +30,13 @@ const keys = {
 } as const;
 type Table = keyof typeof keys;
 const tables = Object.keys(keys) as Table[];
+// Same retained-link predicate as the Products reader. Alias `t` is the bundle row.
+const retainedCohortProductLink = linkedProductFounderFromSql.replace(
+  "WHERE relation.product_id=a.entity_id",
+  "WHERE relation.product_id=t.product_id AND relation.founder_id=t.founder_id AND relation.evidence_id=t.evidence_id",
+);
+if (retainedCohortProductLink === linkedProductFounderFromSql)
+  throw new Error("bundle_product_link_predicate_drift");
 export type DnaBundle = {
   manifest: {
     format: "founder-dna-private-bundle-v1";
@@ -183,10 +195,23 @@ export async function exportDnaBundle(
       "id=ANY($1::uuid[])",
       [founders],
     );
+    // The Products reader follows enrichment_profiles, not portrait productAnalysisIds.
+    // Only cohort founders' eligible publications travel; outside owners stay behind
+    // so activation's productLinked coverage remains satisfied.
+    rows.enrichment_profiles = await select(
+      tx,
+      "enrichment_profiles",
+      `entity_id IN (
+        SELECT a.entity_id ${publishedProductAnalysisFromSql}
+        AND EXISTS (SELECT 1 ${linkedProductFounderFromSql} AND founder.id=ANY($1::uuid[]))
+      )`,
+      [founders],
+    );
     let needed = references([
       rows.founder_dna_release_profiles,
       rows.founder_dna_connection_decisions,
       rows.enrichment_founder_products,
+      rows.enrichment_profiles,
     ]);
     // Resolve only explicit references and per-analysis retained generation artifacts.
     for (let round = 0; round < 16; round++) {
@@ -206,7 +231,7 @@ export async function exportDnaBundle(
       rows.enrichment_founder_products = await select(
         tx,
         "enrichment_founder_products",
-        "founder_id=ANY($1::uuid[]) AND product_id=ANY($2::uuid[])",
+        `founder_id=ANY($1::uuid[]) AND product_id=ANY($2::uuid[]) AND EXISTS (SELECT 1 ${retainedCohortProductLink})`,
         [founders, ids(rows.enrichment_analysis_runs, "entity_id")],
       );
       needed = [
@@ -468,10 +493,35 @@ export function parseDnaBundle(value: unknown): DnaBundle {
     need("enrichment_entities", "id", row.entity_id);
     need("enrichment_evidence", "id", row.evidence_id);
   }
+  const cohort = new Set(b.manifest.cohort.map(String));
   for (const row of b.rows.enrichment_founder_products) {
+    if (!cohort.has(String(row.founder_id)))
+      throw new Error("bundle_product_founder_outside_cohort");
     need("enrichment_entities", "id", row.founder_id);
     need("enrichment_entities", "id", row.product_id);
     need("enrichment_evidence", "id", row.evidence_id);
+  }
+  for (const row of b.rows.enrichment_profiles) {
+    need("enrichment_entities", "id", row.entity_id);
+    need("enrichment_analysis_runs", "id", row.analysis_id);
+    const entity = b.rows.enrichment_entities.find(
+      (item) => item.id === row.entity_id,
+    );
+    const analysis = b.rows.enrichment_analysis_runs.find(
+      (item) => item.id === row.analysis_id,
+    );
+    if (
+      entity?.kind !== "product" ||
+      analysis?.entity_id !== row.entity_id ||
+      analysis?.purpose !== "product_descriptions" ||
+      analysis?.status !== "succeeded" ||
+      !b.rows.enrichment_founder_products.some(
+        (link) =>
+          link.product_id === row.entity_id &&
+          cohort.has(String(link.founder_id)),
+      )
+    )
+      throw new Error("bundle_product_publication_invalid");
   }
   for (const row of b.rows.enrichment_releases)
     need("enrichment_artifacts", "id", row.evaluation_artifact_id);
@@ -578,6 +628,7 @@ function mappedRows(bundle: DnaBundle, mapping: Record<string, string>) {
     "enrichment_entity_evidence",
     "enrichment_founder_products",
     "enrichment_analysis_runs",
+    "enrichment_profiles",
     "founder_dna_portrait_publications",
     "founder_dna_connection_decisions",
     "founder_dna_release_profiles",
@@ -876,6 +927,7 @@ export async function stageDnaBundle(db: Database, value: unknown) {
       "enrichment_founder_products",
       "enrichment_releases",
       "enrichment_analysis_runs",
+      "enrichment_profiles",
     ] as Table[])
       for (const row of rows[table]) await insert(tx, table, row);
     await dna.createRelease({

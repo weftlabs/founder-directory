@@ -15,8 +15,11 @@ A database without that schema shows a Products unavailable state. A local app
 without a database shows an empty state. Neither case prevents founder browsing.
 
 The reader follows `enrichment_profiles.analysis_id`, not the newest analysis.
-A product must have a succeeded `product_descriptions` analysis from an approved
-release, an active identity and an eligible founder relationship. Every read checks
+Production receives those publication rows only through a
+[Founder DNA release bundle](founder-dna-releases.md), and only for founders in
+that release. A product must have a succeeded `product_descriptions` analysis
+from an approved release, an active identity and an eligible founder relationship.
+Every read checks
 source retention, withdrawal and suppression, including independently purged
 evidence and suppressed evidence owners. Founder links also require retained
 relationship evidence. Publication does not imply that all founders have products.
