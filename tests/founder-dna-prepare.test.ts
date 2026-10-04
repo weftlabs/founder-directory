@@ -962,6 +962,24 @@ test("chat-judge connections make no Jev call and do not replay another judge", 
       ).rows.map((row) => row.operation),
       ["openrouter-chat-completions"],
     );
+    const edgeCount = async () =>
+      (
+        await db.query<{ count: number }>(
+          "SELECT count(*)::integer AS count FROM founder_dna_release_edges",
+        )
+      ).rows[0].count;
+    await main(
+      [...judgeCommand(nano), "--batch-file", batchFile],
+      dependencies,
+    );
+    assert.equal(await edgeCount(), 1);
+    assert.equal(sent.length, 2, "staging replay must not dispatch");
+    await assert.rejects(
+      main([...judgeCommand(mini), "--batch-file", batchFile], dependencies),
+      /connection_pair_already_staged/,
+    );
+    assert.equal(await edgeCount(), 1);
+    assert.equal(jevCalls, 0);
   } finally {
     await pg.close();
     await rm(directory, { recursive: true, force: true });

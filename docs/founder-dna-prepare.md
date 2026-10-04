@@ -133,9 +133,11 @@ The saved decision model is the chat judge's response model. A repeated run with
 same judge reuses that decision and does not buy the pair again. The judge identity
 is part of the decision id, so a different model does not replay an earlier verdict.
 Batch files from `connections-plan` still name candidate pairs, not the judge, and
-the same file works with either judge. Do not stage two judges onto one release:
-duplicate neighbours fail validation. Chat probabilities are self-reported, not
-calibrated like Jev, so review a sample before trusting the 0.8 support threshold.
+the same file works with either judge. Do not stage two judges onto one release.
+A full replay stages only that run's decisions; if the pair already has an edge,
+staging fails with `connection_pair_already_staged` and leaves the earlier edge.
+Chat probabilities are self-reported, not calibrated like Jev, so review a sample
+before trusting the 0.8 support threshold.
 
 ```sh
 pnpm exec tsx scripts/founder-dna-prepare.ts connections \
