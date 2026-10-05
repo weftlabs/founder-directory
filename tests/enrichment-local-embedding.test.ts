@@ -29,6 +29,8 @@ test("local embedding archives malformed output before validation and reuses wit
       executions++;
     },
     markUncertain: async () => {},
+    markNotCharged: async () => undefined,
+    resumeUncertainAttempt: async () => null,
     captureResponse: async (input) =>
       (saved = {
         id: "response",

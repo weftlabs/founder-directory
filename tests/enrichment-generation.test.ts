@@ -37,6 +37,12 @@ function fixture(
     async markUncertain() {
       events.push("uncertain");
     },
+    async markNotCharged() {
+      events.push("not_charged");
+    },
+    async resumeUncertainAttempt() {
+      return null;
+    },
     async captureResponse(input) {
       events.push("archive");
       return {

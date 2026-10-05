@@ -16,6 +16,7 @@ export async function collectWeft(
   },
   request: PaidFetchRequest,
   enabled: () => boolean,
+  options: { resumeUncertain?: boolean } = {},
 ) {
   if (!/^\d+(?:\.\d{1,6})?$/.test(request.maxCostUsd))
     throw new Error("invalid_collection_cap");
@@ -70,6 +71,6 @@ export async function collectWeft(
         artifactId: response.artifactId,
       };
     },
-    { enabled },
+    { enabled, resumeUncertain: options.resumeUncertain },
   );
 }

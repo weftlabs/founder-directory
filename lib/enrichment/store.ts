@@ -243,6 +243,49 @@ export class EnrichmentStore {
       [attemptId, reason],
     );
   }
+  async markNotCharged(attemptId: string, evidence: string) {
+    await this.reconcileNotCharged(attemptId, {
+      actor: "collection",
+      evidence,
+    });
+  }
+  async resumeUncertainAttempt(input: {
+    requestId: string;
+    capMicros: string;
+  }) {
+    const row = (
+      await this.db.query<{ id: string; client_key: string }>(
+        "UPDATE enrichment_collection_attempts SET dispatch_state='dispatching' WHERE request_id=$1 AND dispatch_state='uncertain' AND cap_micros=$2 RETURNING id,client_key",
+        [input.requestId, money(input.capMicros)],
+      )
+    ).rows[0];
+    return row ? { id: row.id, clientKey: row.client_key } : null;
+  }
+  /** Weft settled an attempt the ledger recorded as not charged (for example a late
+   * x402 settlement after a merchant error). The released reservation is not restored. */
+  async correctNotCharged(
+    attemptId: string,
+    input: { settledMicros: string; actor: string; evidence: string },
+  ) {
+    if (!input.actor || !input.evidence)
+      throw new Error("reconciliation evidence required");
+    const settled = money(input.settledMicros);
+    await this.db.transaction(async (tx) => {
+      const attempt = await one<{ budget_id: string }>(
+        tx,
+        "UPDATE enrichment_collection_attempts SET payment_state='settled',settled_micros=$2,resolution=$3,reason=CASE WHEN $2::bigint>cap_micros THEN 'provider exceeded authorized cap' ELSE reason END WHERE id=$1 AND payment_state='not_charged' RETURNING budget_id",
+        [
+          attemptId,
+          settled,
+          json({ actor: input.actor, evidence: input.evidence }),
+        ],
+      );
+      await tx.query(
+        "UPDATE enrichment_budgets SET committed_micros=committed_micros+$2 WHERE id=$1",
+        [attempt.budget_id, settled],
+      );
+    });
+  }
   async reconcileNotCharged(
     attemptId: string,
     resolution: { actor: string; evidence: string },

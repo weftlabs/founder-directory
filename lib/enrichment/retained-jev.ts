@@ -65,6 +65,8 @@ export function retainedJev(
         reserveAttempt: (v) => store.reserveAttempt(v),
         markDispatched: (id) => store.markDispatched(id),
         markUncertain: (id, reason) => store.markUncertain(id, reason),
+        markNotCharged: (id, evidence) => store.markNotCharged(id, evidence),
+        resumeUncertainAttempt: (v) => store.resumeUncertainAttempt(v),
         captureResponse: async (v) =>
           store.captureResponse({
             ...v,
