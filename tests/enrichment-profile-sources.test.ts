@@ -301,3 +301,73 @@ test("tweets keep only the founder's own posts, never reposts", () => {
       null,
     );
 });
+
+test("resumeUncertain re-sends an uncertain profile call under its original key", async () => {
+  const keys: string[] = [];
+  let uncertain: { id: string; clientKey: string } | null = null;
+  let fail = true;
+  const store: CollectionStore = {
+    planCollection: async () => ({ id: "request" }),
+    getReusableArtifact: async () => null,
+    // Like the ledger: no new attempt while one is uncertain.
+    reserveAttempt: async () => {
+      if (uncertain)
+        throw new Error("request already reserved, captured, or uncertain");
+      return { id: "attempt", clientKey: "original-key", requestId: "request" };
+    },
+    markDispatched: async () => undefined,
+    markUncertain: async (id) => {
+      uncertain = { id, clientKey: "original-key" };
+    },
+    markNotCharged: async () => undefined,
+    resumeUncertainAttempt: async () => uncertain,
+    captureResponse: async (value) => ({
+      id: "artifact",
+      body: value.body,
+      metadata: value.metadata ?? {},
+    }),
+  };
+  const client: WeftTransport = {
+    fetch: async (_req, options) => {
+      keys.push(options.idempotencyKey);
+      if (fail) throw new Error("transport timeout");
+      return {
+        status: 200,
+        headers: { "content-type": "application/json" },
+        bodyBase64: Buffer.from(
+          JSON.stringify(BODIES["twitter.use.x402atlas.com"]),
+        ).toString("base64"),
+        paidUsd: "0.006",
+        heldUsd: "0",
+        paymentStatus: "settled",
+        txHash: null,
+        artifactId: null,
+        merchant: null,
+      } as never;
+    },
+  };
+  const adapters = workerAdapters(
+    store,
+    client,
+    {
+      scope: "test",
+      budgetId: "budget",
+      generation: 0,
+      resumeUncertain: true,
+      policies: { "bazaar-x402-atlas-183": policy("bazaar-x402-atlas-183") },
+      sourceMaxCostUsd: "0.01",
+      modelMaxCostUsd: "0.01",
+    },
+    () => true,
+  );
+  const collect = () =>
+    adapters.collectProfile({
+      entityId: "f",
+      legacyKey: "builder",
+      generation: 0,
+    });
+  await assert.rejects(collect());
+  fail = false;
+  assert.equal((await collect()).status, "captured");
+  assert.deepEqual(keys, ["original-key", "original-key"]);
+});

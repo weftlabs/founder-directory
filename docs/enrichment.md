@@ -169,6 +169,11 @@ configured scope. Repeat bounded runs to process a larger directory. Existing
 and newly indexed founders use the same path. Worker calls require all three:
 `--allow-paid`, `ENRICHMENT_ALLOW_PAID=1`, and `WEFT_API_KEY`.
 
+Set `transport.resumeUncertain: true` to re-send an uncertain attempt under its
+original idempotency key (profiles, posts, model calls, embedding endpoint and the
+chat judge). Weft replays the stored result instead of signing a second payment;
+run `scripts/weft-reconcile.ts` first so settled or refused attempts are recorded.
+
 Use `--mode rederive` to reuse saved sources without source-network access.
 Missing source bytes produce a blocked stage. Model and embedding calls can
 still cost money and use the same explicit gates and budget. Already successful

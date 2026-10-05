@@ -42,6 +42,8 @@ export const PROFILE_SOURCES = [
 export const TWEETS_OPERATION = "bazaar-x402-atlas-187";
 
 export type WorkerTransportConfig = CaptureConfig & {
+  /** Re-send an uncertain attempt under its original key; Weft replays, never pays twice. */
+  resumeUncertain?: boolean;
   sourceMaxCostUsd: string;
   modelMaxCostUsd: string;
   websiteMaxCostUsd?: string;
@@ -71,6 +73,7 @@ export function workerAdapters(
     maxCostUsd: config.modelMaxCostUsd,
     policy: config.policies[route.operationId],
     enabled,
+    resumeUncertain: config.resumeUncertain,
   });
   const selfReportedStore: CollectionStore = {
     planCollection: (value) => store.planCollection(value),
@@ -130,6 +133,7 @@ export function workerAdapters(
         maxCostUsd: config.sourceMaxCostUsd,
       },
       enabled,
+      { resumeUncertain: config.resumeUncertain },
     );
     const status = artifact.metadata.status;
     return typeof status === "number" && status >= 200 && status < 300
@@ -198,6 +202,7 @@ export function workerAdapters(
           maxCostUsd: config.sourceMaxCostUsd,
         },
         enabled,
+        { resumeUncertain: config.resumeUncertain },
       );
       const status = artifact.metadata.status;
       const ok = typeof status === "number" && status >= 200 && status < 300;
@@ -307,6 +312,7 @@ export function workerAdapters(
               }),
             },
             enabled,
+            { resumeUncertain: config.resumeUncertain },
           );
           if (
             typeof artifact.metadata.status !== "number" ||
