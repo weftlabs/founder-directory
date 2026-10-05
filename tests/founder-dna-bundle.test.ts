@@ -206,6 +206,37 @@ async function seed(
   });
   return { entity, raw, evidence, analysis, portrait, product, store, dna };
 }
+test("a later release sharing saved rows stages across database time zones", async () => {
+  const src = await database(),
+    dst = await database();
+  try {
+    // Local workshop and production render timestamptz in different session zones.
+    await src.db.query("SET TIME ZONE 'Europe/Rome'");
+    await dst.db.query("SET TIME ZONE 'UTC'");
+    await seed(src.db);
+    await stageDnaBundle(dst.db, await exportDnaBundle(src.db, "release-one"));
+    const second = await exportDnaBundle(src.db, "release-two");
+    await dryRunDnaBundle(dst.db, second);
+    await stageDnaBundle(dst.db, second);
+    // A real change to an existing row still conflicts.
+    const changed = await exportDnaBundle(src.db, "release-two");
+    // Artifacts are immutable; lift the trigger only to simulate a changed row.
+    await dst.db.query("ALTER TABLE enrichment_artifacts DISABLE TRIGGER USER");
+    await dst.db.query(
+      "UPDATE enrichment_artifacts SET created_at=created_at - interval '1 second' WHERE id=$1",
+      [changed.rows.enrichment_artifacts[0].id],
+    );
+    await dst.db.query("ALTER TABLE enrichment_artifacts ENABLE TRIGGER USER");
+    await assert.rejects(
+      dryRunDnaBundle(dst.db, changed),
+      /bundle_row_conflict/,
+    );
+  } finally {
+    await src.pg.close();
+    await dst.pg.close();
+  }
+});
+
 test("private bundle dry-run is read-only; stage is repeatable, exact, isolated and rollback obeys withdrawal", async () => {
   const src = await database(),
     dst = await database();
