@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { mock, test } from "node:test";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { registerHooks } from "node:module";
+import { isValidElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { Pool } from "pg";
 import {
   loadLocalProductFounder,
   loadLocalPortraitFounders,
@@ -263,6 +267,192 @@ test("local portraits reject unsafe or ungrounded editorial projections and stay
       null,
     );
   } finally {
+    await rm(dir, { recursive: true });
+  }
+});
+
+const databaseUrl = "postgresql://tester:test@db.example.test:5432/founders";
+
+function assignEnv(key: string, value: string) {
+  process.env[key] = value;
+}
+
+function isNotFound(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "digest" in error &&
+    String((error as { digest: unknown }).digest).endsWith(";404")
+  );
+}
+
+async function withoutDatabaseRead<T>(run: () => Promise<T>): Promise<T> {
+  const reads: string[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input: RequestInfo | URL) => {
+    reads.push(String(input instanceof Request ? input.url : input));
+    throw new Error("database read");
+  };
+  const query = mock.method(Pool.prototype, "query", async () => {
+    reads.push("pg.query");
+    throw new Error("postgres read");
+  });
+  const connect = mock.method(Pool.prototype, "connect", async () => {
+    reads.push("pg.connect");
+    throw new Error("postgres read");
+  });
+  try {
+    const result = await run();
+    assert.deepEqual(reads, []);
+    return result;
+  } catch (error) {
+    assert.deepEqual(reads, []);
+    throw error;
+  } finally {
+    globalThis.fetch = originalFetch;
+    query.mock.restore();
+    connect.mock.restore();
+  }
+}
+
+test("snapshot profile routes do not read the database when DNA is enabled", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "founder-snapshot-route-"));
+  const file = join(dir, "snapshot.json");
+  const previous = {
+    FOUNDER_DNA_ENABLED: process.env.FOUNDER_DNA_ENABLED,
+    DATABASE_URL: process.env.DATABASE_URL,
+    FOUNDER_DNA_DATABASE_URL: process.env.FOUNDER_DNA_DATABASE_URL,
+    FOUNDER_DNA_DATABASE_TRANSPORT: process.env.FOUNDER_DNA_DATABASE_TRANSPORT,
+    DATABASE_TRANSPORT: process.env.DATABASE_TRANSPORT,
+    PRODUCTS_LOCAL_SNAPSHOT: process.env.PRODUCTS_LOCAL_SNAPSHOT,
+    NODE_ENV: process.env.NODE_ENV,
+    VERCEL: process.env.VERCEL,
+  };
+  const css = registerHooks({
+    load(url, context, nextLoad) {
+      if (url.endsWith(".css")) {
+        return {
+          format: "module",
+          source: "export default {}",
+          shortCircuit: true,
+        };
+      }
+      return nextLoad(url, context);
+    },
+  });
+  let page: typeof import("../app/u/[handle]/page");
+  try {
+    page = await import("../app/u/[handle]/page");
+  } finally {
+    css.deregister();
+  }
+  const renderProfile = async (handle: string) => {
+    const view = await page.default({
+      params: Promise.resolve({ handle }),
+    });
+    assert.equal(isValidElement(view), true);
+    return renderToStaticMarkup(view);
+  };
+  try {
+    await writeFile(
+      file,
+      JSON.stringify({
+        version: 1,
+        products: [{ founders: ["savedone"] }],
+        profiles: [
+          { handle: "savedone", name: "Saved founder", bio: "Saved bio" },
+        ],
+      }),
+    );
+    process.env.FOUNDER_DNA_ENABLED = "1";
+    process.env.DATABASE_URL = databaseUrl;
+    process.env.FOUNDER_DNA_DATABASE_URL = databaseUrl;
+    delete process.env.FOUNDER_DNA_DATABASE_TRANSPORT;
+    delete process.env.DATABASE_TRANSPORT;
+    process.env.PRODUCTS_LOCAL_SNAPSHOT = file;
+    assignEnv("NODE_ENV", "development");
+    delete process.env.VERCEL;
+
+    const metadata = await withoutDatabaseRead(() =>
+      page.generateMetadata({
+        params: Promise.resolve({ handle: "savedone" }),
+      }),
+    );
+    assert.equal(metadata.title, "Saved founder");
+    assert.equal(
+      (await withoutDatabaseRead(() => renderProfile("savedone"))).includes(
+        "Saved bio",
+      ),
+      true,
+    );
+    assert.match(
+      await withoutDatabaseRead(() => renderProfile("savedone")),
+      /href="\/products"/,
+    );
+
+    process.env.FOUNDER_DNA_DATABASE_TRANSPORT = "postgres";
+    process.env.DATABASE_TRANSPORT = "postgres";
+    assert.equal(
+      (
+        await withoutDatabaseRead(() =>
+          page.generateMetadata({
+            params: Promise.resolve({ handle: "savedone" }),
+          }),
+        )
+      ).title,
+      "Saved founder",
+    );
+    delete process.env.FOUNDER_DNA_DATABASE_TRANSPORT;
+    delete process.env.DATABASE_TRANSPORT;
+
+    process.env.PRODUCTS_LOCAL_SNAPSHOT = join(dir, "missing.json");
+    const missing = await withoutDatabaseRead(() =>
+      page.generateMetadata({
+        params: Promise.resolve({ handle: "missing1" }),
+      }),
+    );
+    assert.equal(missing.title, "Founder profile");
+    await assert.rejects(
+      () => withoutDatabaseRead(() => renderProfile("missing1")),
+      isNotFound,
+    );
+
+    process.env.PRODUCTS_LOCAL_SNAPSHOT = file;
+    process.env.VERCEL = "1";
+    assert.equal(
+      (
+        await withoutDatabaseRead(() =>
+          page.generateMetadata({
+            params: Promise.resolve({ handle: "metaverc" }),
+          }),
+        )
+      ).title,
+      "Founder profile",
+    );
+    await assert.rejects(
+      () => withoutDatabaseRead(() => renderProfile("banned01")),
+      isNotFound,
+    );
+    delete process.env.VERCEL;
+    assignEnv("NODE_ENV", "production");
+    assert.equal(
+      (
+        await withoutDatabaseRead(() =>
+          page.generateMetadata({
+            params: Promise.resolve({ handle: "metaprod" }),
+          }),
+        )
+      ).title,
+      "Founder profile",
+    );
+    await assert.rejects(
+      () => withoutDatabaseRead(() => renderProfile("banned02")),
+      isNotFound,
+    );
+  } finally {
+    for (const [key, value] of Object.entries(previous))
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
     await rm(dir, { recursive: true });
   }
 });
