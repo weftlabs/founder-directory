@@ -21,6 +21,14 @@ export async function generateMetadata({
   params: Promise<{ handle: string }>;
 }): Promise<Metadata> {
   const { handle } = await params;
+  // Snapshot mode never falls back to DNA or the live directory database.
+  if (process.env.PRODUCTS_LOCAL_SNAPSHOT) {
+    const founder = await loadLocalProductFounder(handle);
+    return {
+      title: founder?.name ?? "Founder profile",
+      robots: { index: false, follow: false },
+    };
+  }
   const dna = await readDnaProfile(handle);
   if (dna.status === "ready") return founderShareMetadata(dna.profile);
   // A founder outside the active DNA release keeps the plain directory profile.
@@ -32,13 +40,6 @@ export async function generateMetadata({
           : "Not found",
       robots: { index: false, follow: false },
     };
-  if (process.env.PRODUCTS_LOCAL_SNAPSHOT) {
-    const founder = await loadLocalProductFounder(handle);
-    return {
-      title: founder?.name ?? "Founder profile",
-      robots: { index: false, follow: false },
-    };
-  }
   const founder = await getFounder(handle).catch(() => null);
   if (!founder) return { title: "Not found" };
   const description = `${founder.name} (@${founder.handle}) is listed in Founder Directory${
@@ -68,6 +69,12 @@ export default async function ProfilePage({
   params: Promise<{ handle: string }>;
 }) {
   const { handle } = await params;
+  // Snapshot mode never falls back to DNA or the live directory database.
+  if (process.env.PRODUCTS_LOCAL_SNAPSHOT) {
+    const founder = await loadLocalProductFounder(handle);
+    if (!founder) notFound();
+    return <LocalProductProfile founder={founder} />;
+  }
   const dna = await readDnaProfile(handle);
   if (dna.status === "ready") {
     // The release may not carry an avatar; the directory row usually does.
@@ -103,11 +110,6 @@ export default async function ProfilePage({
       </>
     );
   if (dna.status === "hidden") notFound();
-  if (process.env.PRODUCTS_LOCAL_SNAPSHOT) {
-    const founder = await loadLocalProductFounder(handle);
-    if (!founder) notFound();
-    return <LocalProductProfile founder={founder} />;
-  }
   const founder = await getFounder(handle).catch(() => null);
   if (!founder) notFound();
   const place = [founder.city, founder.country].filter(Boolean).join(", ");
