@@ -16,10 +16,10 @@ importers:
         version: 1.1.0
       '@weft-labs/sdk':
         specifier: 0.20.0
-        version: 0.20.0(@x402/core@2.20.0)
+        version: 0.20.0(@x402/core@2.27.0)
       '@x402/core':
-        specifier: 2.20.0
-        version: 2.20.0
+        specifier: 2.27.0
+        version: 2.27.0
       maplibre-gl:
         specifier: ^5.24.0
         version: 5.24.0
@@ -902,8 +902,8 @@ packages:
     peerDependencies:
       '@x402/core': ^2.0.0
 
-  '@x402/core@2.20.0':
-    resolution: {integrity: sha512-BaPPVTZ4LAeYKB0yRMOnuzDGoratyLeYobBMH/leFmRe+al94RQnw/uwuw9Rgsupsywz6JQdHzhm4LsE4snuDg==}
+  '@x402/core@2.27.0':
+    resolution: {integrity: sha512-UbxCKnoTsg5nQX9fYER3g9tt5l80jHm1IZOmDczQRqE0cwskls5r+VAAj0iUQfHVshnpv0qo/rLFI7UntqL96g==}
 
   acorn-jsx@5.3.2:
     resolution: {integrity: sha512-rq9s+JNhf0IChjtDXxllJ7g41oZk5SlXtp0LHwyA5cejwn7vKmKp4pPri6YEePv2PU65sAsegbXtIinmDFDXgQ==}
@@ -2893,11 +2893,11 @@ snapshots:
   '@unrs/resolver-binding-win32-x64-msvc@1.12.2':
     optional: true
 
-  '@weft-labs/sdk@0.20.0(@x402/core@2.20.0)':
+  '@weft-labs/sdk@0.20.0(@x402/core@2.27.0)':
     dependencies:
-      '@x402/core': 2.20.0
+      '@x402/core': 2.27.0
 
-  '@x402/core@2.20.0':
+  '@x402/core@2.27.0':
     dependencies:
       zod: 3.25.76
 
