@@ -652,8 +652,18 @@ async function existing(tx: Sql, table: Table, row: Row) {
     )
   )[0];
 }
+// Timestamps render in the session time zone; compare instants, keeping microseconds.
+const TIMESTAMP = /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(\.\d+)?([+-]\d\d:\d\d|Z)$/;
+function instant(value: unknown) {
+  const match = typeof value === "string" ? TIMESTAMP.exec(value) : null;
+  if (!match) return value;
+  const seconds = new Date(`${match[1]}${match[3]}`).toISOString().slice(0, 19);
+  return `${seconds}${(match[2] ?? "").replace(/0+$/, "").replace(/\.$/, "")}Z`;
+}
 function comparable(table: Table, row: Row) {
-  const copy = { ...row };
+  const copy = Object.fromEntries(
+    Object.entries(row).map(([key, value]) => [key, instant(value)]),
+  );
   // Approval refresh time is local. Analysis creation times remain immutable:
   // they participate in the newer-publication guard.
   delete copy.updated_at;
