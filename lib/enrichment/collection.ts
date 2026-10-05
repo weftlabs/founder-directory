@@ -25,6 +25,12 @@ export interface CollectionStore {
   }): Promise<{ id: string; clientKey: string; requestId: string }>;
   markDispatched(attemptId: string): Promise<unknown>;
   markUncertain(attemptId: string, reason: string): Promise<unknown>;
+  markNotCharged(attemptId: string, evidence: string): Promise<unknown>;
+  /** The uncertain attempt of this request, re-marked dispatching, under its original key. */
+  resumeUncertainAttempt(input: {
+    requestId: string;
+    capMicros: string;
+  }): Promise<{ id: string; clientKey: string } | null>;
   captureResponse(input: {
     attemptId: string;
     body: Uint8Array;
@@ -95,7 +101,7 @@ function canonical(value: unknown): string {
   throw new Error("invalid_collection_argument");
 }
 
-function micros(value: string | null | undefined): string | null {
+export function micros(value: string | null | undefined): string | null {
   if (typeof value !== "string" || !/^\d+(?:\.\d{1,6})?$/.test(value))
     return null;
   const [whole, fractional = ""] = value.split(".");
@@ -103,6 +109,48 @@ function micros(value: string | null | undefined): string | null {
     BigInt(whole) * BigInt(1000000) +
     BigInt(fractional.padEnd(6, "0"))
   ).toString();
+}
+
+// Weft refuses these before it signs anything, so a fresh key was never charged.
+// Classified by code, never by status: 424 is also PAID_DELIVERY_FAILED (paid).
+// IDEMPOTENCY_CONFLICT is excluded: on a reused key an earlier request may have paid.
+const PRE_PAYMENT_REFUSALS = new Set([
+  "EXCEEDED_MAX_COST",
+  "MERCHANT_RETURNED_NON_402",
+  "INSUFFICIENT_BALANCE",
+  "POLICY_VIOLATION_MAX_TX",
+  "POLICY_VIOLATION_DAILY",
+  "POLICY_VIOLATION_WEEKLY",
+  "DENYLISTED_RECIPIENT",
+  "WALLET_SETUP_INCOMPLETE",
+  "WALLET_ENVIRONMENT_MISMATCH",
+  "INVALID_REQUEST",
+  "UNKNOWN_PARAMETER",
+  "INVALID_URL",
+  "INVALID_MAX_COST_USD",
+  "UNSUPPORTED_METHOD",
+  "INVALID_BODY",
+  "INVALID_HEADERS",
+  "INVALID_IDEMPOTENCY_KEY",
+]);
+
+function weftFailure(error: unknown) {
+  const { status, code } = (error ?? {}) as {
+    status?: unknown;
+    code?: unknown;
+  };
+  const safeStatus = Number.isSafeInteger(status) ? (status as number) : 0;
+  const safeCode =
+    typeof code === "string" && /^[A-Z0-9_]{1,64}$/.test(code)
+      ? code
+      : "unknown";
+  return {
+    reason: `weft:${safeStatus}:${safeCode}`,
+    prePayment:
+      safeStatus >= 400 &&
+      safeStatus < 500 &&
+      PRE_PAYMENT_REFUSALS.has(safeCode),
+  };
 }
 
 function payment(response: ReceivedResponse) {
@@ -137,6 +185,9 @@ export async function collectResponse(
     enabled?: () => boolean;
     redact?: (body: Uint8Array) => Uint8Array;
     redactionVersion?: string;
+    /** Re-send an uncertain attempt under its original key. Weft replays a stored
+     * response or reuses the existing payment; it never signs a second one. */
+    resumeUncertain?: boolean;
   } = {},
 ): Promise<CapturedArtifact> {
   const { policy } = input;
@@ -170,18 +221,45 @@ export async function collectResponse(
   if (input.mode === "replay") throw new Error("missing_input");
   if (options.enabled && !options.enabled())
     throw new Error("collection_disabled");
-  const attempt = await store.reserveAttempt({
-    requestId: request.id,
-    budgetId: input.budgetId,
-    capMicros: input.capMicros,
-  });
+  const resumed = options.resumeUncertain
+    ? await store.resumeUncertainAttempt({
+        requestId: request.id,
+        capMicros: input.capMicros,
+      })
+    : null;
+  const attempt =
+    resumed ??
+    (await store.reserveAttempt({
+      requestId: request.id,
+      budgetId: input.budgetId,
+      capMicros: input.capMicros,
+    }));
   // Persist dispatch intent before crossing the external boundary. A failure here
   // leaves a reserved attempt, never an implicit authorization for another one.
-  await store.markDispatched(attempt.id);
+  if (!resumed) await store.markDispatched(attempt.id);
+  if (options.enabled && !options.enabled()) {
+    if (resumed) await store.markUncertain(attempt.id, "collection_disabled");
+    else
+      await store.markNotCharged(
+        attempt.id,
+        "collection_disabled_before_dispatch",
+      );
+    throw new Error("collection_disabled");
+  }
+  let response: ReceivedResponse;
   try {
-    if (options.enabled && !options.enabled())
-      throw new Error("collection_disabled");
-    const response = await dispatch(attempt.clientKey);
+    response = await dispatch(attempt.clientKey);
+  } catch (error) {
+    // Record only the status and code; exception strings can carry credentials.
+    const failure = weftFailure(error);
+    if (failure.prePayment && !resumed) {
+      await store.markNotCharged(attempt.id, failure.reason);
+      throw new Error("collection_not_charged", { cause: failure.reason });
+    }
+    await store.markUncertain(attempt.id, failure.reason);
+    throw new Error("collection_uncertain");
+  }
+  try {
     const outcome = payment(response);
     return await store.captureResponse({
       attemptId: attempt.id,
@@ -201,8 +279,7 @@ export async function collectResponse(
       },
     });
   } catch {
-    // Do not store credential-bearing exception strings or automatically retry.
-    await store.markUncertain(attempt.id, "dispatch_or_capture_failed");
+    await store.markUncertain(attempt.id, "capture_failed_after_response");
     throw new Error("collection_uncertain");
   }
 }

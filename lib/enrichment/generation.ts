@@ -35,6 +35,8 @@ export function weftGeneration(
     maxCostUsd: string;
     policy: CollectionInput["policy"];
     enabled: () => boolean;
+    /** Re-send an uncertain call under its original Weft idempotency key. */
+    resumeUncertain?: boolean;
   },
 ): ExecuteGeneration {
   return async ({ runId, request }) => {
@@ -81,6 +83,7 @@ export function weftGeneration(
         maxCostUsd: config.maxCostUsd,
       },
       config.enabled,
+      { resumeUncertain: config.resumeUncertain },
     );
     if (
       typeof artifact.metadata.status !== "number" ||

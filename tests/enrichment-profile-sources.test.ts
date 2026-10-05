@@ -49,6 +49,8 @@ function harness(
     }),
     markDispatched: async () => undefined,
     markUncertain: async () => undefined,
+    markNotCharged: async () => undefined,
+    resumeUncertainAttempt: async () => null,
     captureResponse: async (value) => {
       const artifact = {
         id: value.attemptId,

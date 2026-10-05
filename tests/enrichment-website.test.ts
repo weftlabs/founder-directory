@@ -270,6 +270,8 @@ function fixture(payload: unknown, status = 200) {
     }),
     markDispatched: async () => undefined,
     markUncertain: async () => undefined,
+    markNotCharged: async () => undefined,
+    resumeUncertainAttempt: async () => null,
     captureResponse: async (value) => {
       saved = {
         id: "artifact",
