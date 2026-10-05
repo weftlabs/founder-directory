@@ -131,6 +131,8 @@ export function llmJudge(
     model: { provider: string; model: string; revision: string | null };
     /** Portraits omit this and stay on acquire. Connections replay must not dispatch. */
     mode?: "acquire" | "replay";
+    /** Re-send an uncertain attempt under its original key (never pays twice). */
+    resumeUncertain?: boolean;
   },
 ): ExecuteRetainedDecision {
   const route = generationRoute(config.model.provider);
@@ -196,6 +198,7 @@ export function llmJudge(
         maxCostUsd: config.maxCostUsd,
       },
       config.enabled,
+      { resumeUncertain: config.resumeUncertain },
     );
     const status = raw.metadata.status;
     if (typeof status !== "number" || status < 200 || status >= 300)
