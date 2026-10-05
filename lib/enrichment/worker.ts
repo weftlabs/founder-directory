@@ -881,7 +881,20 @@ export function createStageHandlers(
       async embeddings(work) {
         if (!dependencies.embedding || !dependencies.embed)
           return { status: "blocked", reason: "embeddings_not_configured" };
-        const products = await discoveredProducts(work);
+        const discovery = (
+          await store.db.query<{ status: string }>(
+            "SELECT status FROM enrichment_stage_work WHERE entity_id=$1 AND release_id=$2 AND generation=$3 AND stage='product_discovery'",
+            [work.entityId, work.releaseId, work.generation],
+          )
+        ).rows[0]?.status;
+        // Discovery that ended without products still leaves the founder's DNA to embed.
+        const products =
+          discovery &&
+          ["failed", "unavailable", "blocked", "not_applicable"].includes(
+            discovery,
+          )
+            ? null
+            : await discoveredProducts(work);
         const subjects = [
           { id: work.entityId, purpose: "founder_dna" },
           ...(products ?? []).map((product) => ({

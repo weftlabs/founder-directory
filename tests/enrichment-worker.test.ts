@@ -877,6 +877,48 @@ test("recent posts become the founder's self-reported evidence", async () => {
   }
 });
 
+test("DNA is embedded even when product discovery ends without products", async () => {
+  const f = await fixture();
+  try {
+    const founder = await f.store.createEntity(
+      "founder",
+      "synthetic_noproducts",
+    );
+    await f.store.intake("test", founder);
+    await f.store.reconcileTargets("test");
+    // Product discovery fails outright (e.g. a refused call): no analysis is saved.
+    const failingDiscovery = {
+      ...f.dependencies,
+      executeGeneration: (async (input) => {
+        if (input.request.recipe.purpose === "product_discovery")
+          throw new Error("collection_not_charged");
+        return f.dependencies.executeGeneration(input);
+      }) as typeof f.dependencies.executeGeneration,
+    };
+    await runPendingStages(
+      f.store,
+      createStageHandlers(f.store, new WorkerStore(f.db), failingDiscovery),
+      { limit: 20, leaseSeconds: 60 },
+    );
+    const rows = (
+      await f.db.query<{ stage: string; status: string }>(
+        "SELECT stage,status FROM enrichment_stage_work WHERE entity_id=$1",
+        [founder],
+      )
+    ).rows;
+    assert.equal(
+      rows.find((r) => r.stage === "product_discovery")?.status,
+      "failed",
+    );
+    assert.equal(
+      rows.find((r) => r.stage === "embeddings")?.status,
+      "succeeded",
+    );
+  } finally {
+    await f.pg.close();
+  }
+});
+
 test("profile identity mismatch blocks website purchase", async () => {
   const f = await fixture({ website: true, mismatchedProfile: true });
   try {
