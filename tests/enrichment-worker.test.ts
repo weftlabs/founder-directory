@@ -812,6 +812,8 @@ test("recent posts become the founder's self-reported evidence", async () => {
             JSON.stringify({
               data: [
                 { id_str: "11", full_text: "I ship every Friday", user },
+                // A pinned post appears twice in the timeline.
+                { id_str: "11", full_text: "I ship every Friday", user },
                 { id_str: "12", full_text: "RT @other: not mine", user },
               ],
             }),
@@ -860,6 +862,16 @@ test("recent posts become the founder's self-reported evidence", async () => {
         source_url: "https://x.com/synthetic_tweets/status/11",
       },
     ]);
+    const manifest = (
+      await f.db.query<{ body: Uint8Array }>(
+        "SELECT a.body FROM enrichment_stage_work w JOIN enrichment_artifacts a ON a.id=w.output_id WHERE w.entity_id=$1 AND w.stage='extraction'",
+        [founder],
+      )
+    ).rows[0];
+    const ids: string[] = JSON.parse(
+      Buffer.from(manifest.body).toString(),
+    ).evidenceIds;
+    assert.equal(new Set(ids).size, ids.length);
   } finally {
     await f.pg.close();
   }

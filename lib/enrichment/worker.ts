@@ -703,7 +703,8 @@ export function createStageHandlers(
               excerpt: tweet.text,
             });
             await store.linkEvidence(work.entityId, tweetId, "profile_source");
-            evidenceIds.push(tweetId);
+            // A pinned post repeats in the timeline; list its evidence once.
+            if (!evidenceIds.includes(tweetId)) evidenceIds.push(tweetId);
           }
         }
         let website = bundle.website;
