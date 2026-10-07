@@ -15,8 +15,8 @@ importers:
         specifier: 1.1.0
         version: 1.1.0
       '@weft-labs/sdk':
-        specifier: 0.20.0
-        version: 0.20.0(@x402/core@2.27.0)
+        specifier: 0.25.0
+        version: 0.25.0(@x402/core@2.27.0)
       '@x402/core':
         specifier: 2.27.0
         version: 2.27.0
@@ -895,12 +895,12 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@weft-labs/sdk@0.20.0':
-    resolution: {integrity: sha512-glZU1a6hMAqXoJZiOyRez2fQ/HmNLqv2AF0FqHCWOebHXVfoSQz6OEezmQzTPs8gcmdsGUHPkDGwyLibYq0RiA==}
+  '@weft-labs/sdk@0.25.0':
+    resolution: {integrity: sha512-ZrAg/Ps7kc1kQQHuxOT8o2dbKta0ot9/CRRBtr5xyI9JiVkn4oDqes5xSpfneu81U2GozalOr7yJHKc/2Sg8Cg==}
     engines: {node: '>=18.0.0'}
     deprecated: Package moved to @weftlabs/sdk. Install @weftlabs/sdk instead.
     peerDependencies:
-      '@x402/core': ^2.0.0
+      '@x402/core': ^2.24.0
 
   '@x402/core@2.27.0':
     resolution: {integrity: sha512-UbxCKnoTsg5nQX9fYER3g9tt5l80jHm1IZOmDczQRqE0cwskls5r+VAAj0iUQfHVshnpv0qo/rLFI7UntqL96g==}
@@ -2893,7 +2893,7 @@ snapshots:
   '@unrs/resolver-binding-win32-x64-msvc@1.12.2':
     optional: true
 
-  '@weft-labs/sdk@0.20.0(@x402/core@2.27.0)':
+  '@weft-labs/sdk@0.25.0(@x402/core@2.27.0)':
     dependencies:
       '@x402/core': 2.27.0
 
