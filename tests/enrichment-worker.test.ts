@@ -1062,12 +1062,7 @@ test("withdrawing a source profile purges pre-analysis worker manifests that ret
             paymentStatus: "settled",
             txHash: "synthetic",
             artifactId: 1,
-            merchant: {
-              address: "synthetic",
-              settlementCount: 1,
-              firstSeenAt: new Date(0),
-              disputeCount: 0,
-            },
+            protocol: "x402",
           };
         },
       };
