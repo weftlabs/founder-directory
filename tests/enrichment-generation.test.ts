@@ -71,12 +71,7 @@ function fixture(
         paymentStatus: "settled",
         txHash: "synthetic-transaction",
         artifactId: 1,
-        merchant: {
-          address: "synthetic-merchant",
-          settlementCount: 1,
-          firstSeenAt: new Date(0),
-          disputeCount: 0,
-        },
+        protocol: "x402",
       };
     },
   };
