@@ -4,6 +4,7 @@ import "@fontsource/ibm-plex-sans/latin-400.css";
 import "@fontsource/ibm-plex-sans/latin-600.css";
 import "@fontsource/ibm-plex-sans/latin-700.css";
 import { Analytics } from "./analytics";
+import { HeadGuard } from "./head-guard";
 import { SiteFooter } from "./site-footer";
 import {
   GITHUB_REPO,
@@ -103,6 +104,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
         />
         <Analytics preview={process.env.DIRECTORY_PREVIEW === "1"} />
+        <HeadGuard />
         {children}
         <SiteFooter />
       </body>
